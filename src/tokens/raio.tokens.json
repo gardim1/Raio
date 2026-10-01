@@ -1,0 +1,551 @@
+{
+  "$meta": {
+    "name": "Raio design tokens",
+    "version": "1.0.0",
+    "source": "Extracted 1:1 from the Raio motion concept (raio-motion.html). This file is the machine-readable source of truth.",
+    "units": "px unless noted; durations in ms; world units refer to the 1000x520 architecture canvas coordinate space",
+    "colorFormat": "hex or rgba(); *Rgb arrays are provided for runtime color mixing"
+  },
+  "color": {
+    "background": {
+      "canvas": "#0a0b0e",
+      "vignetteTop": "rgba(92,128,220,0.10)",
+      "vignetteBottom": "rgba(255,190,110,0.035)"
+    },
+    "surface": {
+      "panelTop": "rgba(36,38,45,0.78)",
+      "panelBottom": "rgba(21,22,27,0.86)",
+      "island": "rgba(20,21,26,0.90)",
+      "chrome": "rgba(30,32,38,0.60)",
+      "raised": "rgba(255,255,255,0.05)",
+      "raisedHover": "rgba(255,255,255,0.08)",
+      "sidebar": "rgba(255,255,255,0.018)"
+    },
+    "border": {
+      "panel": "rgba(255,255,255,0.07)",
+      "divider": "rgba(255,255,255,0.045)",
+      "control": "rgba(255,255,255,0.08)",
+      "innerHighlight": "rgba(255,255,255,0.06)",
+      "separator": "rgba(255,255,255,0.12)"
+    },
+    "text": {
+      "primary": "#f3f5f8",
+      "secondary": "rgba(240,244,250,0.82)",
+      "status": "rgba(240,244,250,0.80)",
+      "muted": "rgba(235,240,248,0.52)",
+      "subtle": "rgba(235,240,248,0.35)",
+      "onCool": "#ffffff",
+      "onWarning": "#ffd9a3",
+      "onSuccess": "#ade9c5",
+      "onDanger": "#ffc4bd"
+    },
+    "accent": {
+      "cool": "#8ab4ff",
+      "coolRgb": [
+        138,
+        180,
+        255
+      ],
+      "warning": "#f5b65c",
+      "warningRgb": [
+        245,
+        182,
+        92
+      ],
+      "success": "#7fd8a6",
+      "successRgb": [
+        127,
+        216,
+        166
+      ],
+      "danger": "#ff8f86",
+      "dangerRgb": [
+        255,
+        143,
+        134
+      ],
+      "neutralRgb": [
+        255,
+        255,
+        255
+      ]
+    },
+    "node": {
+      "dormantFill": "rgba(255,255,255,0.035)",
+      "dormantStroke": "rgba(255,255,255,0.09)",
+      "dormantLabel": "rgba(255,255,255,0.42)",
+      "dormantDot": "rgba(255,255,255,0.22)",
+      "activeFillAlpha": 0.11,
+      "activeStrokeAlpha": 0.47,
+      "activeGlowAlpha": 0.34,
+      "subLabel": "rgba(235,240,248,0.55)",
+      "subLabelWarning": "rgba(255,214,160,0.75)"
+    },
+    "connection": {
+      "dormant": "rgba(255,255,255,0.09)",
+      "activeAlpha": 0.85,
+      "glowAlpha": 0.28,
+      "pulseCore": "#ffffff"
+    },
+    "pill": {
+      "warningFill": "rgba(245,182,92,0.12)",
+      "warningStroke": "rgba(245,182,92,0.38)",
+      "successFill": "rgba(127,216,166,0.07)",
+      "successStroke": "rgba(127,216,166,0.20)",
+      "coolFill": "rgba(138,180,255,0.08)",
+      "coolStroke": "rgba(138,180,255,0.20)",
+      "dangerFill": "rgba(255,143,134,0.10)",
+      "dangerStroke": "rgba(255,143,134,0.32)",
+      "neutralFill": "rgba(255,255,255,0.05)",
+      "neutralStroke": "rgba(255,255,255,0.08)"
+    },
+    "raio": {
+      "bodyStops": [
+        {
+          "offset": 0,
+          "color": "#ffffff"
+        },
+        {
+          "offset": 0.5,
+          "color": "#dbe9ff"
+        },
+        {
+          "offset": 1,
+          "color": "#86aefc"
+        }
+      ],
+      "bodyGradientCenter": {
+        "cx": "40%",
+        "cy": "35%",
+        "r": "70%"
+      },
+      "eye": "#1b2544",
+      "highlight": "rgba(255,255,255,0.75)",
+      "glowCoolStops": [
+        {
+          "offset": 0,
+          "color": "#a2c4ff",
+          "opacity": 0.6
+        },
+        {
+          "offset": 0.4,
+          "color": "#7fa8ff",
+          "opacity": 0.16
+        },
+        {
+          "offset": 1,
+          "color": "#7fa8ff",
+          "opacity": 0
+        }
+      ],
+      "glowWarmStops": [
+        {
+          "offset": 0,
+          "color": "#ffcf8a",
+          "opacity": 0.6
+        },
+        {
+          "offset": 0.4,
+          "color": "#f5b65c",
+          "opacity": 0.16
+        },
+        {
+          "offset": 1,
+          "color": "#f5b65c",
+          "opacity": 0
+        }
+      ],
+      "trail": "#cfe0ff",
+      "cssOrb": "radial-gradient(circle at 38% 32%, #ffffff, #d6e6ff 50%, #86aefc)",
+      "cssOrbShadow": "0 0 10px rgba(138,180,255,0.55)"
+    },
+    "dotGrid": "rgba(255,255,255,0.055)"
+  },
+  "typography": {
+    "family": {
+      "ui": "-apple-system, \"SF Pro Display\", \"SF Pro Text\", \"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "fallbackBundled": "Inter Variable (OFL, bundled in /prototype/public/fonts)"
+    },
+    "style": {
+      "brand": {
+        "size": 14,
+        "weight": 600,
+        "lineHeight": 1.2,
+        "letterSpacing": "-0.01em"
+      },
+      "project": {
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 1.2,
+        "letterSpacing": "0"
+      },
+      "task": {
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 1.2,
+        "letterSpacing": "0",
+        "emphasisWeight": 500
+      },
+      "status": {
+        "size": 12.5,
+        "weight": 500,
+        "lineHeight": 1.2,
+        "letterSpacing": "0"
+      },
+      "nodeLabel": {
+        "size": 13.5,
+        "weight": 600,
+        "lineHeight": 1.2,
+        "letterSpacing": "-0.01em",
+        "unit": "world"
+      },
+      "nodeSub": {
+        "size": 10.5,
+        "weight": 400,
+        "lineHeight": 1.2,
+        "letterSpacing": "0",
+        "unit": "world"
+      },
+      "pill": {
+        "size": 12.5,
+        "weight": 500,
+        "lineHeight": 1.2,
+        "letterSpacing": "0"
+      },
+      "chip": {
+        "size": 12.5,
+        "weight": 500,
+        "lineHeight": 1.2,
+        "letterSpacing": "0"
+      },
+      "hint": {
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 1.2,
+        "letterSpacing": "0"
+      },
+      "summaryTitle": {
+        "size": 15.5,
+        "weight": 600,
+        "lineHeight": 1.25,
+        "letterSpacing": "-0.01em"
+      },
+      "summaryDetail": {
+        "size": 12.5,
+        "weight": 400,
+        "lineHeight": 1.3,
+        "letterSpacing": "0"
+      },
+      "sectionTitle": {
+        "size": 12.5,
+        "weight": 600,
+        "lineHeight": 1.3,
+        "letterSpacing": "-0.005em"
+      },
+      "body": {
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 1.45,
+        "letterSpacing": "0"
+      },
+      "caption": {
+        "size": 11.5,
+        "weight": 400,
+        "lineHeight": 1.3,
+        "letterSpacing": "0",
+        "numeric": "tabular-nums"
+      },
+      "islandTitle": {
+        "size": 13,
+        "weight": 600,
+        "lineHeight": 1.2,
+        "letterSpacing": "-0.01em"
+      },
+      "wordmark": {
+        "size": 36,
+        "weight": 650,
+        "lineHeight": 1.1,
+        "letterSpacing": "-0.035em"
+      },
+      "tagline": {
+        "size": 15,
+        "weight": 400,
+        "lineHeight": 1.3,
+        "letterSpacing": "-0.005em"
+      }
+    }
+  },
+  "space": {
+    "scale": [
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20,
+      24,
+      28,
+      32
+    ],
+    "panelPaddingX": 18,
+    "footerPaddingX": 24,
+    "titlebarGap": 12,
+    "pillGap": 8,
+    "statusDotGap": 8,
+    "trafficLightGap": 7,
+    "dotGridPitch": 24
+  },
+  "size": {
+    "canvasWorld": {
+      "width": 1000,
+      "height": 520
+    },
+    "filmStage": {
+      "width": 1280,
+      "height": 800
+    },
+    "panel": {
+      "width": 1000,
+      "titlebar": 54,
+      "map": 520,
+      "footer": 68
+    },
+    "expandedWindow": {
+      "width": 1280,
+      "minWidth": 960,
+      "minHeight": 640,
+      "sidebar": 280
+    },
+    "miniPlayer": {
+      "width": 380,
+      "height": 250,
+      "minWidth": 300,
+      "minHeight": 200,
+      "maxWidth": 560,
+      "maxHeight": 380,
+      "header": 36
+    },
+    "island": {
+      "collapsedHeight": 34,
+      "collapsedMinWidth": 148,
+      "expandedWidth": 384,
+      "expandedHeight": 156,
+      "edgeInset": 12
+    },
+    "node": {
+      "width": 132,
+      "height": 52,
+      "dotRadius": 3.2,
+      "dotInsetX": 20,
+      "labelInsetX": 34
+    },
+    "orb": {
+      "bodyRadius": 11,
+      "glowRadius": 32,
+      "eyeRx": 1.45,
+      "eyeRy": 2.6,
+      "eyeOffsetX": 3.7,
+      "eyeOffsetY": 0.6
+    },
+    "pill": {
+      "height": 28,
+      "dot": 7,
+      "paddingLeft": 10,
+      "paddingRight": 12
+    },
+    "migrationPill": {
+      "height": 28,
+      "horizontalPadding": 40,
+      "offsetY": 60
+    },
+    "trafficLight": 11,
+    "miniOrb": 12,
+    "wordmarkOrb": 18
+  },
+  "radius": {
+    "panel": 28,
+    "node": 17,
+    "nodeGlow": 14,
+    "pill": 14,
+    "island": 17,
+    "islandExpanded": 26,
+    "miniPlayer": 20,
+    "control": 20,
+    "track": 2,
+    "full": 9999
+  },
+  "border": {
+    "hairline": 1,
+    "connection": 1.9,
+    "connectionRevealed": 2.3,
+    "connectionGlow": 7,
+    "connectionDormant": 1.2,
+    "connectionDormantDash": "2 5",
+    "ripple": 1.2,
+    "eyeHappy": 1.4
+  },
+  "blur": {
+    "panelBackdrop": 30,
+    "panelSaturate": 1.4,
+    "chromeBackdrop": 20,
+    "nodeGlow": 10,
+    "connectionGlow": 3,
+    "panelEnterMax": 8,
+    "labelSwap": 3,
+    "summaryEnter": 4,
+    "wordmarkEnter": 6
+  },
+  "shadow": {
+    "panel": "0 50px 100px -30px rgba(0,0,0,0.75), 0 20px 40px -20px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
+    "island": "0 18px 40px -16px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)",
+    "miniPlayer": "0 30px 60px -24px rgba(0,0,0,0.75), 0 12px 24px -16px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
+    "coolDot": "0 0 8px #8ab4ff",
+    "warningDot": "0 0 8px rgba(245,182,92,0.6)",
+    "wordmarkOrb": "0 0 22px rgba(138,180,255,0.6)"
+  },
+  "opacity": {
+    "dormantNode": 0.85,
+    "dormantNodeRevealed": 0.4,
+    "dormantEdgeRevealed": 0.4,
+    "settledActiveFactor": 0.78,
+    "orbSleeping": 0.72,
+    "trailMax": 0.22,
+    "rippleMax": 0.55,
+    "controlsIdle": 0.45
+  },
+  "motion": {
+    "duration": {
+      "panelEnter": 750,
+      "nodeActivate": 450,
+      "nodeSubLabelDelay": 200,
+      "nodeSubLabel": 450,
+      "warmthShift": 500,
+      "rippleEach": 1200,
+      "rippleStagger": 380,
+      "warningPill": 550,
+      "statusWidth": 550,
+      "statusLabelSwap": 450,
+      "taskEnter": 600,
+      "chipEnter": 700,
+      "chipCheckDraw": 500,
+      "chipCheckDelay": 150,
+      "summaryEnter": 700,
+      "wordmarkEnter": 1000,
+      "nodeHover": 450,
+      "cameraFocusIn": 800,
+      "cameraFocusOut": 1000,
+      "revealDim": 800,
+      "settle": 800,
+      "orbBlink": 160,
+      "orbWake": 400,
+      "orbEyeOpen": 250,
+      "orbStartle": 350,
+      "modeMorph": 260,
+      "islandHover": 220,
+      "contentCrossfade": 220,
+      "replayBudget": 10000,
+      "filmLoop": 12500,
+      "$note": "modeMorph and islandHover are springs; values are approximate settle times for reference only."
+    },
+    "easing": {
+      "inOutCubic": "cubic-bezier(0.65, 0, 0.35, 1)",
+      "outCubic": "cubic-bezier(0.33, 1, 0.68, 1)",
+      "outBack": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+      "statusWidth": "cubic-bezier(0.3, 1.25, 0.4, 1)",
+      "softSpring": "cubic-bezier(0.2, 1.2, 0.3, 1)",
+      "bouncySpring": "cubic-bezier(0.2, 1.5, 0.35, 1)",
+      "labelSwap": "cubic-bezier(0.2, 1, 0.3, 1)",
+      "wordmark": "cubic-bezier(0.2, 1, 0.3, 1)",
+      "linear": "linear"
+    },
+    "spring": {
+      "nodeBounce": {
+        "stiffness": 232,
+        "damping": 12,
+        "mass": 1,
+        "formula": "e^(-6t)\u00b7sin(14t)",
+        "amplitude": 0.07
+      },
+      "warningBounce": {
+        "stiffness": 232,
+        "damping": 12,
+        "mass": 1,
+        "formula": "e^(-6t)\u00b7sin(14t)",
+        "amplitude": 0.04
+      },
+      "orbWake": {
+        "stiffness": 232,
+        "damping": 12,
+        "mass": 1,
+        "formula": "e^(-6t)\u00b7sin(14t)",
+        "amplitude": 0.08
+      },
+      "modeMorph": {
+        "stiffness": 340,
+        "damping": 32,
+        "mass": 1
+      },
+      "islandHover": {
+        "stiffness": 420,
+        "damping": 34,
+        "mass": 0.9
+      },
+      "miniDragRelease": {
+        "stiffness": 500,
+        "damping": 40,
+        "mass": 1
+      }
+    },
+    "orb": {
+      "sleepBreathHz": 0.255,
+      "sleepBreathAmplitude": 1.5,
+      "floatAngularSpeed": 2.2,
+      "floatAmplitude": 2.5,
+      "restAngularSpeed": 2.0,
+      "wakeHopHeight": 9,
+      "orbitRx": 86,
+      "orbitRy": 40,
+      "orbitDepthScaleMin": 0.84,
+      "orbitBehindThreshold": -0.15,
+      "squashMaxStretch": 0.22,
+      "squashVelocityDivisor": 1400,
+      "squashCrossRatio": 0.55,
+      "trailCount": 7,
+      "trailStepSeconds": 0.028,
+      "trailSpeedForFull": 320,
+      "gazeMaxX": 2.2,
+      "gazeMaxY": 1.6,
+      "glowPulseHz": 0.477,
+      "glowPulseAmplitude": 4
+    },
+    "camera": {
+      "focusZoom": 1.13,
+      "followStrength": 0.5,
+      "lowPassSamplesSeconds": [
+        0,
+        0.25,
+        0.5
+      ]
+    }
+  },
+  "zIndex": {
+    "desktop": 0,
+    "canvasDormantEdges": 1,
+    "canvasActiveEdges": 2,
+    "canvasOrbBehind": 3,
+    "canvasNodes": 4,
+    "canvasPulses": 5,
+    "canvasOrbFront": 6,
+    "canvasPills": 7,
+    "expandedWindow": 10,
+    "inspector": 20,
+    "miniPlayer": 40,
+    "island": 50,
+    "tooltip": 60,
+    "prototypeChrome": 70
+  }
+}
