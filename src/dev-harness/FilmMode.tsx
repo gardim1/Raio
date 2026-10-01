@@ -1,5 +1,5 @@
 import { demoGraph } from '../features/architecture/model/demoProject';
-import { FilmStage } from '../features/modes/FilmStage';
+import { FilmStage } from './FilmStage';
 import { canonicalScript } from '../features/session/model/canonicalScript';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
 import { usePlayback } from '../shared/motion/usePlayback';

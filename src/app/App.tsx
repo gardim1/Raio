@@ -1,25 +1,20 @@
 import { LayoutGroup } from 'motion/react';
-import { useEffect, useMemo } from 'react';
-import { demoGraph } from '../features/architecture/model/demoProject';
-import { StatesGallery } from '../features/gallery/StatesGallery';
-import { DesktopBackdrop } from '../features/modes/DesktopBackdrop';
+import { type ReactNode, useEffect, useMemo } from 'react';
 import { ExpandedWindow } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
 import { derivePresence } from '../features/modes/presence';
 import { ReplayControls } from '../features/modes/ReplayControls';
+import { NoProjectState } from '../features/panel/NoProjectState';
 import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
-import { demoSessionLog } from '../features/session/model/demoSession';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
-import { type DisplayMode, useSessionUi } from '../features/session/store/sessionStore';
+import { useSessionUi } from '../features/session/store/sessionStore';
+import { useSessionSnapshot } from '../platform/BridgeContext';
+import type { SessionSnapshot } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
-import { FilmMode } from './FilmMode';
-import { MODES, ModeDock } from './ModeDock';
-
-const PROJECT = demoSessionLog.project;
 
 /** The live surfaces use the canonical choreography without the film-only wordmark. */
 const liveScript: ChoreographyScript = (() => {
@@ -28,11 +23,39 @@ const liveScript: ChoreographyScript = (() => {
   return { ...rest, id: 'live-demo' };
 })();
 
-/** Prototype shell: one simulated live session, one compiled replay, three display modes. */
-export const App = () => {
-  const { mode, source, selectedNodeId, pinned, liveRun, replayRun, setMode, startReplay, exitReplay, selectNode, togglePin, restartLive } = useSessionUi();
-  const replayScript = useMemo(() => compileReplay(demoSessionLog, demoGraph), []);
-  const insights = useMemo(() => deriveInsights(demoSessionLog), []);
+export interface AppProps {
+  /** Optional layer drawn between the background and the surfaces (used by the dev harness). */
+  readonly underlay?: ReactNode;
+}
+
+/** The Raio product: Island, Mini Player and Expanded surfaces fed by the desktop bridge. */
+export const App = ({ underlay }: AppProps) => {
+  const snapshot = useSessionSnapshot();
+  const mode = useSessionUi((s) => s.mode);
+  return (
+    <div className={`app app--${mode}`}>
+      {underlay}
+      {snapshot ? (
+        <Surfaces snapshot={snapshot} />
+      ) : (
+        <div className="app__empty">
+          <NoProjectState />
+        </div>
+      )}
+      {snapshot?.provenance === 'fixture' && (
+        <div className="app__fixture-badge" role="note">
+          Demo fixture · not real agent activity
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
+  const { graph, log, project } = snapshot;
+  const { mode, source, selectedNodeId, pinned, liveRun, replayRun, setMode, startReplay, exitReplay, selectNode, togglePin } = useSessionUi();
+  const replayScript = useMemo(() => compileReplay(log, graph), [log, graph]);
+  const insights = useMemo(() => deriveInsights(log), [log]);
 
   const live = usePlayback({ reducedMotionAt: 30 });
   const replay = usePlayback({ stopAt: replayScript.duration + 0.6, autoplay: false });
@@ -47,8 +70,6 @@ export const App = () => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
-      const m = MODES.find((x) => x.key === e.key);
-      if (m) setMode(m.id as DisplayMode);
       if (e.key === ' ' && source === 'replay') {
         e.preventDefault();
         replay.toggle();
@@ -56,13 +77,13 @@ export const App = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setMode, source, replay]);
+  }, [source, replay]);
 
   const isReplay = source === 'replay';
   const script = isReplay ? replayScript : liveScript;
   const t = isReplay ? replay.t : live.t;
-  const frame = evaluateFrame(script, demoGraph, t);
-  const presence = derivePresence(script, demoGraph, frame, isReplay);
+  const frame = evaluateFrame(script, graph, t);
+  const presence = derivePresence(script, graph, frame, isReplay);
 
   const onSelectEvent = (ev: StoryEvent) => {
     if (ev.nodeId) selectNode(ev.nodeId);
@@ -83,57 +104,45 @@ export const App = () => {
       />
     ) : undefined;
 
-  const appMode = mode === 'island' || mode === 'mini' || mode === 'expanded';
-
   return (
-    <div className={`app app--${mode}`}>
-      {mode === 'film' && <FilmMode />}
-      {mode === 'states' && <StatesGallery />}
-      {appMode && (
-        <>
-          <DesktopBackdrop />
-          <LayoutGroup>
-            {mode === 'island' && (
-              <IslandMode script={script} frame={frame} presence={presence} onPinMini={() => setMode('mini')} onExpand={() => setMode('expanded')} onViewChanges={startReplay} />
-            )}
-            {mode === 'mini' && (
-              <MiniPlayer
-                script={script}
-                frame={frame}
-                graph={demoGraph}
-                project={PROJECT}
-                presence={presence}
-                pinned={pinned}
-                replay={replayControls(true)}
-                {...(isReplay ? { stateLabel: frame.ui.finished ? 'Replay complete' : 'Replay' } : {})}
-                onTogglePin={togglePin}
-                onExpand={() => setMode('expanded')}
-                onCollapse={() => setMode('island')}
-                onViewChanges={startReplay}
-              />
-            )}
-            {mode === 'expanded' && (
-              <ExpandedWindow
-                script={script}
-                frame={frame}
-                graph={demoGraph}
-                project={PROJECT}
-                insights={insights}
-                presence={presence}
-                selectedNodeId={selectedNodeId}
-                replay={replayControls(false)}
-                isReplay={isReplay}
-                onSelectNode={selectNode}
-                onSelectEvent={onSelectEvent}
-                onPinMini={() => setMode('mini')}
-                onIsland={() => setMode('island')}
-                onViewChanges={startReplay}
-              />
-            )}
-          </LayoutGroup>
-        </>
+    <LayoutGroup>
+      {mode === 'island' && (
+        <IslandMode script={script} frame={frame} presence={presence} onPinMini={() => setMode('mini')} onExpand={() => setMode('expanded')} onViewChanges={startReplay} />
       )}
-      <ModeDock mode={mode} onMode={setMode} onRunLive={restartLive} onViewChanges={startReplay} />
-    </div>
+      {mode === 'mini' && (
+        <MiniPlayer
+          script={script}
+          frame={frame}
+          graph={graph}
+          project={project}
+          presence={presence}
+          pinned={pinned}
+          replay={replayControls(true)}
+          {...(isReplay ? { stateLabel: frame.ui.finished ? 'Replay complete' : 'Replay' } : {})}
+          onTogglePin={togglePin}
+          onExpand={() => setMode('expanded')}
+          onCollapse={() => setMode('island')}
+          onViewChanges={startReplay}
+        />
+      )}
+      {mode === 'expanded' && (
+        <ExpandedWindow
+          script={script}
+          frame={frame}
+          graph={graph}
+          project={project}
+          insights={insights}
+          presence={presence}
+          selectedNodeId={selectedNodeId}
+          replay={replayControls(false)}
+          isReplay={isReplay}
+          onSelectNode={selectNode}
+          onSelectEvent={onSelectEvent}
+          onPinMini={() => setMode('mini')}
+          onIsland={() => setMode('island')}
+          onViewChanges={startReplay}
+        />
+      )}
+    </LayoutGroup>
   );
 };

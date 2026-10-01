@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { easeOutCubic, lerp, progress } from '../../shared/motion/easing';
-import { MiniOrb } from '../raio/MiniOrb';
-import { FloatingPanel } from '../panel/FloatingPanel';
-import type { ArchitectureGraph } from '../architecture/model/types';
-import type { FrameState } from '../session/model/evaluateFrame';
-import type { ChoreographyScript } from '../session/model/script';
+import { easeOutCubic, lerp, progress } from '../shared/motion/easing';
+import { MiniOrb } from '../features/raio/MiniOrb';
+import { FloatingPanel } from '../features/panel/FloatingPanel';
+import type { ArchitectureGraph } from '../features/architecture/model/types';
+import type { FrameState } from '../features/session/model/evaluateFrame';
+import type { ChoreographyScript } from '../features/session/model/script';
 
 export interface FilmStageProps {
   readonly script: ChoreographyScript;
@@ -15,8 +15,11 @@ export interface FilmStageProps {
 
 const STAGE = { width: 1280, height: 800 } as const;
 
+/** Space kept for the harness dock; `?chrome=0` frees it so the stage matches the reference framing. */
+const DOCK_RESERVE = new URLSearchParams(window.location.search).get('chrome') === '0' ? 0 : 72;
+
 const useStageScale = () => {
-  const compute = () => Math.min(window.innerWidth / STAGE.width, (window.innerHeight - 72) / STAGE.height);
+  const compute = () => Math.min(window.innerWidth / STAGE.width, (window.innerHeight - DOCK_RESERVE) / STAGE.height);
   const [scale, setScale] = useState(compute);
   useEffect(() => {
     const onResize = () => setScale(compute());
@@ -33,7 +36,7 @@ export const FilmStage = ({ script, frame, graph, project }: FilmStageProps) => 
   const enter = easeOutCubic(progress(t, 0, 0.75));
   const out = progress(t, 12.0, 0.45);
   return (
-    <div className="film" aria-label="Raio concept film">
+    <div className="film" aria-label="Raio concept film" style={{ bottom: DOCK_RESERVE }}>
       <div className="film__stage" style={{ transform: `scale(${scale})`, opacity: 1 - out }}>
         <FloatingPanel
           className="film__panel"

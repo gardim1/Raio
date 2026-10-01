@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { NodeId } from '../../architecture/model/types';
 
-export type DisplayMode = 'film' | 'island' | 'mini' | 'expanded' | 'states';
+/** Product surfaces. Review-only views (concept film, states gallery) live in the dev harness. */
+export type DisplayMode = 'island' | 'mini' | 'expanded';
 export type PlaybackSource = 'live' | 'replay';
 
 interface SessionUiState {
@@ -35,7 +36,7 @@ export const useSessionUi = create<SessionUiState>((set) => ({
       source: 'replay',
       replayRun: s.replayRun + 1,
       selectedNodeId: null,
-      mode: s.mode === 'island' || s.mode === 'film' || s.mode === 'states' ? 'mini' : s.mode,
+      mode: s.mode === 'island' ? 'mini' : s.mode,
     })),
   exitReplay: () => set({ source: 'live', selectedNodeId: null }),
   selectNode: (selectedNodeId) => set({ selectedNodeId }),

@@ -1,6 +1,9 @@
 import type { DisplayMode } from '../features/session/store/sessionStore';
 
-const MODES: readonly { readonly id: DisplayMode; readonly label: string; readonly key: string }[] = [
+/** Everything the review dock can show: the product surfaces plus review-only views. */
+export type HarnessView = DisplayMode | 'film' | 'states';
+
+const MODES: readonly { readonly id: HarnessView; readonly label: string; readonly key: string }[] = [
   { id: 'film', label: 'Concept film', key: '1' },
   { id: 'island', label: 'Island', key: '2' },
   { id: 'mini', label: 'Mini player', key: '3' },
@@ -9,13 +12,13 @@ const MODES: readonly { readonly id: DisplayMode; readonly label: string; readon
 ];
 
 export interface ModeDockProps {
-  readonly mode: DisplayMode;
-  readonly onMode: (mode: DisplayMode) => void;
+  readonly mode: HarnessView;
+  readonly onMode: (mode: HarnessView) => void;
   readonly onRunLive: () => void;
   readonly onViewChanges: () => void;
 }
 
-/** Prototype-only chrome (not part of the product): switch modes, rerun the session, open the replay. */
+/** Dev-harness chrome (not part of the product): switch modes, rerun the session, open the replay. */
 export const ModeDock = ({ mode, onMode, onRunLive, onViewChanges }: ModeDockProps) => (
   <nav className="dock" aria-label="Prototype controls">
     <div className="dock__seg" role="tablist">

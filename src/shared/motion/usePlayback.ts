@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { frozenClock } from './frozenClock';
 
 export interface PlaybackOptions {
   /** Seconds at which playback restarts from 0 (film). Omit to keep running. */
@@ -30,9 +31,10 @@ const prefersReducedMotion = (): boolean =>
  * function of `t`, so pausing, scrubbing and speed changes are free.
  */
 export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt }: PlaybackOptions = {}): Playback => {
+  const frozen = frozenClock();
   const reduced = prefersReducedMotion() && reducedMotionAt !== undefined;
-  const [t, setT] = useState(reduced ? (reducedMotionAt ?? 0) : 0);
-  const [playing, setPlaying] = useState(autoplay && !reduced);
+  const [t, setT] = useState(frozen ?? (reduced ? (reducedMotionAt ?? 0) : 0));
+  const [playing, setPlaying] = useState(frozen === null && autoplay && !reduced);
   const [speed, setSpeedState] = useState(1);
   const timeRef = useRef(t);
   const lastFrame = useRef<number | null>(null);
@@ -83,8 +85,8 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt }
     },
     seek,
     restart: () => {
-      seek(0);
-      setPlaying(true);
+      seek(frozen ?? 0);
+      setPlaying(frozen === null);
     },
     setSpeed: setSpeedState,
   };

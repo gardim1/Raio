@@ -1,15 +1,15 @@
 import { useId, type ReactNode } from 'react';
-import { AgentStatus } from '../../shared/ui/AgentStatus';
-import { RiskPill } from '../../shared/ui/RiskPill';
-import { SessionSummary } from '../../shared/ui/SessionSummary';
-import { ValidationPill } from '../../shared/ui/ValidationPill';
-import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
-import { ArchitectureNode } from '../architecture/components/ArchitectureNode';
-import { demoGraph } from '../architecture/model/demoProject';
-import { NoProjectState } from '../panel/NoProjectState';
-import { RaioDefs, RaioOrb } from '../raio/RaioOrb';
-import { canonicalScript } from '../session/model/canonicalScript';
-import { evaluateFrame, type NodeFrame, type OrbFrame } from '../session/model/evaluateFrame';
+import { AgentStatus } from '../shared/ui/AgentStatus';
+import { RiskPill } from '../shared/ui/RiskPill';
+import { SessionSummary } from '../shared/ui/SessionSummary';
+import { ValidationPill } from '../shared/ui/ValidationPill';
+import { ArchitectureCanvas } from '../features/architecture/components/ArchitectureCanvas';
+import { ArchitectureNode } from '../features/architecture/components/ArchitectureNode';
+import { demoGraph } from '../features/architecture/model/demoProject';
+import { NoProjectState } from '../features/panel/NoProjectState';
+import { RaioDefs, RaioOrb } from '../features/raio/RaioOrb';
+import { canonicalScript } from '../features/session/model/canonicalScript';
+import { evaluateFrame, type NodeFrame, type OrbFrame } from '../features/session/model/evaluateFrame';
 
 /** Canonical keyframes (seconds into the concept). */
 export const KEYFRAMES: readonly { readonly t: number; readonly name: string }[] = [
