@@ -1,0 +1,38 @@
+/* Native shell only (html.native): each window hosts exactly one surface. */
+
+html.native,
+html.native body,
+html.native .app {
+  background: transparent;
+}
+
+/* Island window: the capsule sits at the top centre of a transparent window; everything else is click-through. */
+html.native.surface-island .island-dock {
+  top: 0;
+}
+
+/* Mini Player window: the OS window is the player. Keep a small inset for the shadow. */
+html.native.surface-mini .mini {
+  left: 8px !important;
+  top: 8px !important;
+  width: calc(100vw - 16px) !important;
+  height: calc(100vh - 16px) !important;
+}
+
+/* Expanded window: fill the window instead of centring inside a review canvas. */
+html.native.surface-expanded .expanded-dock {
+  inset: 0;
+  padding: 0;
+}
+html.native.surface-expanded .expanded {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+/* A hidden native surface stops every CSS animation (see surfaceVisibility.ts). */
+html.surface-hidden *,
+html.surface-hidden *::before,
+html.surface-hidden *::after {
+  animation-play-state: paused !important;
+}

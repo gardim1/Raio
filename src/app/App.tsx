@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useMemo } from 'react';
 import { ExpandedWindow } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
-import { derivePresence } from '../features/modes/presence';
+import { CTA_PROMINENT_SECONDS, derivePresence } from '../features/modes/presence';
 import { ReplayControls } from '../features/modes/ReplayControls';
 import { NoProjectState } from '../features/panel/NoProjectState';
 import { canonicalScript } from '../features/session/model/canonicalScript';
@@ -12,8 +12,9 @@ import { evaluateFrame } from '../features/session/model/evaluateFrame';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
 import { useSessionUi } from '../features/session/store/sessionStore';
-import { useSessionSnapshot } from '../platform/BridgeContext';
-import type { SessionSnapshot } from '../platform/desktopBridge';
+import { useBridge, useSessionSnapshot } from '../platform/BridgeContext';
+import { NativeSurfaceEffects } from '../platform/NativeSurfaceEffects';
+import type { SessionSnapshot, Surface } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
 
 /** The live surfaces use the canonical choreography without the film-only wordmark. */
@@ -31,9 +32,12 @@ export interface AppProps {
 /** The Raio product: Island, Mini Player and Expanded surfaces fed by the desktop bridge. */
 export const App = ({ underlay }: AppProps) => {
   const snapshot = useSessionSnapshot();
-  const mode = useSessionUi((s) => s.mode);
+  const bridge = useBridge();
+  const storeMode = useSessionUi((s) => s.mode);
+  const mode = bridge.fixedSurface ?? storeMode;
   return (
     <div className={`app app--${mode}`}>
+      {bridge.kind === 'native' && <NativeSurfaceEffects />}
       {underlay}
       {snapshot ? (
         <Surfaces snapshot={snapshot} />
@@ -42,7 +46,7 @@ export const App = ({ underlay }: AppProps) => {
           <NoProjectState />
         </div>
       )}
-      {snapshot?.provenance === 'fixture' && (
+      {snapshot?.provenance === 'fixture' && mode === 'expanded' && (
         <div className="app__fixture-badge" role="note">
           Demo fixture · not real agent activity
         </div>
@@ -53,11 +57,22 @@ export const App = ({ underlay }: AppProps) => {
 
 const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   const { graph, log, project } = snapshot;
-  const { mode, source, selectedNodeId, pinned, liveRun, replayRun, setMode, startReplay, exitReplay, selectNode, togglePin } = useSessionUi();
+  const bridge = useBridge();
+  const { mode: storeMode, source, selectedNodeId, pinned, liveRun, replayRun, startReplay, exitReplay, selectNode, togglePin } = useSessionUi();
+  const mode = bridge.fixedSurface ?? storeMode;
+  /** Browser: switch in place. Native: show that surface's window (and hide this one). */
+  const go = (surface: Surface) => bridge.showSurface(surface);
+  /** "View changes": native Island hands the replay to the Mini Player window; elsewhere it plays in place. */
+  const viewChanges = () => (bridge.kind === 'native' && mode === 'island' ? bridge.showSurface('mini', 'replay') : startReplay());
+  const onTogglePin = () => {
+    bridge.setPinned(!pinned);
+    togglePin();
+  };
   const replayScript = useMemo(() => compileReplay(log, graph), [log, graph]);
   const insights = useMemo(() => deriveInsights(log), [log]);
 
-  const live = usePlayback({ reducedMotionAt: 30 });
+  // The live demo clock follows wall time and stops once the completion offer has gone quiet.
+  const live = usePlayback({ reducedMotionAt: 30, wallClock: true, stopAt: liveScript.summary.detailAt + CTA_PROMINENT_SECONDS + 2 });
   const replay = usePlayback({ stopAt: replayScript.duration + 0.6, autoplay: false });
 
   useEffect(() => {
@@ -98,7 +113,7 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
         compact={compact}
         onInspect={(ev) => {
           if (ev.nodeId) selectNode(ev.nodeId);
-          if (compact && ev.nodeId) setMode('expanded');
+          if (compact && ev.nodeId) go('expanded');
         }}
         onExit={exitReplay}
       />
@@ -107,7 +122,7 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   return (
     <LayoutGroup>
       {mode === 'island' && (
-        <IslandMode script={script} frame={frame} presence={presence} onPinMini={() => setMode('mini')} onExpand={() => setMode('expanded')} onViewChanges={startReplay} />
+        <IslandMode script={script} frame={frame} presence={presence} onPinMini={() => go('mini')} onExpand={() => go('expanded')} onViewChanges={viewChanges} />
       )}
       {mode === 'mini' && (
         <MiniPlayer
@@ -119,10 +134,10 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
           pinned={pinned}
           replay={replayControls(true)}
           {...(isReplay ? { stateLabel: frame.ui.finished ? 'Replay complete' : 'Replay' } : {})}
-          onTogglePin={togglePin}
-          onExpand={() => setMode('expanded')}
-          onCollapse={() => setMode('island')}
-          onViewChanges={startReplay}
+          onTogglePin={onTogglePin}
+          onExpand={() => go('expanded')}
+          onCollapse={() => go('island')}
+          onViewChanges={viewChanges}
         />
       )}
       {mode === 'expanded' && (
@@ -138,9 +153,9 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
           isReplay={isReplay}
           onSelectNode={selectNode}
           onSelectEvent={onSelectEvent}
-          onPinMini={() => setMode('mini')}
-          onIsland={() => setMode('island')}
-          onViewChanges={startReplay}
+          onPinMini={() => go('mini')}
+          onIsland={() => go('island')}
+          onViewChanges={viewChanges}
         />
       )}
     </LayoutGroup>

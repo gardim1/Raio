@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { frozenClock } from './frozenClock';
+import { useSurfaceVisible } from './surfaceVisibility';
 
 export interface PlaybackOptions {
   /** Seconds at which playback restarts from 0 (film). Omit to keep running. */
@@ -9,6 +10,11 @@ export interface PlaybackOptions {
   readonly autoplay?: boolean;
   /** Respect prefers-reduced-motion by jumping to `reducedMotionAt`. */
   readonly reducedMotionAt?: number;
+  /**
+   * Live clocks follow wall time: after the surface was hidden they resume at the current moment.
+   * Other clocks (replay, film) simply pause while hidden.
+   */
+  readonly wallClock?: boolean;
 }
 
 export interface Playback {
@@ -30,7 +36,7 @@ const prefersReducedMotion = (): boolean =>
  * A requestAnimationFrame clock that drives one choreography. The whole UI is a pure
  * function of `t`, so pausing, scrubbing and speed changes are free.
  */
-export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt }: PlaybackOptions = {}): Playback => {
+export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt, wallClock = false }: PlaybackOptions = {}): Playback => {
   const frozen = frozenClock();
   const reduced = prefersReducedMotion() && reducedMotionAt !== undefined;
   const [t, setT] = useState(frozen ?? (reduced ? (reducedMotionAt ?? 0) : 0));
@@ -38,10 +44,17 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt }
   const [speed, setSpeedState] = useState(1);
   const timeRef = useRef(t);
   const lastFrame = useRef<number | null>(null);
+  const visible = useSurfaceVisible();
 
   useEffect(() => {
     if (!playing) {
       lastFrame.current = null;
+      return;
+    }
+    // While hidden nothing is drawn. A wall clock keeps `lastFrame`, so the first frame back
+    // catches up with the time spent hidden; other clocks resume where they paused.
+    if (!visible) {
+      if (!wallClock) lastFrame.current = null;
       return;
     }
     let raf = 0;
@@ -63,7 +76,7 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt }
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, speed, loopAt, stopAt]);
+  }, [playing, speed, loopAt, stopAt, visible, wallClock]);
 
   const seek = useCallback((seconds: number) => {
     timeRef.current = Math.max(0, seconds);
