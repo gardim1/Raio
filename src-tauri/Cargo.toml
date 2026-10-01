@@ -14,7 +14,23 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
 
+[[bin]]
+name = "raio"
+path = "src/main.rs"
+
+[[bin]]
+name = "raio-hook"
+path = "src/bin/raio-hook.rs"
+
 [dependencies]
+ignore = "0.4"
+notify = "8"
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 tauri = { version = "2.12.1", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+tempfile = "3"

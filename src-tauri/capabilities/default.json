@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Raio surfaces: core window and event APIs only.",
-  "windows": ["expanded", "island", "mini"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "description": "Raio surfaces: core window/event APIs and the folder picker.",
+  "windows": [
+    "expanded",
+    "island",
+    "mini"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open"
+  ]
 }
