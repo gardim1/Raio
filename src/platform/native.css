@@ -36,3 +36,8 @@ html.surface-hidden *::before,
 html.surface-hidden *::after {
   animation-play-state: paused !important;
 }
+
+/* Expanded window: the map may use the whole window height (the harness reserves room for its dock). */
+html.native.surface-expanded .expanded__map {
+  max-height: calc(100vh - 54px - 68px);
+}

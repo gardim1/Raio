@@ -1,4 +1,5 @@
 import type { ArchitectureGraph } from '../features/architecture/model/types';
+import type { ProjectInsights } from '../features/project/projectInsights';
 import type { SessionLog } from '../features/session/model/events';
 
 /** Where the data on screen comes from. Fixture data must never be presented as real agent telemetry. */
@@ -13,6 +14,33 @@ export interface SessionSnapshot {
   readonly project: string;
   readonly graph: ArchitectureGraph;
   readonly log: SessionLog;
+  /** Evidence the replay log cannot carry (disk consistency, unassigned changes, stale checks). Live data only. */
+  readonly evidence?: ProjectInsights;
+}
+
+/** Exactly what connecting would write to the project's `.claude/settings.local.json`. */
+export interface ConnectPreview {
+  readonly settingsPath: string;
+  readonly before: string | null;
+  readonly after: string;
+  /** false: git would not ignore the file, so it could be committed with a personal path. null: unknown. */
+  readonly gitIgnored: boolean | null;
+}
+
+export interface ConnectedProject {
+  readonly id: string;
+  readonly name: string;
+  readonly root: string;
+}
+
+/** Opt-in, reversible connection of one project to an agent's hooks (native only). */
+export interface Connector {
+  /** The connected project, or null. Stable between notifications of `subscribe`. */
+  project(): ConnectedProject | null;
+  chooseFolder(): Promise<string | null>;
+  preview(root: string): Promise<ConnectPreview>;
+  connect(root: string, preview: ConnectPreview): Promise<void>;
+  disconnect(): Promise<void>;
 }
 
 /** A rectangle in CSS pixels of the current window. */
@@ -44,4 +72,6 @@ export interface DesktopBridge {
   setPinned(pinned: boolean): void;
   /** Island click-through: the capsule area that should receive the pointer. No-op in the browser. */
   setIslandHitRect(rect: Rect): void;
+  /** Project connection; null where it is not available (browser, fixtures). */
+  readonly connector: Connector | null;
 }

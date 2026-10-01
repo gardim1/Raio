@@ -6,7 +6,7 @@ const KIND_ORDER: readonly SystemKind[] = ['frontend', 'api', 'auth', 'database'
 
 /** Horizontal space available for one row of node centres, and the widest slot a node gets. */
 const ROW_WIDTH = 840;
-const MAX_SLOT = 210;
+const MAX_SLOT = 300;
 /** Row heights in the 1000x520 world, by number of rows. */
 const ROW_Y: Readonly<Record<1 | 2 | 3, readonly number[]>> = { 1: [190], 2: [170, 380], 3: [115, 262, 410] };
 

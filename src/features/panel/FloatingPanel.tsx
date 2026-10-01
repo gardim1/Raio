@@ -28,6 +28,7 @@ export const FloatingPanel = ({ script, frame, canvas, project, statusLabel, tit
       project={project}
       agent={script.agent}
       task={script.task}
+      taskIsPlaceholder={script.taskIsPlaceholder === true}
       taskVisible={frame.ui.taskVisible}
       status={frame.ui.status}
       {...(statusLabel ? { statusLabel } : {})}

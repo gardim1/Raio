@@ -173,3 +173,11 @@ describe('concept and live demo copy', () => {
     for (const r of canonicalScript.risks) expect(r.label).toBe(RISK_LABEL[r.kind]);
   });
 });
+
+describe('tasks Raio did not record', () => {
+  it('does not quote a generated label as if it were the user request', () => {
+    const script = compileReplay({ ...demoSessionLog, task: 'Session started 09:54', taskIsPlaceholder: true }, demoGraph);
+    expect(script.story[0]?.label).toBe('Claude started a session');
+    expect(script.taskIsPlaceholder).toBe(true);
+  });
+});

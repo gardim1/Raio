@@ -23,6 +23,8 @@ export interface SessionLog {
   readonly id: string;
   readonly agent: AgentId;
   readonly task: string;
+  /** True when `task` is a generated label (Raio never stores prompts), not the user's words. */
+  readonly taskIsPlaceholder?: boolean;
   readonly project: string;
   readonly startedAt: string;
   readonly events: readonly AgentEvent[];

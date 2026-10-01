@@ -16,10 +16,12 @@ export interface TitleBarProps {
   readonly actions?: ReactNode;
   /** Replaces "Claude Code is working on" (e.g. "Replay of"). */
   readonly taskPrefix?: string;
+  /** The task is a generated label: show it plainly, not as a quoted request. */
+  readonly taskIsPlaceholder?: boolean;
 }
 
 /** 54px title bar: dots · brand · project | centred task | status pill (+ actions). */
-export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabel, windowDots = true, actions, taskPrefix }: TitleBarProps) => (
+export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabel, windowDots = true, actions, taskPrefix, taskIsPlaceholder = false }: TitleBarProps) => (
   <div className="titlebar">
     {windowDots && (
       <div className="titlebar__dots" aria-hidden>
@@ -35,7 +37,16 @@ export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabe
     <span className="titlebar__sep" />
     <span className="titlebar__project">{project}</span>
     <div className={`titlebar__task${taskVisible ? ' titlebar__task--show' : ''}`}>
-      {taskPrefix ?? `${agentFullName(agent)} is working on`} <b>“{task}”</b>
+      {taskIsPlaceholder ? (
+        <>
+          {taskPrefix ? `${taskPrefix} ` : `${agentFullName(agent)} · `}
+          <b>{task}</b>
+        </>
+      ) : (
+        <>
+          {taskPrefix ?? `${agentFullName(agent)} is working on`} <b>“{task}”</b>
+        </>
+      )}
     </div>
     <div className="titlebar__end">
       <AgentStatus state={status} agent={agent} {...(statusLabel ? { label: statusLabel } : {})} />

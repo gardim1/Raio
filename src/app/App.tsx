@@ -5,6 +5,7 @@ import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
 import { CTA_PROMINENT_SECONDS, derivePresence } from '../features/modes/presence';
 import { ReplayControls } from '../features/modes/ReplayControls';
+import { ConnectPanel } from '../features/panel/ConnectPanel';
 import { NoProjectState } from '../features/panel/NoProjectState';
 import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
@@ -43,10 +44,10 @@ export const App = ({ underlay }: AppProps) => {
         <Surfaces snapshot={snapshot} />
       ) : (
         <div className="app__empty">
-          <NoProjectState />
+          {bridge.connector && mode === 'expanded' ? <ConnectPanel connector={bridge.connector} /> : bridge.connector ? <p className="app__empty-note">No session yet</p> : <NoProjectState />}
         </div>
       )}
-      {snapshot?.provenance === 'fixture' && mode === 'expanded' && (
+      {snapshot?.provenance === 'fixture' && (
         <div className="app__fixture-badge" role="note">
           Demo fixture · not real agent activity
         </div>
@@ -95,8 +96,11 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   }, [source, replay]);
 
   const isReplay = source === 'replay';
-  const script = isReplay ? replayScript : liveScript;
-  const t = isReplay ? replay.t : live.t;
+  // Live agent data has no animated director yet (E2E-1): the live surfaces show the session's
+  // compiled state at its end, recomputed whenever new events arrive. The demo fixture keeps its film.
+  const liveData = snapshot.provenance === 'live';
+  const script = isReplay || liveData ? replayScript : liveScript;
+  const t = isReplay ? replay.t : liveData ? replayScript.duration + CTA_PROMINENT_SECONDS + 2 : live.t;
   const frame = evaluateFrame(script, graph, t);
   const presence = derivePresence(script, graph, frame, isReplay);
 

@@ -22,6 +22,15 @@ const FLUSH_EVERY: Duration = Duration::from_millis(250);
 /// Directories never reported, whatever `.gitignore` says.
 const ALWAYS_IGNORED: [&str; 12] = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "venv", "__pycache__", ".claude", ".raio", ".turbo"];
 
+/// Temp files of atomic writes (`name.tmp.<pid>.<hex>`), e.g. Claude Code's Write tool: the rename into
+/// place is reported for the real path; the temp file itself is noise.
+fn is_atomic_write_temp(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let mut parts = name.rsplitn(3, '.');
+    let (Some(hex), Some(pid), Some(rest)) = (parts.next(), parts.next(), parts.next()) else { return false };
+    rest.ends_with(".tmp") && !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && hex.len() >= 6 && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 pub struct Filter {
     gitignore: Gitignore,
 }
@@ -39,6 +48,9 @@ impl Filter {
             return true;
         }
         if rel.split('/').any(|seg| ALWAYS_IGNORED.contains(&seg)) {
+            return true;
+        }
+        if is_atomic_write_temp(rel) {
             return true;
         }
         let abs = root.join(rel);
@@ -155,10 +167,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".gitignore"), "*.log\ncoverage/\n").unwrap();
         let f = Filter::new(dir.path());
-        for ignored in ["node_modules/a/b.js", ".git/HEAD", "dist/app.js", "debug.log", "coverage/x.json", ".claude/settings.local.json", OUTSIDE_PROJECT] {
+        for ignored in ["src/auth/login.ts.tmp.47676.e5194d49b807", "node_modules/a/b.js", ".git/HEAD", "dist/app.js", "debug.log", "coverage/x.json", ".claude/settings.local.json", OUTSIDE_PROJECT] {
             assert!(f.ignored(dir.path(), ignored), "{ignored}");
         }
-        for kept in ["src/auth/login.ts", "db/migrations/0001.sql", "package.json"] {
+        for kept in ["src/auth/login.ts", "db/migrations/0001.sql", "package.json", "notes.tmp.md", "a.tmp.12.zz"] {
             assert!(!f.ignored(dir.path(), kept), "{kept}");
         }
     }

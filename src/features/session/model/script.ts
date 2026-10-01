@@ -114,6 +114,8 @@ export interface ChoreographyScript {
   readonly id: string;
   readonly agent: AgentId;
   readonly task: string;
+  /** True when `task` is a generated label rather than the user's request. */
+  readonly taskIsPlaceholder?: boolean;
   /** Content length; the sequence is considered finished after this. */
   readonly duration: number;
   /** The resting spot Raio returns to. */

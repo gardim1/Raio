@@ -168,8 +168,9 @@ fn root_and_command(root: &str) -> Result<(PathBuf, String, String), String> {
     Ok((root, id, command))
 }
 
+/// Async so the `git check-ignore` probe never blocks the UI thread.
 #[tauri::command]
-pub fn preview_connect(root: String) -> Result<connect::Preview, String> {
+pub async fn preview_connect(root: String) -> Result<connect::Preview, String> {
     let (root, _, command) = root_and_command(&root)?;
     connect::preview(&root, &command)
 }

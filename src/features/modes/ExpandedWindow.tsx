@@ -15,6 +15,9 @@ import { EventTimeline } from './EventTimeline';
 import { NodeInspector } from './NodeInspector';
 import { MORPH_TRANSITION, type Presence } from './presence';
 import { useSessionMeta } from './sessionMeta';
+import { EvidencePanel } from '../panel/EvidencePanel';
+import { ConnectionFooter } from '../panel/ConnectionFooter';
+import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
 
 export interface ExpandedWindowProps {
   readonly script: ChoreographyScript;
@@ -61,6 +64,8 @@ export const ExpandedWindow = ({
 }: ExpandedWindowProps) => {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const { startedAt } = useSessionMeta();
+  const evidence = useSessionSnapshot()?.evidence;
+  const connector = useBridge().connector;
   const agentFull = agentFullName(script.agent);
   // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
   const overview =
@@ -82,6 +87,7 @@ export const ExpandedWindow = ({
           project={project}
           agent={script.agent}
           task={script.task}
+          taskIsPlaceholder={script.taskIsPlaceholder === true}
           taskVisible={frame.ui.taskVisible}
           status={frame.ui.status}
           {...(isReplay ? { statusLabel: frame.ui.finished ? 'Replay complete' : 'Replay', taskPrefix: `Replay of a ${formatOffset(insights.durationMs)} session:` } : {})}
@@ -125,6 +131,8 @@ export const ExpandedWindow = ({
             )}
             <h4 className="sidebar__section">Session</h4>
             <EventTimeline events={script.story} agent={script.agent} t={frame.t} seekable={isReplay} selectedNodeId={selectedNodeId} onSelect={onSelectEvent} />
+            {evidence && <EvidencePanel evidence={evidence} />}
+            {connector && <ConnectionFooter connector={connector} />}
             </div>
           </aside>
         </div>

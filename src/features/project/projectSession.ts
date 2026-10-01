@@ -168,6 +168,7 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
     id: first.sessionId!,
     agent,
     task: `Session started ${localClock(startAt)}`,
+    taskIsPlaceholder: true,
     project: project.name,
     startedAt: new Date(startAt).toISOString(),
     events: log,

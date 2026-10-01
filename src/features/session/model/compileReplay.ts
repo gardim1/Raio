@@ -308,7 +308,7 @@ const compose = (
   const wakeAt = BEAT.leadIn;
   orb.push({ kind: 'sleep', t0: 0, t1: wakeAt, at: HOME });
   orb.push({ kind: 'wake', t0: wakeAt, t1: wakeAt + BEAT.wake, at: HOME, hopHeight: 9 });
-  story.push({ t: wakeAt, label: `${agent} started “${log.task}”`, tone: 'neutral', realTime: '00:00' });
+  story.push({ t: wakeAt, label: log.taskIsPlaceholder ? `${agent} started a session` : `${agent} started “${log.task}”`, tone: 'neutral', realTime: '00:00' });
 
   let t = wakeAt + BEAT.wake;
   let lastArrival = t;
@@ -478,6 +478,7 @@ const compose = (
     id: `replay-${log.id}`,
     agent: log.agent,
     task: log.task,
+    ...(log.taskIsPlaceholder ? { taskIsPlaceholder: true } : {}),
     duration: E + BEAT.end,
     home: HOME,
     orb,

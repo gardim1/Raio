@@ -28,5 +28,6 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     },
     setPinned: () => {},
     setIslandHitRect: () => {},
+    connector: null,
   };
 };
