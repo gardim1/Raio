@@ -1,0 +1,27 @@
+# Local-only design imports, recordings, logs, and working notes
+/.local/
+/.worktrees/
+/.claude/settings.local.json
+
+# Credentials and machine-specific secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# Development dependencies and generated output
+node_modules/
+/target/
+/src-tauri/target/
+/dist/
+/coverage/
+/playwright-report/
+/test-results/
+*.log
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
