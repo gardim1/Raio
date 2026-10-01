@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { AgentStatus } from '../../shared/ui/AgentStatus';
+import { agentFullName } from '../../shared/ui/agentName';
 import { MiniOrb } from '../raio/MiniOrb';
 import type { AgentId, AgentStatusState } from '../session/model/script';
-import { AGENT_LABEL } from '../session/model/events';
 
 export interface TitleBarProps {
   readonly project: string;
@@ -35,11 +35,11 @@ export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabe
     <span className="titlebar__sep" />
     <span className="titlebar__project">{project}</span>
     <div className={`titlebar__task${taskVisible ? ' titlebar__task--show' : ''}`}>
-      {taskPrefix ?? `${AGENT_LABEL[agent]} Code is working on`} <b>“{task}”</b>
+      {taskPrefix ?? `${agentFullName(agent)} is working on`} <b>“{task}”</b>
     </div>
     <div className="titlebar__end">
       <AgentStatus state={status} agent={agent} {...(statusLabel ? { label: statusLabel } : {})} />
-      {actions}
+      {actions && <div className="titlebar__actions">{actions}</div>}
     </div>
   </div>
 );

@@ -19,6 +19,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 1,
     colorScheme: 'dark',
+    timezoneId: 'UTC',
   },
   expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.0005, animations: 'disabled' } },
   webServer: {

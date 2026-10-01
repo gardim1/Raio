@@ -109,7 +109,7 @@ export const MiniPlayer = ({ script, frame, graph, project, presence, pinned, re
         )}
       </div>
       {replay ? (
-        <div className="mini__foot">{replay}</div>
+        <div className="mini__foot mini__foot--replay">{replay}</div>
       ) : presence.cta !== 'hidden' ? (
         <div className="mini__foot">
           <span className="mini__foot-text">

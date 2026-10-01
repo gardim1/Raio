@@ -1,18 +1,20 @@
 import { motion } from 'motion/react';
 import { type ReactNode, useState } from 'react';
+import { agentFullName } from '../../shared/ui/agentName';
 import { Button, IconButton } from '../../shared/ui/Button';
 import { CollapseIcon, PinIcon, PlayIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
 import type { ArchitectureGraph, NodeId } from '../architecture/model/types';
 import { PanelFooter } from '../panel/PanelFooter';
 import { TitleBar } from '../panel/TitleBar';
-import { AGENT_LABEL, formatOffset } from '../session/model/events';
+import { formatOffset } from '../session/model/events';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { SessionInsights } from '../session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../session/model/script';
 import { EventTimeline } from './EventTimeline';
 import { NodeInspector } from './NodeInspector';
 import { MORPH_TRANSITION, type Presence } from './presence';
+import { useSessionMeta } from './sessionMeta';
 
 export interface ExpandedWindowProps {
   readonly script: ChoreographyScript;
@@ -58,6 +60,17 @@ export const ExpandedWindow = ({
   onViewChanges,
 }: ExpandedWindowProps) => {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
+  const { startedAt } = useSessionMeta();
+  const agentFull = agentFullName(script.agent);
+  // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
+  const overview =
+    !isReplay && frame.ui.status === 'ready'
+      ? { eyebrow: project, title: `${graph.nodes.length} systems mapped`, meta: `Start ${agentFull} in this repository` }
+      : {
+          eyebrow: agentFull,
+          title: script.task,
+          meta: !isReplay && frame.ui.status === 'working' ? (startedAt ? `Live session, started ${startedAt}` : 'Live session') : `${formatOffset(insights.durationMs)} session, ${insights.filesChanged} files changed`,
+        };
   const selected = selectedNodeId ? graph.nodeById.get(selectedNodeId) : undefined;
   const hovered = tooltip ? graph.nodeById.get(tooltip.id) : undefined;
   const hoveredFrame = tooltip ? frame.nodes.get(tooltip.id) : undefined;
@@ -101,11 +114,9 @@ export const ExpandedWindow = ({
           <aside className="sidebar">
             <div className="sidebar__scroll">
             <div className="sidebar__overview">
-              <div className="sidebar__eyebrowless">{AGENT_LABEL[script.agent]} Code</div>
-              <div className="sidebar__task">{script.task}</div>
-              <div className="sidebar__meta">
-                {formatOffset(insights.durationMs)} session, {insights.filesChanged} files changed
-              </div>
+              <div className="sidebar__eyebrowless">{overview.eyebrow}</div>
+              <div className="sidebar__task">{overview.title}</div>
+              <div className="sidebar__meta">{overview.meta}</div>
             </div>
             {selected ? (
               <NodeInspector node={selected} frame={frame.nodes.get(selected.id)} insight={insights.byNode.get(selected.id)} onClose={() => onSelectNode(null)} />
@@ -113,7 +124,7 @@ export const ExpandedWindow = ({
               <p className="sidebar__hint">Select a system on the map to see what changed.</p>
             )}
             <h4 className="sidebar__section">Session</h4>
-            <EventTimeline events={script.story} t={frame.t} selectedNodeId={selectedNodeId} onSelect={onSelectEvent} />
+            <EventTimeline events={script.story} agent={script.agent} t={frame.t} seekable={isReplay} selectedNodeId={selectedNodeId} onSelect={onSelectEvent} />
             </div>
           </aside>
         </div>
@@ -134,7 +145,7 @@ export const ExpandedWindow = ({
       {tooltip && hovered && (
         <div className="tooltip" style={{ left: tooltip.x, top: tooltip.y }} role="tooltip">
           <strong>{hovered.label}</strong>
-          <span>{hoveredFrame?.touched ? (hoveredFrame.activation > 0 ? hoveredFrame.detail : 'Not reached yet') : 'Untouched'}</span>
+          <span>{hoveredFrame?.touched ? (hoveredFrame.activation > 0.01 ? hoveredFrame.detail : 'Not reached yet') : 'Not touched in this session'}</span>
         </div>
       )}
     </div>

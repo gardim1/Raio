@@ -17,8 +17,11 @@ const CHANGE_LABEL = { added: 'Added', modified: 'Edited', deleted: 'Deleted' } 
 /** Details for the selected system: state, files touched, risks. */
 export const NodeInspector = ({ node, frame, insight, onClose }: NodeInspectorProps) => {
   const touched = frame?.touched ?? false;
+  const reached = (frame?.activation ?? 0) > 0.01;
   const warning = frame?.tone === 'warning' && frame.toneAmount > 0.5;
-  const state = !touched ? 'Not touched in this session' : warning ? 'Worth reviewing' : (frame?.activation ?? 0) > 0 ? 'Changed' : 'Not reached yet';
+  const state = !touched ? 'Not touched in this session' : !reached ? 'Not reached yet' : warning ? 'Worth reviewing' : 'Changed';
+  // Files and risks appear only once Raio has reached the system (no spoilers), and risks only while it is flagged.
+  const detail = touched && reached ? insight : undefined;
   return (
     <section className="inspector" aria-label={`${node.label} details`}>
       <header className="inspector__head">
@@ -29,18 +32,18 @@ export const NodeInspector = ({ node, frame, insight, onClose }: NodeInspectorPr
         </IconButton>
       </header>
       <p className="inspector__state">{state}</p>
-      {insight?.risks.map((r, i) => (
+      {warning && detail?.risks.map((r, i) => (
         <div key={i} className="inspector__risk">
           <RiskPill kind={r.kind} />
           <p>{r.detail}</p>
         </div>
       ))}
-      {insight && insight.files.length > 0 && (
+      {detail && detail.files.length > 0 && (
         <ul className="inspector__files">
-          {insight.files.map((f) => (
+          {detail.files.map((f) => (
             <li key={f.path}>
               <span className={`inspector__change inspector__change--${f.change}`}>{CHANGE_LABEL[f.change]}</span>
-              <code>{f.path}</code>
+              <code title={f.path}>{f.path}</code>
             </li>
           ))}
         </ul>

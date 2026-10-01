@@ -1,14 +1,16 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
 import { AgentStatus } from '../../shared/ui/AgentStatus';
+import { agentFullName, agentShortName } from '../../shared/ui/agentName';
 import { Button, IconButton } from '../../shared/ui/Button';
 import { ExpandIcon, PinIcon, PlayIcon } from '../../shared/ui/icons';
 import { RiskPill } from '../../shared/ui/RiskPill';
 import { MiniOrb } from '../raio/MiniOrb';
-import { AGENT_LABEL } from '../session/model/events';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
+import { useSessionUi } from '../session/store/sessionStore';
 import { CROSSFADE, ISLAND_TRANSITION, type Presence } from './presence';
+import { useSessionMeta } from './sessionMeta';
 
 export interface IslandModeProps {
   readonly script: ChoreographyScript;
@@ -26,17 +28,23 @@ export interface IslandModeProps {
 export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onViewChanges }: IslandModeProps) => {
   const [open, setOpen] = useState(false);
   const { ui, orb } = frame;
-  const agent = AGENT_LABEL[script.agent];
+  const { project } = useSessionMeta();
+  const replaying = useSessionUi((s) => s.source === 'replay');
+  const agent = agentShortName(script.agent);
+  const agentFull = agentFullName(script.agent);
   const working = ui.status === 'working';
   const finished = ui.finished;
-  const collapsedLabel = working
-    ? `${agent} · ${presence.activeNodeLabel ?? 'starting'}`
-    : presence.recentlyFinished
-      ? `${agent} finished`
-      : finished
-        ? 'Idle'
-        : 'Ready';
-  const dotClass = working ? 'cool' : presence.recentlyFinished ? 'success' : 'idle';
+  const ready = ui.status === 'ready' && !replaying;
+  const collapsedLabel = replaying
+    ? 'Replaying'
+    : working
+      ? `${agent} · ${presence.activeNodeLabel ?? 'starting'}`
+      : presence.recentlyFinished
+        ? `${agent} finished`
+        : finished
+          ? 'Idle'
+          : 'Ready';
+  const dotClass = working || replaying ? 'cool' : presence.recentlyFinished ? 'success' : 'idle';
 
   return (
     <div className="island-dock">
@@ -59,11 +67,11 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
             <motion.div key="open" className="island__open" initial={{ opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)', transition: { ...CROSSFADE, delay: 0.08 } }} exit={{ opacity: 0, transition: { duration: 0.12 } }}>
               <div className="island__row">
                 <MiniOrb size={16} glow={0.3 + orb.glowCool * 0.6} warm={orb.glowWarm} />
-                <span className="island__title">{agent} Code</span>
+                <span className="island__title">{ready ? 'Raio' : agentFull}</span>
                 <span className="island__spacer" />
                 <AgentStatus state={ui.status} agent={script.agent} />
               </div>
-              <div className="island__task">{script.task}</div>
+              <div className={`island__task${ready ? ' island__task--muted' : ''}`}>{ready ? `No agent running in ${project}` : script.task}</div>
               <div className="island__row island__row--meta">
                 {presence.activeNodeLabel && (
                   <span className="island__area">
@@ -71,7 +79,7 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
                     {working ? 'Working in' : 'Last in'} {presence.activeNodeLabel}
                   </span>
                 )}
-                {ui.activeRisk && <RiskPill kind={ui.activeRisk.kind} label={ui.activeRisk.label} />}
+                {ui.activeRisk && !finished && <RiskPill kind={ui.activeRisk.kind} label={ui.activeRisk.label} />}
               </div>
               <div className="island__row island__row--actions">
                 {presence.cta !== 'hidden' ? (
@@ -83,7 +91,7 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
                     {finished
                       ? `${script.summary.systems} systems affected, ${script.summary.reviewCount} worth reviewing`
                       : working
-                        ? `Following ${agent} Code`
+                        ? `Following ${agentFull}`
                         : 'Waiting for an agent'}
                   </span>
                 )}
@@ -98,9 +106,9 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
             </motion.div>
           ) : (
             <motion.div key="closed" className="island__closed" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { ...CROSSFADE, delay: 0.06 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
-              <MiniOrb size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={!working} />
+              <MiniOrb size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={!working && !replaying} />
               <span className="island__label">{collapsedLabel}</span>
-              {ui.activeRisk && working ? <i className="island__dot island__dot--warning" /> : <i className={`island__dot island__dot--${dotClass}`} />}
+              {ui.activeRisk && working && !replaying ? <i className="island__dot island__dot--warning" /> : <i className={`island__dot island__dot--${dotClass}`} />}
             </motion.div>
           )}
         </AnimatePresence>

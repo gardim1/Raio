@@ -1,9 +1,12 @@
 import type { Playback } from '../../shared/motion/usePlayback';
+import { withAgent } from '../../shared/ui/agentName';
 import { IconButton } from '../../shared/ui/Button';
 import { CloseIcon, PauseIcon, PlayIcon, ReplayIcon } from '../../shared/ui/icons';
 import type { ChoreographyScript, StoryEvent } from '../session/model/script';
 
 const SPEEDS = [1, 2, 0.5] as const;
+/** A tick seeks just past its event so the system it names has already been reached. */
+const TICK_SEEK_OFFSET = 0.01;
 
 export interface ReplayControlsProps {
   readonly script: ChoreographyScript;
@@ -50,21 +53,24 @@ export const ReplayControls = ({ script, playback, compact = false, onInspect, o
         }}
       >
         <i className="replay__fill" style={{ width: `${fraction * 100}%` }} />
-        {script.story.map((ev, i) => (
-          <button
-            key={i}
-            type="button"
-            className={`replay__tick replay__tick--${ev.tone}`}
-            style={{ left: `${(ev.t / end) * 100}%` }}
-            aria-label={`${ev.label} at ${ev.realTime ?? ''}`}
-            title={ev.label}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              playback.seek(ev.t);
-              onInspect?.(ev);
-            }}
-          />
-        ))}
+        {script.story.map((ev, i) => {
+          const label = withAgent(ev.label, script.agent);
+          return (
+            <button
+              key={i}
+              type="button"
+              className={`replay__tick replay__tick--${ev.tone}`}
+              style={{ left: `${Math.min(1, ev.t / end) * 100}%` }}
+              aria-label={ev.realTime ? `${label} at ${ev.realTime}` : label}
+              title={label}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                playback.seek(Math.min(end, ev.t + TICK_SEEK_OFFSET));
+                onInspect?.(ev);
+              }}
+            />
+          );
+        })}
       </div>
       {!compact && (
         <button type="button" className="replay__speed" onClick={() => playback.setSpeed(nextSpeed)} aria-label="Playback speed">
