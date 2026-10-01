@@ -343,6 +343,93 @@ describe('projectSession: stale validations', () => {
   });
 });
 
+describe('projectSession: validation history', () => {
+  const run = (testAtSec: number, status: number) => [observed(testAtSec - 1, `t${testAtSec}`, 'test'), result(testAtSec, `t${testAtSec}`, status)];
+  const statusLog = (events: readonly RaioEvent[]) => validationsOf(events).map((e) => (e.kind === 'validation' ? [e.atMs, e.status] : []));
+
+  it('records a pass as passed when it happened and adds a later stale entry at the change time', () => {
+    const events = [started(0), edit(1, 'src/auth/a.ts', 'added'), ...run(10, 0), disk(30, 'src/auth/a.ts'), ended(40)];
+    expect(statusLog(events)).toEqual([
+      [9000, 'running'],
+      [10_000, 'passed'],
+      [30_000, 'stale'],
+    ]);
+  });
+
+  it('keeps the stale entry in time order relative to later log entries', () => {
+    const events = [started(0), ...run(10, 0), disk(12, 'src/a.ts'), observed(15, 'again', 'test'), ended(40)];
+    expect(statusLog(events)).toEqual([
+      [9000, 'running'],
+      [10_000, 'passed'],
+      [12_000, 'stale'],
+      [15_000, 'running'],
+    ]);
+    const log = eventsOf(events);
+    expect(log.map((e) => e.atMs)).toEqual([...log.map((e) => e.atMs)].sort((a, b) => a - b));
+    expect(log.at(-1)?.kind).toBe('session.end');
+  });
+
+  it('keeps the validation insight history: passed first, then stale with when the code changed', () => {
+    const { insights } = detailed([started(0), ...run(10, 0), disk(30, 'src/a.ts'), ended(40)]);
+    expect(insights.validations.map((v) => v.status)).toEqual(['running', 'passed', 'stale']);
+    expect(insights.validations[1]).toMatchObject({ status: 'passed', recordedStatus: 'passed', atMs: 10_000 });
+    expect(insights.validations[1]).not.toHaveProperty('staleSinceMs');
+    expect(insights.validations[2]).toMatchObject({ status: 'stale', recordedStatus: 'passed', atMs: 30_000, staleSinceMs: 30_000 });
+  });
+
+  it('still ends a pass-then-change run as stale in the replay and never as passed', () => {
+    const { snapshot } = detailed([started(0), ...run(10, 0), disk(30, 'src/a.ts'), ended(40)]);
+    const script = compileReplay(snapshot.log, snapshot.graph);
+    expect(script.validations.map((v) => v.status)).toEqual(['stale']);
+    expect(script.summary.checks).toBe('unverified');
+    expect(deriveInsights(snapshot.log).validations.get('tests')).toBe('stale');
+  });
+
+  it('places a stale entry for a change after the session at the last session event, never after session.end', () => {
+    const { snapshot, insights } = detailed([started(0), ...run(10, 0), ended(40), disk(100, 'src/a.ts')]);
+    expect(snapshot.log.events.at(-1)).toMatchObject({ kind: 'session.end', atMs: 40_000 });
+    const stale = snapshot.log.events.find((e) => e.kind === 'validation' && e.status === 'stale');
+    expect(stale).toMatchObject({ atMs: 40_000 });
+    expect(insights.validations.at(-1)).toMatchObject({ status: 'stale', staleSinceMs: 100_000 });
+  });
+
+  it('keeps a failure failed after a later edit, with no stale entry and a code-changed annotation', () => {
+    const events = [started(0), ...run(10, 1), disk(30, 'src/a.ts'), ended(40)];
+    expect(statusLog(events)).toEqual([
+      [9000, 'running'],
+      [10_000, 'failed'],
+    ]);
+    const { insights } = detailed(events);
+    expect(insights.validations.map((v) => v.status)).toEqual(['running', 'failed']);
+    expect(insights.validations.at(-1)).toMatchObject({ status: 'failed', recordedStatus: 'failed', atMs: 10_000, codeChangedSinceMs: 30_000 });
+    expect(insights.validations.at(-1)).not.toHaveProperty('staleSinceMs');
+  });
+
+  it('counts a later reported edit as a code change for a failure too', () => {
+    const { insights } = detailed([started(0), ...run(10, 2), edit(20, 'src/a.ts', 'modified'), ended(40)]);
+    expect(insights.validations.at(-1)).toMatchObject({ status: 'failed', codeChangedSinceMs: 20_000 });
+  });
+
+  it('still shows the failure in the replay end state when code changed afterwards', () => {
+    const { snapshot } = detailed([started(0), ...run(10, 1), disk(30, 'src/a.ts'), ended(40)]);
+    const script = compileReplay(snapshot.log, snapshot.graph);
+    expect(script.validations.map((v) => v.status)).toEqual(['failed']);
+    expect(script.summary.checks).toBe('some-failed');
+    expect(script.status.at(-1)?.state).toBe('failed');
+    expect(deriveInsights(snapshot.log).validations.get('tests')).toBe('failed');
+  });
+
+  it('leaves a failure without a later change unannotated', () => {
+    const { insights } = detailed([started(0), ...run(10, 1), ended(40)]);
+    expect(insights.validations.at(-1)).not.toHaveProperty('codeChangedSinceMs');
+  });
+
+  it('does not annotate a failure with the echo of an edit reported before it', () => {
+    const { insights } = detailed([started(0), edit(9, 'src/a.ts', 'modified'), ...run(10, 1), disk(11, 'src/a.ts'), ended(40)]);
+    expect(insights.validations.at(-1)).not.toHaveProperty('codeChangedSinceMs');
+  });
+});
+
 describe('projectSession: notices', () => {
   const risks = (events: readonly RaioEvent[]) => eventsOf(events).filter((e) => e.kind === 'risk');
 

@@ -81,6 +81,7 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
   const startAt = timeOf(first);
   const lastAt = timeOf(sessionEvents.at(-1)!);
   const atMs = (event: RaioEvent): number => Math.max(0, timeOf(event) - startAt);
+  const lastAtMs = Math.max(0, lastAt - startAt);
 
   const groupedPaths = sessionEvents.filter((e) => e.kind === 'file.inspected' || e.kind === 'file.edit.reported').flatMap((e) => e.paths);
   const { groups, groupOf } = groupPaths(groupedPaths);
@@ -129,12 +130,23 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
       case 'command.result': {
         const kind = (event.evidence.toolUseId ? kindOfTool.get(event.evidence.toolUseId) : undefined) ?? (event.evidence.commandClass ? VALIDATION_BY_CLASS[event.evidence.commandClass] : undefined);
         if (!kind) break;
+        // The result is logged with the status it had when it happened; what the project did afterwards is history.
         const recorded = statusFromExit(event.evidence.exitCode);
-        // Only a pass can go stale: a failure stays visible as a failure (never hidden by later edits).
-        const changedAt = recorded === 'passed' ? firstChangeAfter(timeOf(event), changes, editMoments) : undefined;
-        const status: ValidationStatus = changedAt === undefined ? recorded : 'stale';
-        log.push({ kind: 'validation', atMs: at, validation: kind, status });
-        validations.push({ kind, status, recordedStatus: recorded, atMs: at, ...(changedAt === undefined ? {} : { staleSinceMs: Math.max(0, changedAt - startAt) }) });
+        const changedAt = recorded === 'passed' || recorded === 'failed' ? firstChangeAfter(timeOf(event), changes, editMoments) : undefined;
+        const changedSinceMs = changedAt === undefined ? undefined : Math.max(0, changedAt - startAt);
+        log.push({ kind: 'validation', atMs: at, validation: kind, status: recorded });
+        if (changedSinceMs === undefined) {
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at });
+        } else if (recorded === 'passed') {
+          // A pass the project outlived gets a later `stale` entry at the change time (never past the session's last event).
+          const staleAt = Math.min(changedSinceMs, lastAtMs);
+          log.push({ kind: 'validation', atMs: staleAt, validation: kind, status: 'stale' });
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at });
+          validations.push({ kind, status: 'stale', recordedStatus: recorded, atMs: staleAt, staleSinceMs: changedSinceMs });
+        } else {
+          // A failure is never turned stale, hidden or greened by later edits: it stays failed and says the code changed.
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, codeChangedSinceMs: changedSinceMs });
+        }
         break;
       }
       case 'session.ended':
@@ -145,6 +157,11 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
         break;
     }
   }
+
+  // Stale entries are logged when the result is processed but belong at the change time: restore time order
+  // (stable, so entries at the same millisecond keep their processing order).
+  log.sort((a, b) => a.atMs - b.atMs);
+  validations.sort((a, b) => a.atMs - b.atMs);
 
   const assessments = assessReportedEdits(editMoments, changes);
   const reportedEdits: ReportedEditInsight[] = [];
