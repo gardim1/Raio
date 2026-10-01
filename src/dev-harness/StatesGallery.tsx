@@ -125,7 +125,6 @@ export const StatesGallery = () => (
       <RiskPill kind="migration" />
       <RiskPill kind="dependency" />
       <RiskPill kind="config" />
-      <RiskPill kind="publicApi" />
       <RiskPill kind="outOfScope" />
       <RiskPill kind="migration" label="Migration failed" tone="danger" />
     </div>
@@ -154,8 +153,8 @@ export const StatesGallery = () => (
 
     <h2>Completion summary</h2>
     <div className="gallery__row gallery__row--summary">
-      <div className="gallery__summary"><SessionSummary systems={4} reviewCount={1} visible detailVisible /></div>
-      <div className="gallery__summary"><SessionSummary systems={2} reviewCount={0} visible detailVisible /></div>
+      <div className="gallery__summary"><SessionSummary systems={4} reviewCount={1} checks="all-passed" visible detailVisible /></div>
+      <div className="gallery__summary"><SessionSummary systems={2} reviewCount={0} checks="all-passed" visible detailVisible /></div>
     </div>
 
     <h2>Empty state</h2>

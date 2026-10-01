@@ -383,7 +383,7 @@ export const evaluateFrame = (script: ChoreographyScript, graph: ArchitectureGra
     summaryVisible: t >= summaryAt,
     summaryDetailVisible: t >= script.summary.detailAt,
     wordmarkVisible: script.wordmarkAt !== undefined && t >= script.wordmarkAt,
-    finished: status === 'complete' || status === 'finished' || status === 'failed',
+    finished: status === 'complete' || status === 'finished' || status === 'failed' || status === 'incomplete',
     activeNodeId,
     activeRisk,
   };

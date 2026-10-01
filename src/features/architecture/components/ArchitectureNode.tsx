@@ -106,7 +106,7 @@ export const ArchitectureNode = ({ node, frame, t, variant, idPrefix, risk, sele
   );
 };
 
-/** The contextual pill under a node ("Migration detected"). Width follows its label. */
+/** The contextual pill under a node ("Migration file added"). Width follows its label. */
 const RiskMarkerPill = ({ risk }: { readonly risk: RiskFrame }) => {
   const color = toneRgb(risk.cue.tone);
   const textWidth = risk.cue.label.length * 6.55;

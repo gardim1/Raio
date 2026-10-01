@@ -27,7 +27,7 @@ export const PanelFooter = ({ script, frame, center, trailing, followingLabel }:
           <span className="hint__live" />
           {ui.hint === 'waiting' ? 'Waiting for an agent' : (followingLabel ?? `Following ${AGENT_LABEL[script.agent]} Code`)}
         </div>
-        <SessionSummary systems={script.summary.systems} reviewCount={script.summary.reviewCount} visible={ui.summaryVisible} detailVisible={ui.summaryDetailVisible} />
+        <SessionSummary systems={script.summary.systems} reviewCount={script.summary.reviewCount} checks={script.summary.checks} visible={ui.summaryVisible} detailVisible={ui.summaryDetailVisible} />
       </div>
       {center && <div className="footer__center">{center}</div>}
       <div className="footer__right">

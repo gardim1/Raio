@@ -14,6 +14,8 @@ export const statusLabel = (state: AgentStatusState, agent: AgentId): string => 
       return `${AGENT_LABEL[agent]} finished`;
     case 'failed':
       return 'Needs attention';
+    case 'incomplete':
+      return 'Incomplete';
   }
 };
 

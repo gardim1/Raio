@@ -28,11 +28,11 @@ export interface SessionLog {
   readonly events: readonly AgentEvent[];
 }
 
+/** Observed facts only: a migration file is not an executed migration, a manifest change is not an install. */
 export const RISK_LABEL: Record<RiskKind, string> = {
-  migration: 'Migration detected',
-  dependency: 'New dependency added',
-  config: 'Environment changed',
-  publicApi: 'Public API changed',
+  migration: 'Migration file added',
+  dependency: 'Dependency manifest changed',
+  config: 'Configuration file changed',
   outOfScope: 'Unexpected area touched',
 };
 

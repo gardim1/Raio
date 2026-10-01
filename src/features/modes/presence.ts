@@ -19,7 +19,7 @@ export interface Presence {
 
 /** Derives the companion's attention level from the frame — Raio never nags. */
 export const derivePresence = (script: ChoreographyScript, graph: ArchitectureGraph, frame: FrameState, replay: boolean): Presence => {
-  const completeCue = script.status.find((s) => s.state === 'complete' || s.state === 'failed');
+  const completeCue = script.status.find((s) => s.state === 'complete' || s.state === 'failed' || s.state === 'incomplete');
   const completeAt = completeCue?.at ?? null;
   const t = frame.t;
   const offerAt = script.summary.detailAt + 0.4;

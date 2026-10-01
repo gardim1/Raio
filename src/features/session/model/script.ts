@@ -10,10 +10,21 @@ import type { EdgeId, NodeId } from '../../architecture/model/types';
  */
 
 export type AgentId = 'claude' | 'codex';
-export type AgentStatusState = 'ready' | 'working' | 'complete' | 'finished' | 'failed';
-export type RiskKind = 'migration' | 'dependency' | 'config' | 'publicApi' | 'outOfScope';
+/** `incomplete`: the session stopped without an end signal, so Raio cannot say it completed. */
+export type AgentStatusState = 'ready' | 'working' | 'complete' | 'finished' | 'failed' | 'incomplete';
+/**
+ * Factual notices. `outOfScope` only comes from paths the user marked; public-API detection
+ * is out of v1 (see docs/ARCHITECTURE.md).
+ */
+export type RiskKind = 'migration' | 'dependency' | 'config' | 'outOfScope';
 export type ValidationKind = 'build' | 'tests';
-export type ValidationStatus = 'running' | 'passed' | 'failed';
+/**
+ * `unknown`: the check was observed but no result was captured.
+ * `incomplete`: it was still running when the session ended.
+ */
+export type ValidationStatus = 'running' | 'passed' | 'failed' | 'unknown' | 'incomplete';
+/** What the completion summary may honestly claim about checks. */
+export type CheckVerdict = 'all-passed' | 'some-failed' | 'unverified' | 'none-ran';
 export type Gaze = 'auto' | 'down' | 'viewer';
 
 /** Raio's path is a list of contiguous motion segments. A segment without `from` starts where the previous ended. */
@@ -116,7 +127,13 @@ export interface ChoreographyScript {
   readonly camera: { readonly focusIn: Window; readonly focusOut: Window; readonly zoom: number; readonly follow: number };
   readonly reveal: Window;
   readonly settle: Window;
-  readonly summary: { readonly at: number; readonly detailAt: number; readonly systems: number; readonly reviewCount: number };
+  readonly summary: {
+    readonly at: number;
+    readonly detailAt: number;
+    readonly systems: number;
+    readonly reviewCount: number;
+    readonly checks: CheckVerdict;
+  };
   readonly mood: {
     readonly wakeAt: number;
     readonly blinks: readonly number[];

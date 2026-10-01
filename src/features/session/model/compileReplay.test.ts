@@ -30,7 +30,7 @@ describe('compileReplay — semantic Session Replay', () => {
     expect(Math.abs(replay.duration - canonicalScript.duration)).toBeLessThan(0.1);
   });
 
-  it('reveals the Frontend as a caller of Auth instead of flying Raio there', () => {
+  it('reveals the existing Frontend → Auth map edge instead of flying Raio there', () => {
     const travelled = replay.orb.filter((s) => s.kind === 'edge').map((s) => (s.kind === 'edge' ? s.edgeId : ''));
     expect(travelled).toEqual(['auth-api', 'api-db']);
   });
@@ -83,18 +83,6 @@ describe('compileReplay — semantic Session Replay', () => {
     expect(script.summary.reviewCount).toBe(2);
   });
 
-  it('visits an unconnected system with a jump and flags it as out of scope', () => {
-    const log: SessionLog = {
-      ...demoSessionLog,
-      events: [
-        { kind: 'session.start', atMs: 0 },
-        { kind: 'file.write', atMs: 1000, path: 'src/auth/a.ts', nodeId: 'auth', change: 'modified' },
-        { kind: 'file.write', atMs: 2000, path: 'infra/billing.ts', nodeId: 'payments', change: 'modified' },
-        { kind: 'session.end', atMs: 3000, outcome: 'completed' },
-      ],
-    };
-    const script = compileReplay(log, demoGraph);
-    expect(script.nodes.map((n) => n.nodeId)).toEqual(['auth', 'payments']);
-    expect(script.risks.some((r) => r.kind === 'outOfScope' && r.nodeId === 'payments')).toBe(true);
-  });
+  // Out-of-scope is no longer inferred from map topology; see semantics.test.ts.
+
 });

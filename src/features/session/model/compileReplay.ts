@@ -4,6 +4,7 @@ import { findEdge, findLink, requireEdge, requireNode } from '../../architecture
 import type { ArchitectureEdge, ArchitectureGraph, NodeId } from '../../architecture/model/types';
 import { AGENT_LABEL, type AgentEvent, formatOffset, RISK_LABEL, type SessionLog } from './events';
 import type {
+  CheckVerdict,
   ChoreographyScript,
   EdgeCue,
   NodeCue,
@@ -13,6 +14,8 @@ import type {
   RiskKind,
   StoryEvent,
   ValidationCue,
+  ValidationKind,
+  ValidationStatus,
 } from './script';
 
 /** Maximum replay length (seconds). */
@@ -85,6 +88,8 @@ interface Visit {
 
 interface NodeFacts {
   readonly files: Set<string>;
+  /** Whether a read was observed here; "Inspecting" is only claimed with that evidence. */
+  inspected: boolean;
   readonly risks: { kind: RiskKind; atMs: number }[];
   readonly firstWriteMs: number;
 }
@@ -92,9 +97,11 @@ interface NodeFacts {
 interface SessionFacts {
   readonly facts: Map<NodeId, NodeFacts>;
   readonly order: NodeId[];
-  readonly finalValidations: Map<'build' | 'tests', { status: 'passed' | 'failed'; atMs: number }>;
+  readonly finalValidations: Map<ValidationKind, { status: ValidationStatus; atMs: number }>;
   readonly endMs: number;
   readonly failed: boolean;
+  /** False when the log has no `session.end`: the replay must not claim completion. */
+  readonly ended: boolean;
 }
 
 /* 1. Facts ------------------------------------------------------------ */
@@ -105,7 +112,7 @@ const collectFacts = (events: readonly AgentEvent[]): SessionFacts => {
   const ensure = (id: NodeId, atMs: number): NodeFacts => {
     let f = facts.get(id);
     if (!f) {
-      f = { files: new Set(), risks: [], firstWriteMs: atMs };
+      f = { files: new Set(), inspected: false, risks: [], firstWriteMs: atMs };
       facts.set(id, f);
       order.push(id);
     }
@@ -114,14 +121,26 @@ const collectFacts = (events: readonly AgentEvent[]): SessionFacts => {
   const finalValidations: SessionFacts['finalValidations'] = new Map();
   let endMs = 0;
   let failed = false;
+  let ended = false;
+  const reads = new Set<NodeId>();
   for (const e of events) {
     endMs = Math.max(endMs, e.atMs);
     if (e.kind === 'file.write') ensure(e.nodeId, e.atMs).files.add(e.path);
+    else if (e.kind === 'file.read') reads.add(e.nodeId);
     else if (e.kind === 'risk') ensure(e.nodeId, e.atMs).risks.push({ kind: e.risk, atMs: e.atMs });
-    else if (e.kind === 'validation' && e.status !== 'running') finalValidations.set(e.validation, { status: e.status, atMs: e.atMs });
-    else if (e.kind === 'session.end') failed = e.outcome === 'failed';
+    else if (e.kind === 'validation') finalValidations.set(e.validation, { status: e.status, atMs: e.atMs });
+    else if (e.kind === 'session.end') {
+      failed = e.outcome === 'failed';
+      ended = true;
+    }
   }
-  return { facts, order, finalValidations, endMs, failed };
+  for (const id of reads) {
+    const f = facts.get(id);
+    if (f) f.inspected = true;
+  }
+  // A check that never reported a result by the end of the log is incomplete, never dropped.
+  for (const [kind, v] of finalValidations) if (v.status === 'running') finalValidations.set(kind, { ...v, status: 'incomplete' });
+  return { facts, order, finalValidations, endMs, failed, ended };
 };
 
 /* 2. Visits: primaries Raio flies to; satellites are callers revealed in place */
@@ -189,6 +208,28 @@ const segmentEnd = (graph: ArchitectureGraph, s: OrbSegment): Vec => {
   }
 };
 
+const VALIDATION_TONE: Record<ValidationStatus, StoryEvent['tone']> = {
+  running: 'cool',
+  passed: 'success',
+  failed: 'danger',
+  unknown: 'neutral',
+  incomplete: 'neutral',
+};
+
+const validationLabel = (kind: ValidationKind, status: ValidationStatus): string => {
+  const name = kind === 'build' ? 'Build' : 'Tests';
+  if (status === 'unknown') return `${name}: result unknown`;
+  return `${name} ${status}`;
+};
+
+/** "Everything validated" requires observed passing results for every observed check. */
+export const checkVerdict = (validations: readonly ValidationCue[]): CheckVerdict => {
+  if (validations.length === 0) return 'none-ran';
+  if (validations.some((v) => v.status === 'failed')) return 'some-failed';
+  if (validations.every((v) => v.status === 'passed')) return 'all-passed';
+  return 'unverified';
+};
+
 /* 3. Public API --------------------------------------------------------- */
 
 /**
@@ -198,9 +239,21 @@ const segmentEnd = (graph: ArchitectureGraph, s: OrbSegment): Vec => {
  */
 export const compileReplay = (log: SessionLog, graph: ArchitectureGraph): ChoreographyScript => {
   const session = collectFacts(log.events);
-  const visits = planVisits(graph, session);
-  const available = REPLAY_BUDGET_SECONDS - FIXED_SECONDS;
+  let visits = planVisits(graph, session);
+  let script = fitToBudget(log, graph, visits, session);
+  // When even the fastest pacing overflows, group low-value systems into the previous stop
+  // (activated in place, no flight). Systems with warnings are never grouped away.
+  while (script.duration > REPLAY_BUDGET_SECONDS + 0.05) {
+    const grouped = groupOneVisit(graph, visits, session);
+    if (!grouped) break;
+    visits = grouped;
+    script = fitToBudget(log, graph, visits, session);
+  }
+  return script;
+};
 
+const fitToBudget = (log: SessionLog, graph: ArchitectureGraph, visits: readonly Visit[], session: SessionFacts): ChoreographyScript => {
+  const available = REPLAY_BUDGET_SECONDS - FIXED_SECONDS;
   let scale = 1;
   let script = compose(log, graph, visits, session, scale, false);
   for (let i = 0; i < 8 && script.duration > REPLAY_BUDGET_SECONDS + 0.05 && scale > MIN_TIME_SCALE; i++) {
@@ -209,6 +262,25 @@ export const compileReplay = (log: SessionLog, graph: ArchitectureGraph): Choreo
     script = compose(log, graph, visits, session, scale, scale < 0.75);
   }
   return script;
+};
+
+/** Folds the smallest risk-free stop (never the first) into the stop before it. Returns null when nothing can be grouped. */
+const groupOneVisit = (graph: ArchitectureGraph, visits: readonly Visit[], session: SessionFacts): Visit[] | null => {
+  let pick = -1;
+  for (let i = 1; i < visits.length; i++) {
+    const facts = session.facts.get(visits[i]!.nodeId);
+    if ((facts?.risks.length ?? 0) > 0) continue;
+    if (pick === -1 || (facts?.files.size ?? 0) < (session.facts.get(visits[pick]!.nodeId)?.files.size ?? 0)) pick = i;
+  }
+  if (pick === -1) return null;
+  const folded = visits[pick]!;
+  const previous = visits[pick - 1]!;
+  const next: Visit[] = [...visits];
+  next[pick - 1] = { ...previous, satellites: [...previous.satellites, folded.nodeId, ...folded.satellites] };
+  next.splice(pick, 1);
+  const after = next[pick];
+  if (after) next[pick] = { ...after, via: findLink(graph, previous.nodeId, after.nodeId) ?? null };
+  return next;
 };
 
 /* 4. Composition --------------------------------------------------------- */
@@ -241,10 +313,9 @@ const compose = (
   let firstRiskAt: number | null = null;
   let lastNodeWarned = false;
 
-  const addRisks = (nodeId: NodeId, at: number, outOfScope: boolean): void => {
-    const f = facts.get(nodeId);
-    const kinds = [...(f?.risks ?? [])];
-    if (outOfScope) kinds.push({ kind: 'outOfScope', atMs: f?.firstWriteMs ?? 0 });
+  /** Risks come only from observed facts (or paths the user marked out of scope); never from map topology. */
+  const addRisks = (nodeId: NodeId, at: number): void => {
+    const kinds = facts.get(nodeId)?.risks ?? [];
     kinds.forEach((r, i) => {
       const riskAt = at + i * 0.2 * s;
       const pillAt = riskAt + (BEAT.warningPillOffset - BEAT.warningToneOffset) * s;
@@ -265,7 +336,7 @@ const compose = (
       activate(sat, satAt, null);
       story.push({
         t: satAt,
-        label: `${requireNode(graph, sat).label} connected to ${requireNode(graph, visit.nodeId).label}`,
+        label: `${requireNode(graph, sat).label} updated`,
         nodeId: sat,
         tone: 'cool',
         realTime: formatOffset(facts.get(sat)?.firstWriteMs ?? 0),
@@ -278,14 +349,10 @@ const compose = (
     });
   };
 
-  const isOutOfScope = (visit: Visit, index: number): boolean =>
-    index > 0 && visit.via === null && !visits.slice(0, index).some((v) => findLink(graph, v.nodeId, visit.nodeId));
-
   visits.forEach((visit, index) => {
     const node = requireNode(graph, visit.nodeId);
     const next = visits[index + 1];
-    const outOfScope = isOutOfScope(visit, index);
-    const warned = (facts.get(visit.nodeId)?.risks.length ?? 0) > 0 || outOfScope;
+    const warned = (facts.get(visit.nodeId)?.risks.length ?? 0) > 0;
     const isLast = index === visits.length - 1;
 
     if (index === 0) {
@@ -298,8 +365,9 @@ const compose = (
       const warnAt = warned ? t + BEAT.warningToneOffset * s : null;
       activate(visit.nodeId, activateAt, warnAt);
       blinks.push(activateAt);
-      story.push({ t: activateAt, label: `Inspecting ${node.label}`, nodeId: node.id, tone: 'cool', realTime: formatOffset(visit.firstWriteMs) });
-      if (warnAt !== null) addRisks(visit.nodeId, warnAt, outOfScope);
+      const firstLabel = facts.get(visit.nodeId)?.inspected ? `Inspecting ${node.label}` : `${node.label} updated`;
+      story.push({ t: activateAt, label: firstLabel, nodeId: node.id, tone: 'cool', realTime: formatOffset(visit.firstWriteMs) });
+      if (warnAt !== null) addRisks(visit.nodeId, warnAt);
       revealSatellites(visit, approachStart + BEAT.satelliteRevealOffset * s, approachStart + BEAT.satelliteActivateOffset * s);
       orb.push({ kind: 'orbit', t0: t, t1: t + BEAT.orbit * s, nodeId: node.id, center: node.position, rx: ORBIT.rx, ry: ORBIT.ry, startAngle, turns: 1 });
       t += BEAT.orbit * s;
@@ -338,7 +406,7 @@ const compose = (
       const warnAt = arrival + BEAT.warningToneOffset * s;
       activate(visit.nodeId, arrival, warnAt);
       if (visit.via) pulses.push({ edgeId: visit.via.edge.id, t0: arrival - 0.1 * s, duration: 0.4, tone: 'warning', reversed: visit.via.reversed });
-      addRisks(visit.nodeId, warnAt, outOfScope);
+      addRisks(visit.nodeId, warnAt);
       const hoverAt = { x: node.position.x, y: node.position.y - WARNING_HOVER_OFFSET };
       if (visit.via) {
         orb.push({ kind: 'arc', t0: t, t1: t + BEAT.warningArc * s, to: hoverAt, lift: 18 });
@@ -379,12 +447,7 @@ const compose = (
     const at = E + BEAT.firstValidation + validations.length * BEAT.validationStep;
     validations.push({ kind, status: result.status, at });
     if (result.status === 'failed') failures++;
-    story.push({
-      t: at,
-      label: `${kind === 'build' ? 'Build' : 'Tests'} ${result.status}`,
-      tone: result.status === 'passed' ? 'success' : 'danger',
-      realTime: formatOffset(result.atMs),
-    });
+    story.push({ t: at, label: validationLabel(kind, result.status), tone: VALIDATION_TONE[result.status], realTime: formatOffset(result.atMs) });
   }
 
   const revealOrder = [...edges].sort((a, b) => a.revealAt - b.revealAt);
@@ -400,10 +463,10 @@ const compose = (
     });
   });
 
-  const endState = session.failed || failures > 0 ? 'failed' : 'complete';
+  const endState = session.failed || failures > 0 ? 'failed' : session.ended ? 'complete' : 'incomplete';
   story.push({
     t: E + BEAT.complete,
-    label: endState === 'failed' ? `${agent} finished with failures` : `${agent} finished`,
+    label: endState === 'failed' ? `${agent} finished with failures` : endState === 'incomplete' ? 'Session ended without a completion signal' : `${agent} finished`,
     tone: endState === 'failed' ? 'danger' : 'neutral',
     realTime: formatOffset(session.endMs),
   });
@@ -430,7 +493,7 @@ const compose = (
     camera: { focusIn: { t0: wakeAt + 0.3, duration: 0.8 }, focusOut: { t0: E + BEAT.focusOut, duration: 1.0 }, zoom: 1.13, follow: 0.5 },
     reveal: { t0: E + BEAT.reveal, duration: 0.8 },
     settle: { t0: E + BEAT.settleTail, duration: 0.8 },
-    summary: { at: E + BEAT.summary, detailAt: E + BEAT.summaryDetail, systems: nodes.length, reviewCount: risks.length + failures },
+    summary: { at: E + BEAT.summary, detailAt: E + BEAT.summaryDetail, systems: nodes.length, reviewCount: risks.length + failures, checks: checkVerdict(validations) },
     mood: {
       wakeAt,
       blinks,

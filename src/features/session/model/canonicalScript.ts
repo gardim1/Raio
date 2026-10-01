@@ -1,3 +1,4 @@
+import { RISK_LABEL } from './events';
 import type { ChoreographyScript } from './script';
 
 const HOME = { x: 480, y: 262 } as const;
@@ -46,7 +47,7 @@ export const canonicalScript: ChoreographyScript = {
     { edgeId: 'auth-api', t0: 7.6, duration: 0.42, tone: 'cool' },
     { edgeId: 'api-db', t0: 8.0, duration: 0.36, tone: 'warning' },
   ],
-  risks: [{ nodeId: 'db', kind: 'migration', label: 'Migration detected', tone: 'warning', at: 5.45, pillAt: 5.65 }],
+  risks: [{ nodeId: 'db', kind: 'migration', label: RISK_LABEL.migration, tone: 'warning', at: 5.45, pillAt: 5.65 }],
   validations: [
     { kind: 'build', status: 'passed', at: 7.0 },
     { kind: 'tests', status: 'passed', at: 7.4 },
@@ -60,14 +61,14 @@ export const canonicalScript: ChoreographyScript = {
   camera: { focusIn: { t0: 1.3, duration: 0.8 }, focusOut: { t0: 6.5, duration: 1.0 }, zoom: 1.13, follow: 0.5 },
   reveal: { t0: 6.6, duration: 0.8 },
   settle: { t0: 8.4, duration: 0.8 },
-  summary: { at: 8.6, detailAt: 8.95, systems: 4, reviewCount: 1 },
+  summary: { at: 8.6, detailAt: 8.95, systems: 4, reviewCount: 1, checks: 'all-passed' },
   mood: { wakeAt: 1.0, blinks: [1.6, 3.95, 6.4, 10.6], happy: { t0: 8.85, duration: 1.55 }, warmGlow: { from: 5.45, to: 7.6 }, calmAt: 8.6 },
   story: [
     { t: 1.0, label: 'Claude started “Add Google authentication”', tone: 'neutral', realTime: '00:00' },
     { t: 1.6, label: 'Inspecting Auth', nodeId: 'auth', tone: 'cool', realTime: '00:41' },
-    { t: 2.05, label: 'Frontend now calls Auth', nodeId: 'frontend', tone: 'cool', realTime: '03:12' },
+    { t: 2.05, label: 'Frontend updated', nodeId: 'frontend', tone: 'cool', realTime: '03:12' },
     { t: 3.9, label: 'API session routes updated', nodeId: 'api', tone: 'cool', realTime: '06:05' },
-    { t: 5.45, label: 'Migration detected in Database', nodeId: 'db', tone: 'warning', realTime: '08:47' },
+    { t: 5.45, label: 'Migration file added in Database', nodeId: 'db', tone: 'warning', realTime: '08:47' },
     { t: 7.0, label: 'Build passed', tone: 'success', realTime: '12:58' },
     { t: 7.4, label: 'Tests passed', tone: 'success', realTime: '14:03' },
     { t: 8.2, label: 'Claude finished', tone: 'neutral', realTime: '14:32' },
