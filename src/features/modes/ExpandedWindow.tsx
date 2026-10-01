@@ -64,7 +64,8 @@ export const ExpandedWindow = ({
 }: ExpandedWindowProps) => {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const { startedAt } = useSessionMeta();
-  const evidence = useSessionSnapshot()?.evidence;
+  const snapshotNow = useSessionSnapshot();
+  const evidence = snapshotNow?.evidence;
   const connector = useBridge().connector;
   const agentFull = agentFullName(script.agent);
   // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
@@ -74,7 +75,7 @@ export const ExpandedWindow = ({
       : {
           eyebrow: agentFull,
           title: script.task,
-          meta: !isReplay && frame.ui.status === 'working' ? (startedAt ? `Live session, started ${startedAt}` : 'Live session') : `${formatOffset(insights.durationMs)} session, ${insights.filesChanged} files changed`,
+          meta: !isReplay && frame.ui.status === 'working' ? (startedAt ? `Live session, started ${startedAt}` : 'Live session') : `${formatOffset(insights.durationMs)} session, ${insights.filesChanged} ${insights.filesChanged === 1 ? 'file' : 'files'} changed`,
         };
   const selected = selectedNodeId ? graph.nodeById.get(selectedNodeId) : undefined;
   const hovered = tooltip ? graph.nodeById.get(tooltip.id) : undefined;
@@ -131,7 +132,7 @@ export const ExpandedWindow = ({
             )}
             <h4 className="sidebar__section">Session</h4>
             <EventTimeline events={script.story} agent={script.agent} t={frame.t} seekable={isReplay} selectedNodeId={selectedNodeId} onSelect={onSelectEvent} />
-            {evidence && <EvidencePanel evidence={evidence} />}
+            {evidence && <EvidencePanel evidence={evidence} core={snapshotNow?.core} />}
             {connector && <ConnectionFooter connector={connector} />}
             </div>
           </aside>

@@ -7,6 +7,7 @@ export const ConnectionFooter = ({ connector }: { readonly connector: Connector 
   const bridge = useBridge();
   const project = useSyncExternalStore(bridge.subscribe, connector.project);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   if (!project) return null;
   return (
     <p className="evidence__note">
@@ -17,11 +18,16 @@ export const ConnectionFooter = ({ connector }: { readonly connector: Connector 
         disabled={busy}
         onClick={() => {
           setBusy(true);
-          void connector.disconnect().finally(() => setBusy(false));
+          setError(null);
+          void connector
+            .disconnect()
+            .catch((e: unknown) => setError(String(e)))
+            .finally(() => setBusy(false));
         }}
       >
         Disconnect
       </button>
+      {error && <span className="evidence__warn"> {error}</span>}
     </p>
   );
 };

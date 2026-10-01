@@ -57,7 +57,8 @@ fn unique_name(id: &str) -> String {
     format!("{nanos:024}-{}-{}.json", std::process::id(), &id[..id.len().min(12)])
 }
 
-fn mark_dropped(dirs: &Dirs, reason: &'static str) -> WriteOutcome {
+/// Leaves one marker per dropped event (no shared counter to race on); the app shows the count.
+pub fn mark_dropped(dirs: &Dirs, reason: &'static str) -> WriteOutcome {
     let _ = fs::create_dir_all(&dirs.dropped);
     let _ = fs::write(dirs.dropped.join(format!("{}-{reason}", unique_name("drop"))), b"");
     WriteOutcome::Dropped(reason)

@@ -36,8 +36,18 @@ fn run() {
         let _ = std::io::stdin().take(MAX_STDIN).read_to_end(&mut buf);
         let _ = tx.send(buf);
     });
-    let Ok(bytes) = rx.recv_timeout(READ_DEADLINE) else { return };
-    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return };
+    let Ok(bytes) = rx.recv_timeout(READ_DEADLINE) else {
+        inbox::mark_dropped(&dirs, "stdin-timeout");
+        return;
+    };
+    if bytes.len() as u64 >= MAX_STDIN {
+        inbox::mark_dropped(&dirs, "stdin-too-large");
+        return;
+    }
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        inbox::mark_dropped(&dirs, "unreadable-payload");
+        return;
+    };
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     let root = PathBuf::from(root);
     let ctx = claude::Context { project_id: &project_id, root: &root, now_ms };

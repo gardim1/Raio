@@ -96,3 +96,16 @@ describe('native bridge', () => {
     expect(fake.calls).toContainEqual(['set_island_hit_rect', { rect: { x: 1, y: 2, width: 3, height: 4 } }]);
   });
 });
+
+describe('native bridge refresh', () => {
+  it('does not lose a notification that arrives while a refresh is running', async () => {
+    const events: RaioEvent[] = [event(1, 'session.started')];
+    const fake = fakeIpc([project], events);
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    events.push(event(2, 'session.ended'));
+    fake.ingest(); // arrives while the initial refresh is still in flight
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.log.events.map((e) => e.kind)).toContain('session.end');
+  });
+});

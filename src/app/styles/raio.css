@@ -462,3 +462,5 @@ svg text { font-family: var(--raio-font-ui); }
 .evidence__note { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--raio-color-text-subtle); }
 .link-btn { border: 0; padding: 0; background: none; font: inherit; color: var(--raio-color-accent-cool); cursor: pointer; }
 .link-btn:disabled { opacity: 0.5; cursor: default; }
+.evidence__warn { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: #ffd9a3; }
+.island--idle { padding: 0; color: inherit; font: inherit; cursor: pointer; }

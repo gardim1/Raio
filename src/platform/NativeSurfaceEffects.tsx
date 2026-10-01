@@ -1,5 +1,5 @@
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useEffect } from 'react';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { setNativeSurfaceVisible } from '../shared/motion/surfaceVisibility';
@@ -76,12 +76,13 @@ export const NativeSurfaceEffects = () => {
       .isVisible()
       .then(setNativeSurfaceVisible)
       .catch(() => {});
-    const unlisten = listen<boolean>('surface-visible', (event) => setNativeSurfaceVisible(event.payload));
+    // Window-scoped: the core targets each surface with emit_to; a global listen() would receive them all.
+    const unlisten = getCurrentWebviewWindow().listen<boolean>('surface-visible', (event) => setNativeSurfaceVisible(event.payload));
     return () => void unlisten.then((stop) => stop());
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<string>('surface-intent', (event) => {
+    const unlisten = getCurrentWebviewWindow().listen<string>('surface-intent', (event) => {
       if (event.payload === 'replay') startReplay();
     });
     return () => void unlisten.then((stop) => stop());

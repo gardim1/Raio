@@ -57,7 +57,12 @@ pub struct Project {
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if version > MIGRATIONS.len() as i64 {
+        // Written by a newer Raio: refuse rather than guess.
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
         conn.execute_batch(&format!("BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;", i + 1))?;
     }
@@ -69,23 +74,35 @@ fn healthy(conn: &Connection) -> bool {
 }
 
 impl Store {
-    /// Opens (creating if needed). A database that cannot be opened or fails `quick_check` is renamed
-    /// aside (never deleted) and a fresh one is created.
+    /// Opens (creating if needed). Only a database that fails `quick_check` is moved aside (with its
+    /// -wal/-shm files, never deleted) and replaced by a fresh one. Any other error (locked, busy,
+    /// newer schema) is returned unchanged so nothing is reset by mistake.
     pub fn open(path: &Path, now_ms: i64) -> rusqlite::Result<Self> {
-        let attempt = Connection::open(path).and_then(|c| if healthy(&c) { migrate(&c).map(|_| c) } else { Err(rusqlite::Error::InvalidQuery) });
-        match attempt {
-            Ok(conn) => Ok(Store { conn, reset_from: None }),
-            Err(_) => {
-                let aside = path.with_extension(format!("db.corrupt-{now_ms}"));
-                let _ = std::fs::rename(path, &aside);
-                for suffix in ["-wal", "-shm"] {
-                    let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-                }
-                let conn = Connection::open(path)?;
-                migrate(&conn)?;
-                Ok(Store { conn, reset_from: Some(aside) })
-            }
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        if healthy(&conn) {
+            migrate(&conn)?;
+            return Ok(Store { conn, reset_from: None });
         }
+        drop(conn);
+        let aside = path.with_extension(format!("db.corrupt-{now_ms}"));
+        std::fs::rename(path, &aside).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        for suffix in ["-wal", "-shm"] {
+            let from = format!("{}{suffix}", path.display());
+            let _ = std::fs::rename(&from, format!("{}{suffix}", aside.display()));
+        }
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        migrate(&conn)?;
+        Ok(Store { conn, reset_from: Some(aside) })
+    }
+
+    pub fn begin(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN")
+    }
+
+    pub fn commit(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("COMMIT")
     }
 
     pub fn schema_version(&self) -> i64 {
@@ -247,5 +264,14 @@ mod tests {
         assert!(aside.exists());
         assert_eq!(store.schema_version(), 1);
         assert_eq!(store.count_events().unwrap(), 0);
+    }
+
+    #[test]
+    fn refuses_a_database_from_a_newer_raio_instead_of_resetting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("raio.db");
+        Connection::open(&path).unwrap().pragma_update(None, "user_version", 99).unwrap();
+        assert!(Store::open(&path, 1).is_err());
+        assert_eq!(Connection::open(&path).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 99);
     }
 }

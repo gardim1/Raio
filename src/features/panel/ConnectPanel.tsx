@@ -4,6 +4,22 @@ import type { ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { Button } from '../../shared/ui/Button';
 import { MiniOrb } from '../raio/MiniOrb';
 
+/**
+ * Shows only what Raio changes: the `hooks` key in full, every other value masked so secrets in
+ * `env` or permission rules are not displayed (they are kept unchanged on disk).
+ */
+export const maskedSettings = (text: string | null): string => {
+  if (text === null) return '(file does not exist)';
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '(not shown)';
+    const shown = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'hooks' ? v : '… kept unchanged']));
+    return JSON.stringify(shown, null, 2);
+  } catch {
+    return '(not valid JSON; Raio will not change it)';
+  }
+};
+
 type Step = { readonly kind: 'idle' } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview } | { readonly kind: 'error'; readonly message: string };
 
 
@@ -54,11 +70,11 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
         <div className="connect__diff">
           <div>
             <span>Before</span>
-            <pre>{preview.before ?? '(file does not exist)'}</pre>
+            <pre>{maskedSettings(preview.before)}</pre>
           </div>
           <div>
             <span>After</span>
-            <pre>{preview.after}</pre>
+            <pre>{maskedSettings(preview.after)}</pre>
           </div>
         </div>
         <div className="connect__actions">

@@ -25,6 +25,7 @@ pub const INGESTED_EVENT: &str = "events-ingested";
 
 pub struct Core {
     pub dirs: Dirs,
+    backups: PathBuf,
     pub store: Mutex<Store>,
     watches: Mutex<HashMap<String, ProjectWatch>>,
 }
@@ -42,28 +43,36 @@ impl Core {
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
         let _ = store.apply_retention(now_ms());
-        Ok(Core { dirs, store: Mutex::new(store), watches: Mutex::default() })
+        Ok(Core { dirs, backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default() })
     }
 
     /// Moves pending inbox records into the store. Returns how many new events were stored.
     pub fn ingest_once(&self) -> usize {
         let pending = inbox::pending(&self.dirs, 500);
+        if pending.is_empty() {
+            return 0;
+        }
         let Ok(store) = self.store.lock() else { return 0 };
+        let _ = store.begin();
         let mut stored = 0;
+        let mut done = vec![];
         for p in pending {
             match p.event {
                 Ok(event) => match store.insert(&event, now_ms()) {
-                    // Delete only after the row is committed; a crash in between is covered by dedupe.
                     Ok(Insert::Inserted(_)) => {
                         stored += 1;
-                        let _ = fs::remove_file(&p.path);
+                        done.push(p.path);
                     }
-                    Ok(Insert::Duplicate | Insert::Capped) => {
-                        let _ = fs::remove_file(&p.path);
-                    }
+                    Ok(Insert::Duplicate | Insert::Capped) => done.push(p.path),
                     Err(_) => {} // leave it for the next pass
                 },
                 Err(_) => inbox::quarantine(&self.dirs, &p.path),
+            }
+        }
+        // Delete inbox files only after the batch is committed; a crash before that re-ingests (dedupe).
+        if store.commit().is_ok() {
+            for path in done {
+                let _ = fs::remove_file(path);
             }
         }
         stored
@@ -133,7 +142,7 @@ fn hook_binary() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn core_status(core: State<'_, Core>) -> Result<CoreStatus, String> {
     let store = core.store.lock().map_err(|e| e.to_string())?;
     let overflow = core.watches.lock().map(|w| w.values().any(|p| p.overflowed.load(Ordering::Relaxed))).unwrap_or(false);
@@ -147,12 +156,12 @@ pub fn core_status(core: State<'_, Core>) -> Result<CoreStatus, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(core: State<'_, Core>) -> Result<Vec<Project>, String> {
     core.store.lock().map_err(|e| e.to_string())?.connected_projects().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn project_events(core: State<'_, Core>, project_id: String) -> Result<Vec<RaioEvent>, String> {
     core.store.lock().map_err(|e| e.to_string())?.project_events(&project_id).map_err(|e| e.to_string())
 }
@@ -175,10 +184,10 @@ pub async fn preview_connect(root: String) -> Result<connect::Preview, String> {
     connect::preview(&root, &command)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn connect_project(app: AppHandle, core: State<'_, Core>, root: String, previewed: connect::Preview) -> Result<Project, String> {
     let (root_path, id, command) = root_and_command(&root)?;
-    connect::connect(&root_path, &command, &previewed, now_ms())?;
+    connect::connect(&root_path, &command, &previewed, &core.backups, now_ms())?;
     let name = root_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
     let project = Project { id, root: root_path.to_string_lossy().into_owned(), name, connected_at: now_ms() };
     core.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
@@ -188,12 +197,14 @@ pub fn connect_project(app: AppHandle, core: State<'_, Core>, root: String, prev
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn disconnect_project(app: AppHandle, core: State<'_, Core>, project_id: String) -> Result<(), String> {
-    let store = core.store.lock().map_err(|e| e.to_string())?;
-    let project = store.connected_projects().map_err(|e| e.to_string())?.into_iter().find(|p| p.id == project_id).ok_or("unknown project")?;
-    connect::disconnect(Path::new(&project.root))?;
-    store.disconnect_project(&project_id, now_ms()).map_err(|e| e.to_string())?;
+    let project = {
+        let store = core.store.lock().map_err(|e| e.to_string())?;
+        store.connected_projects().map_err(|e| e.to_string())?.into_iter().find(|p| p.id == project_id).ok_or("unknown project")?
+    };
+    connect::disconnect(Path::new(&project.root), &core.backups, now_ms())?;
+    core.store.lock().map_err(|e| e.to_string())?.disconnect_project(&project_id, now_ms()).map_err(|e| e.to_string())?;
     if let Ok(mut w) = core.watches.lock() {
         w.remove(&project_id);
     }

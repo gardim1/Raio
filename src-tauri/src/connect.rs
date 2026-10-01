@@ -37,7 +37,8 @@ pub fn settings_path(root: &Path) -> PathBuf {
 
 /// Hook command as Claude Code runs it (through Git Bash on Windows): forward slashes, quoted.
 pub fn hook_command(hook_exe: &Path, project_id: &str, root: &Path) -> String {
-    let q = |p: &Path| format!("\"{}\"", p.to_string_lossy().replace('\\', "/"));
+    // POSIX single quotes: nothing inside is expanded by Git Bash or sh ($, backticks, double quotes).
+    let q = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\\', "/").replace('\'', "'\\''"));
     format!("{} claude --project {project_id} --root {} {MARKER}", q(hook_exe), q(root))
 }
 
@@ -125,35 +126,44 @@ fn write_checked(path: &Path, expected_before: &Option<String>, content: &str) -
     })
 }
 
-/// Applies the previewed change. Returns the backup path when an original existed.
-pub fn connect(root: &Path, command: &str, previewed: &Preview, now_ms: i64) -> Result<Option<PathBuf>, String> {
+fn backup(backup_dir: &Path, original: &str, now_ms: i64) -> Result<PathBuf, String> {
+    fs::create_dir_all(backup_dir).map_err(|e| e.to_string())?;
+    let b = backup_dir.join(format!("settings.local.json.{now_ms}.bak"));
+    fs::write(&b, original).map_err(|e| e.to_string())?;
+    Ok(b)
+}
+
+/// Applies the previewed change. The backup of the current file goes to Raio's own data directory
+/// (outside the repository, so it cannot be committed by accident). Returns the backup path when an
+/// original existed.
+pub fn connect(root: &Path, command: &str, previewed: &Preview, backup_dir: &Path, now_ms: i64) -> Result<Option<PathBuf>, String> {
     let path = settings_path(root);
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    let backup = match &previewed.before {
-        Some(original) => {
-            let b = path.with_extension(format!("json.raio-backup-{now_ms}"));
-            fs::write(&b, original).map_err(|e| e.to_string())?;
-            Some(b)
-        }
-        None => None,
-    };
-    let (_, value) = read_settings(&path)?;
+    let (current, value) = read_settings(&path)?;
+    if current != previewed.before {
+        return Err("settings.local.json changed since the preview; review the new diff".into());
+    }
     let after = serde_json::to_string_pretty(&with_raio(value, command)?).map_err(|e| e.to_string())?;
     if after != previewed.after {
         return Err("settings.local.json changed since the preview; review the new diff".into());
     }
-    write_checked(&path, &previewed.before, &after)?;
-    Ok(backup)
+    let saved = current.as_deref().map(|original| backup(backup_dir, original, now_ms)).transpose()?;
+    write_checked(&path, &current, &after)?;
+    Ok(saved)
 }
 
-/// Removes only Raio's handlers. Leaves the file (possibly `{}`) so user settings are untouched.
-pub fn disconnect(root: &Path) -> Result<(), String> {
+/// Removes only Raio's handlers (backing up first). Leaves the file so user settings are untouched,
+/// and does not rewrite it when it holds no Raio handler.
+pub fn disconnect(root: &Path, backup_dir: &Path, now_ms: i64) -> Result<(), String> {
     let path = settings_path(root);
     let (before, value) = read_settings(&path)?;
-    if before.is_none() {
+    let Some(original) = before.clone() else { return Ok(()) };
+    let cleaned = without_raio(value.clone());
+    if cleaned == value {
         return Ok(());
     }
-    let after = serde_json::to_string_pretty(&without_raio(value)).map_err(|e| e.to_string())?;
+    backup(backup_dir, &original, now_ms)?;
+    let after = serde_json::to_string_pretty(&cleaned).map_err(|e| e.to_string())?;
     write_checked(&path, &before, &after)
 }
 
@@ -204,10 +214,13 @@ mod tests {
         fs::write(settings_path(root), &original).unwrap();
         let p = preview(root, CMD).unwrap();
         assert_eq!(p.before.as_deref(), Some(original.as_str()));
-        let backup = connect(root, CMD, &p, 7).unwrap().unwrap();
-        assert_eq!(fs::read_to_string(backup).unwrap(), original);
+        let backups = tempfile::tempdir().unwrap();
+        let saved = connect(root, CMD, &p, backups.path(), 7).unwrap().unwrap();
+        assert!(saved.starts_with(backups.path()), "backup must live outside the project");
+        assert_eq!(fs::read_to_string(saved).unwrap(), original);
+        assert!(!fs::read_dir(root.join(".claude")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("bak")));
         assert!(fs::read_to_string(settings_path(root)).unwrap().contains(MARKER));
-        disconnect(root).unwrap();
+        disconnect(root, backups.path(), 8).unwrap();
         let restored: Value = serde_json::from_str(&fs::read_to_string(settings_path(root)).unwrap()).unwrap();
         assert_eq!(restored, user_settings());
     }
@@ -219,13 +232,15 @@ mod tests {
         let p = preview(root, CMD).unwrap();
         fs::create_dir_all(root.join(".claude")).unwrap();
         fs::write(settings_path(root), "{\"model\":\"x\"}").unwrap();
-        assert!(connect(root, CMD, &p, 1).is_err());
+        assert!(connect(root, CMD, &p, dir.path(), 1).is_err());
         assert_eq!(fs::read_to_string(settings_path(root)).unwrap(), "{\"model\":\"x\"}");
     }
 
     #[test]
     fn hook_command_quotes_paths_with_spaces_for_git_bash() {
         let c = hook_command(Path::new("C:\\Program Files\\Raio\\raio-hook.exe"), "abc", Path::new("C:\\Area de Trabalho\\app"));
-        assert_eq!(c, "\"C:/Program Files/Raio/raio-hook.exe\" claude --project abc --root \"C:/Area de Trabalho/app\" --raio-managed");
+        assert_eq!(c, "'C:/Program Files/Raio/raio-hook.exe' claude --project abc --root 'C:/Area de Trabalho/app' --raio-managed");
+        let tricky = hook_command(Path::new("C:\\h.exe"), "abc", Path::new("C:\\it's $HOME `x`"));
+        assert!(tricky.ends_with("--root 'C:/it'\\''s $HOME `x`' --raio-managed"), "{tricky}");
     }
 }

@@ -150,13 +150,23 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
             let (class, program, compound) = classify_command(text(&input, "command").unwrap_or(""));
             evidence.command_class = Some(class);
             evidence.program = program;
-            if compound {
-                evidence.detail = Some("compound command".into());
-            }
+            let background = input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
+            let interrupted = payload.get("tool_response").and_then(|r| r.get("interrupted")).and_then(Value::as_bool).unwrap_or(false)
+                || payload.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false);
+            // The tool's success/failure only reflects the check itself for a single, foreground, completed command.
+            let result_reflects_command = !compound && !background && !interrupted;
+            evidence.detail = match (compound, background, interrupted) {
+                (_, _, true) => Some("interrupted".into()),
+                (_, true, _) => Some("background command".into()),
+                (true, _, _) => Some("compound command".into()),
+                _ => None,
+            };
             if event == "PreToolUse" {
                 ("command.observed", vec![], String::new())
             } else {
-                if event == "PostToolUse" {
+                if !result_reflects_command {
+                    // Pipes, `|| true`, `; echo`, background runs and interruptions hide the check's own result.
+                } else if event == "PostToolUse" {
                     // Observed with Claude Code 2.1.286: non-zero exits arrive as PostToolUseFailure.
                     evidence.exit_code = Some(0);
                     evidence.exit_code_source = Some("tool-success".into());
@@ -271,6 +281,20 @@ mod tests {
         assert_eq!((success.evidence.exit_code, success.evidence.exit_code_source.as_deref()), (Some(0), Some("tool-success")));
         let observed = normalize(&fixture("12-PreToolUse-Bash.json"), &ctx()).unwrap();
         assert_eq!(observed.evidence.exit_code, None);
+    }
+
+    #[test]
+    fn hides_results_that_do_not_reflect_the_check() {
+        let mut p = fixture("17-PostToolUse-Bash.json");
+        p["tool_input"]["command"] = serde_json::json!("npm test 2>&1 | tail -50");
+        assert_eq!(normalize(&p, &ctx()).unwrap().evidence.exit_code, None);
+        let mut p = fixture("17-PostToolUse-Bash.json");
+        p["tool_input"]["run_in_background"] = serde_json::json!(true);
+        assert_eq!(normalize(&p, &ctx()).unwrap().evidence.exit_code, None);
+        let mut p = fixture("17-PostToolUse-Bash.json");
+        p["tool_response"]["interrupted"] = serde_json::json!(true);
+        let e = normalize(&p, &ctx()).unwrap();
+        assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("interrupted")));
     }
 
     #[test]

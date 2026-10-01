@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { RaioEvent } from '../features/ingest/raioEvent';
 import { projectSessionDetailed } from '../features/project/projectSession';
-import type { ConnectedProject, ConnectPreview, Connector, DesktopBridge, SessionSnapshot, Surface } from './desktopBridge';
+import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, DesktopBridge, SessionSnapshot, Surface } from './desktopBridge';
 
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
 
@@ -40,21 +40,32 @@ export const createNativeBridge = (fixedSurface: Surface, ipc: NativeIpc = tauri
   let snapshot: SessionSnapshot | null = null;
   let project: ConnectedProject | null = null;
   let refreshing: Promise<void> | null = null;
+  let dirty = false;
 
+  /** Coalesces refreshes; a notification that arrives during one schedules exactly one more. */
   const refresh = (): Promise<void> => {
-    refreshing ??= (async () => {
+    if (refreshing) {
+      dirty = true;
+      return refreshing;
+    }
+    refreshing = (async () => {
       try {
+        const health = await ipc.invoke<CoreHealth | undefined>('core_status').catch(() => undefined);
         const projects = await ipc.invoke<ConnectedProject[]>('list_projects');
         const current = projects[0] ?? null;
         const events = current ? await ipc.invoke<RaioEvent[]>('project_events', { projectId: current.id }) : [];
         const projected = current ? projectSessionDetailed(current, events) : null;
         project = current && project?.id === current.id && project.root === current.root ? project : current;
-        snapshot = projected ? { ...projected.snapshot, evidence: projected.insights } : null;
+        snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         listeners.forEach((l) => l());
       } catch (error) {
         report('refresh')(error);
       } finally {
         refreshing = null;
+        if (dirty) {
+          dirty = false;
+          void refresh();
+        }
       }
     })();
     return refreshing;

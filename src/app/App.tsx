@@ -7,6 +7,7 @@ import { CTA_PROMINENT_SECONDS, derivePresence } from '../features/modes/presenc
 import { ReplayControls } from '../features/modes/ReplayControls';
 import { ConnectPanel } from '../features/panel/ConnectPanel';
 import { NoProjectState } from '../features/panel/NoProjectState';
+import { IdleIsland } from '../features/modes/IdleIsland';
 import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
@@ -44,7 +45,15 @@ export const App = ({ underlay }: AppProps) => {
         <Surfaces snapshot={snapshot} />
       ) : (
         <div className="app__empty">
-          {bridge.connector && mode === 'expanded' ? <ConnectPanel connector={bridge.connector} /> : bridge.connector ? <p className="app__empty-note">No session yet</p> : <NoProjectState />}
+          {bridge.connector && mode === 'expanded' ? (
+            <ConnectPanel connector={bridge.connector} />
+          ) : bridge.connector && mode === 'island' ? (
+            <IdleIsland onOpen={() => bridge.showSurface('expanded')} />
+          ) : bridge.connector ? (
+            <p className="app__empty-note">No session yet</p>
+          ) : (
+            <NoProjectState />
+          )}
         </div>
       )}
       {snapshot?.provenance === 'fixture' && (

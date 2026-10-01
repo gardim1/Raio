@@ -16,6 +16,15 @@ export interface SessionSnapshot {
   readonly log: SessionLog;
   /** Evidence the replay log cannot carry (disk consistency, unassigned changes, stale checks). Live data only. */
   readonly evidence?: ProjectInsights;
+  /** Health of the local pipeline, so missing data is never mistaken for "nothing happened". */
+  readonly core?: CoreHealth;
+}
+
+export interface CoreHealth {
+  readonly dropped: number;
+  readonly watcherOverflow: boolean;
+  readonly historyResetFrom: string | null;
+  readonly hookBinary: string | null;
 }
 
 /** Exactly what connecting would write to the project's `.claude/settings.local.json`. */
