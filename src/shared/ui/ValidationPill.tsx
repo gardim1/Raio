@@ -16,6 +16,7 @@ const ICON: Record<ValidationStatus, () => JSX.Element> = {
   failed: CrossIcon,
   unknown: UnknownIcon,
   incomplete: UnknownIcon,
+  stale: UnknownIcon,
 };
 const STATUS_TEXT: Record<ValidationStatus, string> = {
   running: 'running',
@@ -23,6 +24,7 @@ const STATUS_TEXT: Record<ValidationStatus, string> = {
   failed: 'failed',
   unknown: 'result unknown',
   incomplete: 'incomplete',
+  stale: 'stale',
 };
 
 export interface ValidationPillProps {

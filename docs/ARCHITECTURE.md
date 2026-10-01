@@ -57,8 +57,8 @@ TypeScript renderer (all semantics): projection (paths -> areas, validation, sta
 
 - Kept distinct: inspected vs edited; attempted vs reported vs confirmed-on-disk edit; migration file added vs executed; dependency manifest changed vs installed; test command observed vs result captured; `passed | failed | not-run | unknown | incomplete | stale`; session-attributed vs `unassigned` change.
 - A reported edit whose path also changes on disk within a window on either side is "reported and consistent on disk": consistency, not proof of authorship. A concurrent unassigned change on the same path lowers confidence. A filesystem change without a matching reported edit is `unassigned` ("changed in project, author unknown").
-- Each project keeps an `editGeneration` counter incremented by every non-ignored disk change, whoever made it; a validation recorded before it becomes `stale`. A `running` validation without a result becomes `incomplete` at session end or timeout; a session without an end event is `incomplete`.
-- Ingestion-time semantics that need the filesystem (disk consistency, `editGeneration`, later the import scan) live in Rust and are documented as such; everything else is projected once in TypeScript, and Island/Mini receive a compact status snapshot.
+- A passing result followed by any non-ignored disk change (whoever made it) or a later reported edit becomes `stale`. A failure is never turned into `stale`: it stays visible as a failure. A `running` validation without a result becomes `incomplete` at session end; a session without an end event is `incomplete`.
+- The Rust core only records facts (hook events, debounced `file.changed`); matching reported edits to disk changes, staleness and grouping are pure TypeScript projections over the persisted events (`src/features/project/`), so corrections re-project history.
 - Raio never runs project tests, migrations or commands to turn a status green.
 
 ## Map meaning

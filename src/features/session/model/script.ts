@@ -9,7 +9,8 @@ import type { EdgeId, NodeId } from '../../architecture/model/types';
  * All times are in seconds from the start of the sequence.
  */
 
-export type AgentId = 'claude' | 'codex';
+/** `unknown`: the agent could not be identified; it is never shown as Claude or Codex. */
+export type AgentId = 'claude' | 'codex' | 'unknown';
 /** `incomplete`: the session stopped without an end signal, so Raio cannot say it completed. */
 export type AgentStatusState = 'ready' | 'working' | 'complete' | 'finished' | 'failed' | 'incomplete';
 /**
@@ -21,8 +22,9 @@ export type ValidationKind = 'build' | 'tests';
 /**
  * `unknown`: the check was observed but no result was captured.
  * `incomplete`: it was still running when the session ended.
+ * `stale`: a result was recorded, but the project changed on disk after it (whoever made the change).
  */
-export type ValidationStatus = 'running' | 'passed' | 'failed' | 'unknown' | 'incomplete';
+export type ValidationStatus = 'running' | 'passed' | 'failed' | 'unknown' | 'incomplete' | 'stale';
 /** What the completion summary may honestly claim about checks. */
 export type CheckVerdict = 'all-passed' | 'some-failed' | 'unverified' | 'none-ran';
 export type Gaze = 'auto' | 'down' | 'viewer';

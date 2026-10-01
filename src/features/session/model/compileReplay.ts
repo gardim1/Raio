@@ -214,11 +214,13 @@ const VALIDATION_TONE: Record<ValidationStatus, StoryEvent['tone']> = {
   failed: 'danger',
   unknown: 'neutral',
   incomplete: 'neutral',
+  stale: 'neutral',
 };
 
 const validationLabel = (kind: ValidationKind, status: ValidationStatus): string => {
   const name = kind === 'build' ? 'Build' : 'Tests';
   if (status === 'unknown') return `${name}: result unknown`;
+  if (status === 'stale') return `${name}: stale (code changed after the run)`;
   return `${name} ${status}`;
 };
 

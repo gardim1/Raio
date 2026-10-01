@@ -36,7 +36,7 @@ export const RISK_LABEL: Record<RiskKind, string> = {
   outOfScope: 'Unexpected area touched',
 };
 
-export const AGENT_LABEL: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex' };
+export const AGENT_LABEL: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex', unknown: 'Agent' };
 
 /** Formats a millisecond offset as mm:ss. */
 export const formatOffset = (ms: number): string => {

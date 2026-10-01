@@ -125,6 +125,23 @@ describe('validation claims need evidence', () => {
     expect(script.summary.checks).toBe('unverified');
   });
 
+  it('labels a check whose code changed afterwards as stale and never as passed', () => {
+    const script = compileReplay(
+      log([
+        ...base,
+        { kind: 'validation', atMs: 2000, validation: 'build', status: 'stale' },
+        { kind: 'validation', atMs: 2100, validation: 'tests', status: 'stale' },
+        { kind: 'session.end', atMs: 5000, outcome: 'completed' },
+      ]),
+      demoGraph,
+    );
+    expect(script.validations.map((v) => v.status)).toEqual(['stale', 'stale']);
+    expect(script.summary.checks).toBe('unverified');
+    const labels = script.story.map((e) => e.label);
+    expect(labels).toContain('Build: stale (code changed after the run)');
+    expect(labels).toContain('Tests: stale (code changed after the run)');
+  });
+
   it('marks a session without an end event as incomplete', () => {
     const script = compileReplay(log(base), demoGraph);
     expect(script.status.at(-1)!.state).toBe('incomplete');

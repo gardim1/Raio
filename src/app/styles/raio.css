@@ -436,6 +436,6 @@ svg text { font-family: var(--raio-font-ui); }
 .app__fixture-badge { position: fixed; left: 12px; bottom: 12px; z-index: 80; padding: 4px 10px; border-radius: 10px; font-size: 11px; letter-spacing: 0.02em; color: var(--raio-color-text-muted); background: rgba(255, 255, 255, 0.04); border: 1px dashed rgba(255, 255, 255, 0.14); pointer-events: none; }
 
 /* ---------- Unobserved outcomes (unknown / incomplete) ---------- */
-.chip--unknown, .chip--incomplete { color: var(--raio-color-text-secondary); border-color: var(--raio-color-border-control); background: rgba(255, 255, 255, 0.04); }
+.chip--unknown, .chip--incomplete, .chip--stale { color: var(--raio-color-text-secondary); border-color: var(--raio-color-border-control); background: rgba(255, 255, 255, 0.04); }
 .summary__detail--muted i { background: var(--raio-color-text-muted); box-shadow: none; }
 .status--incomplete .status__dot { background: var(--raio-color-text-muted); }

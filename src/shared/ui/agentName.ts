@@ -2,7 +2,7 @@ import { AGENT_LABEL } from '../../features/session/model/events';
 import type { AgentId } from '../../features/session/model/script';
 
 /** Product name of each agent as shown in headings ("Claude Code", "Codex") — never suffixed by hand. */
-const AGENT_FULL_NAME: Record<AgentId, string> = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT_FULL_NAME: Record<AgentId, string> = { claude: 'Claude Code', codex: 'Codex', unknown: 'Unknown agent' };
 
 export const agentShortName = (agent: AgentId): string => AGENT_LABEL[agent];
 export const agentFullName = (agent: AgentId): string => AGENT_FULL_NAME[agent];
