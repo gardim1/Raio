@@ -7,12 +7,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/check-product-bundle.mjs",
-    "dev:harness": "vite --open /harness.html",
+    "dev:harness": "vite --host 127.0.0.1",
     "preview": "vite preview",
     "test": "vitest run",
     "test:visual": "playwright test",
     "test:watch": "vitest --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "app": "node scripts/open-app.mjs",
+    "app:build": "tauri build --no-bundle"
   },
   "engines": {
     "node": ">=20.19"
