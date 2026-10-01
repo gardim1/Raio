@@ -318,6 +318,11 @@ export const evaluateFrame = (script: ChoreographyScript, graph: ArchitectureGra
     });
   }
 
+  // Live scripts revisit systems: the active one is where the orb's latest stop is, not the latest first activation.
+  if (script.live) {
+    for (const v of script.live.visits) if (t >= v.arrivalAt) activeNodeId = v.nodeId;
+  }
+
   const edges = new Map<EdgeId, EdgeFrame>();
   const cueByEdge = new Map(script.edges.map((c) => [c.edgeId, c]));
   for (const edge of graph.edges) {

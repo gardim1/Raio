@@ -15,6 +15,9 @@ const initialView = (): HarnessView => {
 
 /** `?chrome=0` hides the dock and label so reference comparisons only see the rendered scene. */
 const showChrome = new URLSearchParams(window.location.search).get('chrome') !== '0';
+/** `?feed=` serves the demo session as a simulated live feed instead of the concept film. */
+const feedPace = new URLSearchParams(window.location.search).get('feed');
+const simulatedFeed = feedPace === 'steady' || feedPace === 'burst';
 
 export const HarnessApp = () => {
   const [view, setView] = useState<HarnessView>(initialView);
@@ -51,7 +54,7 @@ export const HarnessApp = () => {
 
   return (
     <>
-      {showChrome && <div className="harness-label">Dev harness · demo fixture</div>}
+      {showChrome && <div className="harness-label">{simulatedFeed ? `Dev harness · simulated live feed (${feedPace}) · demo fixture` : 'Dev harness · demo fixture'}</div>}
       {view === 'film' && (
         <div className="app">
           <FilmMode />
@@ -63,7 +66,7 @@ export const HarnessApp = () => {
         </div>
       )}
       {view !== 'film' && view !== 'states' && <App underlay={<DesktopBackdrop />} />}
-      {showChrome && <ModeDock mode={view} onMode={show} onRunLive={restartLive} onViewChanges={startReplay} />}
+      {showChrome && <ModeDock mode={view} onMode={show} onRunLive={simulatedFeed ? () => window.location.reload() : restartLive} onViewChanges={startReplay} />}
     </>
   );
 };

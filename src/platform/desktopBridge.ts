@@ -18,6 +18,11 @@ export interface SessionSnapshot {
   readonly evidence?: ProjectInsights;
   /** Health of the local pipeline, so missing data is never mistaken for "nothing happened". */
   readonly core?: CoreHealth;
+  /**
+   * Dev/test only: this fixture session is delivered as a simulated live feed (events appended over time).
+   * `arrivalMs[i]` is when `log.events[i]` arrived on the feed's clock. Never set on real telemetry.
+   */
+  readonly simulatedFeed?: { readonly arrivalMs: readonly number[] };
 }
 
 export interface CoreHealth {

@@ -11,6 +11,7 @@ import { IdleIsland } from '../features/modes/IdleIsland';
 import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
+import { useLiveFollow } from '../features/session/live/useLiveFollow';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
 import { useSessionUi } from '../features/session/store/sessionStore';
@@ -58,7 +59,7 @@ export const App = ({ underlay }: AppProps) => {
       )}
       {snapshot?.provenance === 'fixture' && (
         <div className="app__fixture-badge" role="note">
-          Demo fixture · not real agent activity
+          {snapshot.simulatedFeed ? 'Simulated live feed · demo fixture, not real agent activity' : 'Demo fixture · not real agent activity'}
         </div>
       )}
     </div>
@@ -81,12 +82,16 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   const replayScript = useMemo(() => compileReplay(log, graph), [log, graph]);
   const insights = useMemo(() => deriveInsights(log), [log]);
 
-  // The live demo clock follows wall time and stops once the completion offer has gone quiet.
-  const live = usePlayback({ reducedMotionAt: 30, wallClock: true, stopAt: liveScript.summary.detailAt + CTA_PROMINENT_SECONDS + 2 });
+  // Live agent data (and the dev simulated feed) is followed by the live director; only the plain demo fixture plays the film.
+  const followsLive = snapshot.provenance === 'live' || snapshot.simulatedFeed !== undefined;
+  const follow = useLiveFollow(followsLive ? { log, graph, ...(snapshot.simulatedFeed ? { simulatedFeed: snapshot.simulatedFeed } : {}) } : null);
+
+  // The demo film's clock follows wall time and stops once the completion offer has gone quiet.
+  const live = usePlayback({ reducedMotionAt: 30, wallClock: true, autoplay: !followsLive, stopAt: liveScript.summary.detailAt + CTA_PROMINENT_SECONDS + 2 });
   const replay = usePlayback({ stopAt: replayScript.duration + 0.6, autoplay: false });
 
   useEffect(() => {
-    if (liveRun > 0) live.restart();
+    if (liveRun > 0 && !followsLive) live.restart();
   }, [liveRun]);
   useEffect(() => {
     if (replayRun > 0) replay.restart();
@@ -105,11 +110,8 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   }, [source, replay]);
 
   const isReplay = source === 'replay';
-  // Live agent data has no animated director yet (E2E-1): the live surfaces show the session's
-  // compiled state at its end, recomputed whenever new events arrive. The demo fixture keeps its film.
-  const liveData = snapshot.provenance === 'live';
-  const script = isReplay || liveData ? replayScript : liveScript;
-  const t = isReplay ? replay.t : liveData ? replayScript.duration + CTA_PROMINENT_SECONDS + 2 : live.t;
+  const script = isReplay ? replayScript : follow ? follow.script : liveScript;
+  const t = isReplay ? replay.t : follow ? follow.t : live.t;
   const frame = evaluateFrame(script, graph, t);
   const presence = derivePresence(script, graph, frame, isReplay);
 

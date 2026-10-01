@@ -110,6 +110,28 @@ export interface StoryEvent {
   readonly realTime?: string;
 }
 
+/** One stop of the orb in a live script (chronological: a system may be visited again). */
+export interface LiveVisitMark {
+  readonly nodeId: NodeId;
+  /** When the system is touched (first stop: its activation; later stops: the orb's arrival). */
+  readonly arrivalAt: number;
+  /** When the next stop may depart without a visual jump: the end of this stop's own animation and dwell. */
+  readonly readyAt: number;
+  /** Notices raised at this stop. */
+  readonly notices: number;
+}
+
+/** Present only on scripts compiled for the live director (`compileReplay(..., { live: true })`). */
+export interface LiveMarks {
+  readonly visits: readonly LiveVisitMark[];
+  /** True while the session has no end signal: the script has no tail and the orb stays parked at the latest stop. */
+  readonly open: boolean;
+  /** All observed events have been played once the playhead reaches this time. */
+  readonly eventsEndAt: number;
+  /** Open sessions: after this nothing is scheduled any more (the last parked blink); the playhead may stop. */
+  readonly quietAt: number;
+}
+
 export interface ChoreographyScript {
   readonly id: string;
   readonly agent: AgentId;
@@ -146,6 +168,7 @@ export interface ChoreographyScript {
     readonly calmAt: number;
   };
   readonly story: readonly StoryEvent[];
+  readonly live?: LiveMarks;
   /** Film-only: wordmark reveal time. Never used inside the app. */
   readonly wordmarkAt?: number;
 }
