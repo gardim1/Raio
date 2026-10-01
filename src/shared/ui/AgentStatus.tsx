@@ -32,7 +32,16 @@ export const AgentStatus = ({ state, agent, label }: AgentStatusProps) => {
   const text = label ?? statusLabel(state, agent);
   const measure = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number>();
-  useLayoutEffect(() => setWidth(measure.current?.offsetWidth), [text]);
+  useLayoutEffect(() => {
+    const update = () => setWidth(measure.current?.offsetWidth);
+    update();
+    // Re-measure once web fonts are ready; measuring with the fallback font clips the label.
+    let alive = true;
+    void document.fonts?.ready.then(() => alive && update());
+    return () => {
+      alive = false;
+    };
+  }, [text]);
   return (
     <div className={`status status--${state}`} role="status" aria-live="polite">
       <span className="status__dot" />
