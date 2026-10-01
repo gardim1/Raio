@@ -31,19 +31,50 @@ fn is_atomic_write_temp(rel: &str) -> bool {
     rest.ends_with(".tmp") && !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && hex.len() >= 6 && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// One directory's `.gitignore`, with the file stamp it was read at (`None`: the file does not exist).
+struct Level {
+    stamp: Option<(SystemTime, u64)>,
+    rules: Gitignore,
+}
+
+/// Decides which project-relative paths are not reported. Honours the root `.gitignore` and nested ones
+/// (read lazily, re-read when the file changes), with git's precedence: a deeper file overrides a
+/// shallower one, and nothing inside an ignored directory can be re-included. It does not read
+/// `.git/info/exclude` or the user's global ignore file.
 pub struct Filter {
-    gitignore: Gitignore,
+    root: PathBuf,
+    levels: Mutex<HashMap<PathBuf, Level>>,
+}
+
+fn stamp_of(file: &Path) -> Option<(SystemTime, u64)> {
+    let meta = std::fs::metadata(file).ok()?;
+    meta.is_file().then(|| (meta.modified().unwrap_or(UNIX_EPOCH), meta.len()))
 }
 
 impl Filter {
     pub fn new(root: &Path) -> Self {
-        let mut builder = GitignoreBuilder::new(root);
-        let _ = builder.add(root.join(".gitignore"));
-        Filter { gitignore: builder.build().unwrap_or_else(|_| Gitignore::empty()) }
+        Filter { root: root.to_path_buf(), levels: Mutex::default() }
+    }
+
+    /// Rules of `dir/.gitignore`, refreshed when the file appeared, changed or vanished.
+    fn rules_for(&self, dir: &Path) -> Option<Gitignore> {
+        let file = dir.join(".gitignore");
+        let stamp = stamp_of(&file);
+        let mut levels = self.levels.lock().ok()?;
+        if let Some(level) = levels.get(dir).filter(|l| l.stamp == stamp) {
+            return (stamp.is_some()).then(|| level.rules.clone());
+        }
+        let mut builder = GitignoreBuilder::new(dir);
+        if stamp.is_some() {
+            let _ = builder.add(&file);
+        }
+        let rules = builder.build().unwrap_or_else(|_| Gitignore::empty());
+        levels.insert(dir.to_path_buf(), Level { stamp, rules: rules.clone() });
+        stamp.is_some().then_some(rules)
     }
 
     /// True when a project-relative path should not be reported.
-    pub fn ignored(&self, root: &Path, rel: &str) -> bool {
+    pub fn ignored(&self, rel: &str) -> bool {
         if rel == OUTSIDE_PROJECT || rel == "." || rel.is_empty() {
             return true;
         }
@@ -53,8 +84,24 @@ impl Filter {
         if is_atomic_write_temp(rel) {
             return true;
         }
-        let abs = root.join(rel);
-        self.gitignore.matched_path_or_any_parents(&abs, abs.is_dir()).is_ignore()
+        // Walk down from the root like git: each entry is matched against the `.gitignore` of every
+        // directory above it (deepest first); an ignored directory ends the walk.
+        let segments: Vec<&str> = rel.split('/').collect();
+        let mut above: Vec<Gitignore> = self.rules_for(&self.root).into_iter().collect();
+        let mut entry = self.root.clone();
+        for (i, segment) in segments.iter().enumerate() {
+            entry.push(segment);
+            let last = i + 1 == segments.len();
+            let is_dir = !last || entry.is_dir();
+            let verdict = above.iter().rev().map(|r| r.matched(&entry, is_dir)).find(|m| !m.is_none());
+            if verdict.is_some_and(|m| m.is_ignore()) {
+                return true;
+            }
+            if !last {
+                above.extend(self.rules_for(&entry));
+            }
+        }
+        false
     }
 }
 
@@ -120,7 +167,7 @@ where
             let Some(change) = change_of(&event.kind) else { return };
             for path in event.paths {
                 let rel = relative_path(&r, None, &path.to_string_lossy());
-                if f.ignored(&r, &rel) || path.is_dir() {
+                if f.ignored(&rel) || path.is_dir() {
                     continue;
                 }
                 if let Ok(mut map) = p.lock() {
@@ -168,11 +215,56 @@ mod tests {
         fs::write(dir.path().join(".gitignore"), "*.log\ncoverage/\n").unwrap();
         let f = Filter::new(dir.path());
         for ignored in ["src/auth/login.ts.tmp.47676.e5194d49b807", "node_modules/a/b.js", ".git/HEAD", "dist/app.js", "debug.log", "coverage/x.json", ".claude/settings.local.json", OUTSIDE_PROJECT] {
-            assert!(f.ignored(dir.path(), ignored), "{ignored}");
+            assert!(f.ignored(ignored), "{ignored}");
         }
         for kept in ["src/auth/login.ts", "db/migrations/0001.sql", "package.json", "notes.tmp.md", "a.tmp.12.zz"] {
-            assert!(!f.ignored(dir.path(), kept), "{kept}");
+            assert!(!f.ignored(kept), "{kept}");
         }
+    }
+
+    #[test]
+    fn honours_nested_gitignore_files_with_git_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("packages/web/generated")).unwrap();
+        fs::create_dir_all(root.join("packages/api")).unwrap();
+        fs::create_dir_all(root.join("coverage")).unwrap();
+        fs::write(root.join(".gitignore"), "*.log\ncoverage/\n").unwrap();
+        fs::write(root.join("packages/web/.gitignore"), "generated/\n.env.local\n!keep.log\n").unwrap();
+        fs::write(root.join("coverage/.gitignore"), "!lcov.info\n").unwrap();
+        let f = Filter::new(root);
+        for ignored in [
+            "packages/web/generated/client.ts", // nested rule
+            "packages/web/.env.local",
+            "packages/web/src/a.log",            // root rule still applies below a nested file
+            "coverage/lcov.info",                // git cannot re-include inside an excluded directory
+        ] {
+            assert!(f.ignored(ignored), "{ignored}");
+        }
+        for kept in [
+            "packages/api/generated/client.ts", // the nested rule is scoped to packages/web
+            "packages/web/src/a.ts",
+            "packages/web/keep.log",            // a deeper file may re-include what a shallower one ignored
+            "generated/client.ts",
+        ] {
+            assert!(!f.ignored(kept), "{kept}");
+        }
+    }
+
+    #[test]
+    fn notices_a_nested_gitignore_that_appears_or_changes_while_watching() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("app")).unwrap();
+        let f = Filter::new(root);
+        assert!(!f.ignored("app/out.txt"));
+        fs::write(root.join("app/.gitignore"), "out.txt\n").unwrap();
+        assert!(f.ignored("app/out.txt"));
+        fs::write(root.join("app/.gitignore"), "other.txt\n").unwrap();
+        // Same-length rewrite within one mtime tick must still be noticed: bump the mtime explicitly.
+        let later = std::time::SystemTime::now() + Duration::from_secs(5);
+        fs::File::options().write(true).open(root.join("app/.gitignore")).unwrap().set_modified(later).unwrap();
+        assert!(!f.ignored("app/out.txt"));
     }
 
     #[test]

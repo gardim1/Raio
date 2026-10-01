@@ -152,6 +152,15 @@ impl Store {
         self.conn.execute("DELETE FROM events WHERE observed_at < ?1", [now_ms - RETENTION_MS])
     }
 
+    /// Deletes at most `limit` events past retention and returns how many went, so a long backlog is
+    /// removed in short transactions (the caller may release the store between batches).
+    pub fn apply_retention_batch(&self, now_ms: i64, limit: usize) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE observed_at < ?1 LIMIT ?2)",
+            params![now_ms - RETENTION_MS, limit as i64],
+        )
+    }
+
     pub fn clear_history(&self) -> rusqlite::Result<usize> {
         self.conn.execute("DELETE FROM events", [])
     }
@@ -273,5 +282,21 @@ mod tests {
         Connection::open(&path).unwrap().pragma_update(None, "user_version", 99).unwrap();
         assert!(Store::open(&path, 1).is_err());
         assert_eq!(Connection::open(&path).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 99);
+    }
+
+    #[test]
+    fn retention_in_batches_deletes_at_most_the_limit_each_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("raio.db"), 0).unwrap();
+        let now = RETENTION_MS * 2;
+        for n in 0..5 {
+            store.insert(&event(n, "a"), now - RETENTION_MS - 1 - n as i64).unwrap();
+        }
+        store.insert(&event(100, "a"), now - 1).unwrap();
+        assert_eq!(store.apply_retention_batch(now, 2).unwrap(), 2);
+        assert_eq!(store.apply_retention_batch(now, 2).unwrap(), 2);
+        assert_eq!(store.apply_retention_batch(now, 2).unwrap(), 1);
+        assert_eq!(store.apply_retention_batch(now, 2).unwrap(), 0);
+        assert_eq!(store.count_events().unwrap(), 1, "the recent event stays");
     }
 }

@@ -61,7 +61,8 @@ pub fn without_raio(mut settings: Value) -> Value {
         }
         hooks.retain(|_, groups| groups.as_array().is_none_or(|g| !g.is_empty()));
         if hooks.is_empty() {
-            settings.as_object_mut().map(|o| o.remove("hooks"));
+            // `shift_remove`: with `preserve_order`, plain `remove` would swap the last key into the gap.
+            settings.as_object_mut().map(|o| o.shift_remove("hooks"));
         }
     }
     settings
@@ -189,6 +190,42 @@ mod tests {
         assert_eq!(post[0]["hooks"][0]["command"], "prettier --write");
         assert_eq!(post[1]["hooks"][0]["async"], true);
         assert_eq!(merged["hooks"].as_object().unwrap().len(), HOOKS.len());
+    }
+
+    fn keys(v: &Value) -> Vec<&str> {
+        v.as_object().unwrap().keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn an_untouched_file_round_trips_its_key_order() {
+        // Deliberately not alphabetical, at the top level and inside `hooks`.
+        let original = r#"{
+  "zeta": 1,
+  "permissions": { "deny": ["x"], "allow": ["y"] },
+  "hooks": {
+    "Stop": [ { "hooks": [ { "type": "command", "command": "mine" } ] } ],
+    "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "mine2" } ] } ]
+  },
+  "alpha": 2
+}"#;
+        let value: Value = serde_json::from_str(original).unwrap();
+        assert_eq!(keys(&value), ["zeta", "permissions", "hooks", "alpha"]);
+        let connected = with_raio(value.clone(), CMD).unwrap();
+        assert_eq!(keys(&connected), ["zeta", "permissions", "hooks", "alpha"]);
+        assert_eq!(keys(&connected["permissions"]), ["deny", "allow"]);
+        assert_eq!(keys(&connected["hooks"])[..2], ["Stop", "PreToolUse"]);
+        let restored = without_raio(connected);
+        assert_eq!(serde_json::to_string_pretty(&restored).unwrap(), serde_json::to_string_pretty(&value).unwrap());
+    }
+
+    #[test]
+    fn removing_the_hooks_key_keeps_the_other_keys_in_place() {
+        // A file where `hooks` sits in the middle and holds nothing but Raio's handlers.
+        let only_raio = with_raio(json!({}), CMD).unwrap()["hooks"].clone();
+        let connected = json!({ "b": 1, "hooks": only_raio, "a": 2, "c": 3 });
+        assert_eq!(keys(&connected), ["b", "hooks", "a", "c"]);
+        let restored = without_raio(connected);
+        assert_eq!(keys(&restored), ["b", "a", "c"]);
     }
 
     #[test]

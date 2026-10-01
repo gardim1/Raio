@@ -6,6 +6,7 @@ pub mod connect;
 mod core;
 pub mod event;
 pub mod inbox;
+pub mod instance;
 mod island;
 pub mod paths;
 pub mod store;
@@ -15,6 +16,23 @@ pub mod watch;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let Some(data) = paths::data_dir() else {
+        eprintln!("Raio could not find its per-user data directory");
+        std::process::exit(1);
+    };
+    // One Raio per user: a second launch asks the running one to come forward and exits. The lock lives
+    // until the process ends (the OS also releases it if Raio crashes).
+    let _instance = match instance::acquire(&data) {
+        Ok(instance::Acquire::First(lock)) => lock,
+        Ok(instance::Acquire::AlreadyRunning) => {
+            let _ = instance::request_show(&data);
+            return;
+        }
+        Err(e) => {
+            eprintln!("Raio could not take its instance lock: {e}");
+            std::process::exit(1);
+        }
+    };
     let core = match core::Core::open() {
         Ok(core) => core,
         Err(e) => {

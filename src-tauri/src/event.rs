@@ -71,6 +71,13 @@ pub struct RaioEvent {
 const MAX_PATHS: usize = 64;
 const MAX_FIELD: usize = 512;
 
+/// True for anything that is not a project-relative path: drive letters and other `:` forms (also
+/// `\\?\C:`), UNC and verbatim prefixes, a leading separator, and home-relative `~`, `~/` and `~\`.
+/// A name that merely starts with `~` (Office lock files such as `~$report.docx`) is an ordinary file.
+fn is_absolute_form(p: &str) -> bool {
+    p.contains(':') || p.starts_with(['/', '\\'])|| p == "~" || p.starts_with("~/") || p.starts_with("~\\")
+}
+
 impl RaioEvent {
     /// Structural validation of an untrusted record.
     pub fn validate(&self) -> Result<(), String> {
@@ -95,7 +102,7 @@ impl RaioEvent {
         if self.id.is_empty() || self.id.len() > 64 || self.project_id.is_empty() || self.project_id.len() > 64 {
             return Err("bad id".into());
         }
-        if self.paths.len() > MAX_PATHS || self.paths.iter().any(|p| p.len() > MAX_FIELD || p.contains(':') && p != OUTSIDE_PROJECT) {
+        if self.paths.len() > MAX_PATHS || self.paths.iter().any(|p| p.len() > MAX_FIELD || p != OUTSIDE_PROJECT && is_absolute_form(p)) {
             return Err("bad paths".into());
         }
         let e = &self.evidence;
@@ -160,6 +167,29 @@ mod tests {
         assert!(RaioEvent { schema: 2, ..sample() }.validate().is_err());
         assert!(RaioEvent { paths: vec!["C:/Users/someone/secret.txt".into()], ..sample() }.validate().is_err());
         assert!(RaioEvent { paths: vec![OUTSIDE_PROJECT.into()], ..sample() }.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_every_absolute_or_home_relative_path_form() {
+        for bad in [
+            "C:/Users/someone/secret.txt",
+            "c:\\Users\\someone\\secret.txt",
+            "\\\\server\\share\\file.txt",
+            "//server/share/file.txt",
+            "\\\\?\\C:\\Users\\someone\\file.txt",
+            "\\\\?\\UNC\\server\\share\\file.txt",
+            "/etc/passwd",
+            "\\Windows\\win.ini",
+            "~",
+            "~/.ssh/config",
+            "~\\.ssh\\config",
+        ] {
+            assert!(RaioEvent { paths: vec![bad.into()], ..sample() }.validate().is_err(), "{bad}");
+        }
+        // Names that merely start with `~` (Office lock files, backups) are ordinary project files.
+        for fine in ["~$report.docx", "~backup.txt", "src/~tmp/a.ts", "docs/readme.md", "a b/c.ts"] {
+            assert!(RaioEvent { paths: vec![fine.into()], ..sample() }.validate().is_ok(), "{fine}");
+        }
     }
 
     #[test]

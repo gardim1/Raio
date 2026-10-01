@@ -15,16 +15,22 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::connect;
 use crate::event::{project_id, RaioEvent};
 use crate::inbox::{self, Dirs};
+use crate::instance;
 use crate::paths;
+use crate::surfaces;
 use crate::store::{Insert, Project, Store};
 use crate::watch::{self, ProjectWatch};
 
 const INGEST_EVERY: Duration = Duration::from_millis(500);
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(3600);
+/// Upkeep cadence; a pass that stopped at its bounds is followed up sooner.
+const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(3600);
+const HOUSEKEEPING_CATCH_UP: Duration = Duration::from_secs(60);
 pub const INGESTED_EVENT: &str = "events-ingested";
 
 pub struct Core {
     pub dirs: Dirs,
+    data: PathBuf,
     backups: PathBuf,
     pub store: Mutex<Store>,
     watches: Mutex<HashMap<String, ProjectWatch>>,
@@ -34,16 +40,69 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
+/// Bounds of one housekeeping pass.
+#[derive(Clone, Debug)]
+pub struct Limits {
+    pub retention_batch: usize,
+    pub retention_batches: usize,
+    pub inbox: inbox::Policy,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { retention_batch: 1_000, retention_batches: 20, inbox: inbox::Policy::default() }
+    }
+}
+
+// Read by the tests; kept so a pass can be inspected.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub struct Housekeeping {
+    pub retention_removed: usize,
+    pub inbox: inbox::Report,
+    /// A bound was reached: more work is waiting for the next pass.
+    pub more: bool,
+}
+
 impl Core {
     pub fn open() -> Result<Core, String> {
-        let data = paths::data_dir().ok_or("no per-user data directory")?;
+        Self::open_at(&paths::data_dir().ok_or("no per-user data directory")?)
+    }
+
+    /// One bounded pass of upkeep: inbox hygiene (orphans, TTL, markers) and event retention. Retention
+    /// runs in short batches and the store lock is released between them, so ingestion is never held up
+    /// for long. Safe to call from any thread; leftover work is reported through `more`.
+    pub fn housekeeping(&self, now: SystemTime, limits: &Limits) -> Housekeeping {
+        let inbox = inbox::tidy(&self.dirs, now, &limits.inbox);
+        let budget = limits.inbox.budget;
+        let mut more = [inbox.tmp_removed, inbox.expired, inbox.markers_removed].iter().any(|n| *n >= budget);
+        let now_ms = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let mut retention_removed = 0;
+        for batch in 1..=limits.retention_batches {
+            let removed = match self.store.lock().map(|store| store.apply_retention_batch(now_ms, limits.retention_batch)) {
+                Ok(Ok(n)) => n,
+                _ => break,
+            };
+            retention_removed += removed;
+            if removed < limits.retention_batch {
+                break;
+            }
+            more |= batch == limits.retention_batches;
+        }
+        Housekeeping { retention_removed, inbox, more }
+    }
+
+    pub fn open_at(data: &Path) -> Result<Core, String> {
+        let data = data.to_path_buf();
         fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         let dirs = Dirs::new(&data);
         dirs.create().map_err(|e| e.to_string())?;
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
-        let _ = store.apply_retention(now_ms());
-        Ok(Core { dirs, backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default() })
+        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default() };
+        // Before the first ingest pass, so events past the inbox TTL are dropped (and counted), not stored late.
+        core.housekeeping(SystemTime::now(), &Limits::default());
+        Ok(core)
     }
 
     /// Moves pending inbox records into the store. Returns how many new events were stored.
@@ -98,6 +157,7 @@ impl Core {
 }
 
 pub fn start(app: &AppHandle) {
+    start_housekeeping(app);
     let core = app.state::<Core>();
     if let Ok(projects) = core.store.lock().map(|s| s.connected_projects().unwrap_or_default()) {
         for p in projects {
@@ -112,12 +172,29 @@ pub fn start(app: &AppHandle) {
             if core.ingest_once() > 0 {
                 let _ = handle.emit(INGESTED_EVENT, ());
             }
+            // A second `raio.exe` asked this instance to come forward.
+            if instance::take_show_request(&core.data) {
+                let _ = surfaces::show_surface(handle.clone(), surfaces::EXPANDED.into(), None);
+            }
             since_heartbeat += INGEST_EVERY;
             if since_heartbeat >= HEARTBEAT_EVERY {
                 let _ = inbox::touch_heartbeat(&core.dirs);
                 since_heartbeat = Duration::ZERO;
             }
             thread::sleep(INGEST_EVERY);
+        }
+    });
+}
+
+/// Upkeep on its own thread so a slow pass can never stall ingestion; `Core::open` already did the first one.
+fn start_housekeeping(app: &AppHandle) {
+    let handle = app.clone();
+    thread::spawn(move || {
+        let mut wait = HOUSEKEEPING_CATCH_UP;
+        loop {
+            thread::sleep(wait);
+            let report = handle.state::<Core>().housekeeping(SystemTime::now(), &Limits::default());
+            wait = if report.more { HOUSEKEEPING_CATCH_UP } else { HOUSEKEEPING_EVERY };
         }
     });
 }
@@ -210,4 +287,90 @@ pub fn disconnect_project(app: AppHandle, core: State<'_, Core>, project_id: Str
     }
     let _ = app.emit(INGESTED_EVENT, ());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{stable_id, Evidence};
+    use crate::store::RETENTION_MS;
+
+    fn event(n: u32) -> RaioEvent {
+        RaioEvent {
+            schema: 1,
+            id: stable_id(&["core", &n.to_string()]),
+            source: "claude-hook".into(),
+            provenance: "agent-reported".into(),
+            attribution: "session".into(),
+            project_id: "p".into(),
+            session_id: Some("s".into()),
+            agent: "claude".into(),
+            subagent_id: None,
+            source_at: Some(n as i64),
+            observed_at: 0,
+            seq: 0,
+            kind: "turn.ended".into(),
+            paths: vec![],
+            evidence: Evidence::default(),
+        }
+    }
+
+    fn open() -> (tempfile::TempDir, Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open_at(dir.path()).unwrap();
+        (dir, core)
+    }
+
+    #[test]
+    fn housekeeping_applies_retention_in_bounded_batches_until_done() {
+        let (_d, core) = open();
+        let now = now_ms();
+        {
+            let store = core.store.lock().unwrap();
+            for n in 0..7 {
+                store.insert(&event(n), now - RETENTION_MS - 1_000).unwrap();
+            }
+            store.insert(&event(99), now).unwrap();
+        }
+        let limits = Limits { retention_batch: 3, retention_batches: 2, ..Limits::default() };
+        let first = core.housekeeping(SystemTime::now(), &limits);
+        assert_eq!(first.retention_removed, 6);
+        assert!(first.more, "one old event is still waiting for the next pass");
+        let second = core.housekeeping(SystemTime::now(), &limits);
+        assert_eq!(second.retention_removed, 1);
+        assert!(!second.more);
+        assert_eq!(core.store.lock().unwrap().count_events().unwrap(), 1);
+    }
+
+    #[test]
+    fn housekeeping_also_tidies_the_inbox() {
+        let (_d, core) = open();
+        let stale = core.dirs.tmp.join("orphan.json");
+        std::fs::write(&stale, b"{").unwrap();
+        std::fs::File::options().write(true).open(&stale).unwrap().set_modified(SystemTime::now() - Duration::from_secs(7200)).unwrap();
+        let report = core.housekeeping(SystemTime::now(), &Limits::default());
+        assert_eq!(report.inbox.tmp_removed, 1);
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn housekeeping_does_not_hold_the_store_while_it_returns() {
+        let (_d, core) = open();
+        core.housekeeping(SystemTime::now(), &Limits::default());
+        assert!(core.store.try_lock().is_ok());
+    }
+
+    #[test]
+    fn opening_applies_the_inbox_ttl_before_anything_is_ingested() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let core = Core::open_at(dir.path()).unwrap();
+            let old = core.dirs.inbox.join("0001.json");
+            std::fs::write(&old, b"{}").unwrap();
+            std::fs::File::options().write(true).open(&old).unwrap().set_modified(SystemTime::now() - Duration::from_secs(30 * 24 * 3600)).unwrap();
+        }
+        let core = Core::open_at(dir.path()).unwrap();
+        assert!(!core.dirs.inbox.join("0001.json").exists());
+        assert_eq!(inbox::dropped_count(&core.dirs), 1);
+    }
 }

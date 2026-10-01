@@ -156,6 +156,90 @@ pub fn dropped_count(dirs: &Dirs) -> usize {
     fs::read_dir(&dirs.dropped).map(|d| d.count()).unwrap_or(0)
 }
 
+/// Bounds for one housekeeping pass.
+#[derive(Clone, Debug)]
+pub struct Policy {
+    /// Writer temp files older than this are orphans of a crashed hook.
+    pub tmp_max_age: Duration,
+    /// Pending events older than this are dropped (with a `expired` marker each), not ingested late.
+    pub ttl: Duration,
+    /// `dropped/` and `quarantine/` entries older than this are removed.
+    pub marker_max_age: Duration,
+    /// ... and only the newest this many are kept in each of them.
+    pub marker_max_count: usize,
+    /// Directory entries examined per directory per pass; the rest waits for the next pass.
+    pub budget: usize,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Policy {
+            tmp_max_age: Duration::from_secs(3600),
+            // Longer than the hook's inertness window: anything the hook could still write while Raio was
+            // closed (heartbeat younger than HEARTBEAT_MAX_AGE) is ingested on the next start, not expired.
+            ttl: HEARTBEAT_MAX_AGE + Duration::from_secs(24 * 3600),
+            marker_max_age: Duration::from_secs(14 * 24 * 3600),
+            marker_max_count: 1_000,
+            budget: 2_000,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Report {
+    pub tmp_removed: usize,
+    pub expired: usize,
+    pub markers_removed: usize,
+}
+
+/// Files directly inside `dir` (at most `budget`), each with its modification time.
+fn aged_files(dir: &Path, budget: usize, only_json: bool) -> Vec<(PathBuf, SystemTime)> {
+    let Ok(entries) = fs::read_dir(dir) else { return vec![] };
+    entries
+        .filter_map(Result::ok)
+        .take(budget)
+        .filter_map(|e| {
+            let meta = e.metadata().ok().filter(|m| m.is_file())?;
+            let path = e.path();
+            (!only_json || path.extension().is_some_and(|x| x == "json")).then_some(())?;
+            Some((path, meta.modified().ok()?))
+        })
+        .collect()
+}
+
+fn older_than(now: SystemTime, modified: SystemTime, limit: Duration) -> bool {
+    now.duration_since(modified).is_ok_and(|age| age > limit)
+}
+
+/// One bounded housekeeping pass: orphaned writer temp files, old and excess `dropped/` and
+/// `quarantine/` markers, then pending events past their TTL (each leaves an `expired` marker, so the
+/// loss is counted). Never fails: anything it cannot remove is retried by the next pass.
+pub fn tidy(dirs: &Dirs, now: SystemTime, policy: &Policy) -> Report {
+    let mut report = Report::default();
+    for (path, modified) in aged_files(&dirs.tmp, policy.budget, false) {
+        if older_than(now, modified, policy.tmp_max_age) && fs::remove_file(path).is_ok() {
+            report.tmp_removed += 1;
+        }
+    }
+    // Markers first, so the `expired` markers written below cannot be pruned in the pass that made them.
+    for dir in [&dirs.dropped, &dirs.quarantine] {
+        let mut files = aged_files(dir, policy.budget, false);
+        files.sort_by_key(|f| std::cmp::Reverse(f.1)); // newest first
+        for (i, (path, modified)) in files.into_iter().enumerate() {
+            if (i >= policy.marker_max_count || older_than(now, modified, policy.marker_max_age)) && fs::remove_file(path).is_ok() {
+                report.markers_removed += 1;
+            }
+        }
+    }
+    for (path, modified) in aged_files(&dirs.inbox, policy.budget, true) {
+        if older_than(now, modified, policy.ttl) && fs::remove_file(path).is_ok() {
+            mark_dropped(dirs, "expired");
+            report.expired += 1;
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +339,102 @@ mod tests {
         }
         assert_eq!(pending(&dirs, 10).len(), 0);
         assert_eq!(fs::read_dir(&dirs.quarantine).unwrap().count(), 2);
+    }
+
+    fn age(path: &Path, by: Duration) {
+        let when = SystemTime::now() - by;
+        fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+    }
+
+    const HOUR: Duration = Duration::from_secs(3600);
+    const DAY: Duration = Duration::from_secs(24 * 3600);
+
+    #[test]
+    fn removes_orphaned_temp_files_but_not_a_writer_in_progress() {
+        let (_d, dirs) = fresh();
+        let (old, young) = (dirs.tmp.join("old.json"), dirs.tmp.join("young.json"));
+        fs::write(&old, b"{").unwrap();
+        fs::write(&young, b"{").unwrap();
+        age(&old, 2 * HOUR);
+        let report = tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(report, Report { tmp_removed: 1, ..Report::default() });
+        assert!(!old.exists() && young.exists());
+    }
+
+    #[test]
+    fn expired_pending_events_are_dropped_with_a_counted_marker_never_silently() {
+        let (_d, dirs) = fresh();
+        for n in 0..3 {
+            assert_eq!(write(&dirs, &event(n)), WriteOutcome::Written);
+        }
+        let mut files: Vec<_> = fs::read_dir(&dirs.inbox).unwrap().filter_map(Result::ok).map(|e| e.path()).filter(|p| p.is_file()).collect();
+        files.sort();
+        age(&files[0], 9 * DAY);
+        age(&files[1], 9 * DAY);
+        let before = dropped_count(&dirs);
+        let report = tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(report.expired, 2);
+        assert_eq!(dropped_count(&dirs), before + 2, "every expired event leaves a marker");
+        let left: Vec<_> = pending(&dirs, 10).into_iter().map(|p| p.event.unwrap().source_at.unwrap()).collect();
+        assert_eq!(left.len(), 1);
+        let markers: Vec<String> = fs::read_dir(&dirs.dropped).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(markers.iter().all(|m| m.ends_with("-expired")), "{markers:?}");
+    }
+
+    #[test]
+    fn events_inside_the_ttl_are_left_alone() {
+        let (_d, dirs) = fresh();
+        assert_eq!(write(&dirs, &event(1)), WriteOutcome::Written);
+        let file = fs::read_dir(&dirs.inbox).unwrap().filter_map(Result::ok).map(|e| e.path()).find(|p| p.is_file()).unwrap();
+        age(&file, 6 * DAY); // e.g. Raio closed for most of a week: still ingested
+        assert_eq!(tidy(&dirs, SystemTime::now(), &Policy::default()), Report::default());
+        assert_eq!(pending(&dirs, 10).len(), 1);
+    }
+
+    #[test]
+    fn old_markers_go_by_age_and_the_rest_are_capped_to_the_newest() {
+        let (_d, dirs) = fresh();
+        let policy = Policy { marker_max_count: 3, ..Policy::default() };
+        for i in 0..6 {
+            let p = dirs.dropped.join(format!("d{i}"));
+            fs::write(&p, b"").unwrap();
+            age(&p, Duration::from_secs(60 * (6 - i))); // d5 is the newest
+        }
+        let ancient = dirs.dropped.join("ancient");
+        fs::write(&ancient, b"").unwrap();
+        age(&ancient, 30 * DAY);
+        for i in 0..5 {
+            let p = dirs.quarantine.join(format!("q{i}.json"));
+            fs::write(&p, b"{}").unwrap();
+            age(&p, Duration::from_secs(60 * (5 - i)));
+        }
+        let report = tidy(&dirs, SystemTime::now(), &policy);
+        assert_eq!(report.markers_removed, 1 + 3 + 2);
+        let mut kept: Vec<String> = fs::read_dir(&dirs.dropped).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        kept.sort();
+        assert_eq!(kept, ["d3", "d4", "d5"]);
+        assert_eq!(fs::read_dir(&dirs.quarantine).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn a_pass_is_bounded_and_the_next_pass_finishes_the_work() {
+        let (_d, dirs) = fresh();
+        let policy = Policy { budget: 10, ..Policy::default() };
+        for i in 0..25 {
+            let p = dirs.tmp.join(format!("o{i}.json"));
+            fs::write(&p, b"{").unwrap();
+            age(&p, 2 * HOUR);
+        }
+        assert_eq!(tidy(&dirs, SystemTime::now(), &policy).tmp_removed, 10);
+        assert_eq!(tidy(&dirs, SystemTime::now(), &policy).tmp_removed, 10);
+        assert_eq!(tidy(&dirs, SystemTime::now(), &policy).tmp_removed, 5);
+        assert_eq!(tidy(&dirs, SystemTime::now(), &policy), Report::default());
+    }
+
+    #[test]
+    fn tidying_a_missing_layout_does_nothing_and_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = Dirs::new(&dir.path().join("nope"));
+        assert_eq!(tidy(&dirs, SystemTime::now(), &Policy::default()), Report::default());
     }
 }

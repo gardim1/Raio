@@ -11,6 +11,7 @@ use crate::event::{stable_id, Evidence, RaioEvent, OUTSIDE_PROJECT, SCHEMA};
 
 const EDIT_TOOLS: [&str; 4] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 const INSPECT_TOOLS: [&str; 3] = ["Read", "Grep", "Glob"];
+const MAX_REASON_CHARS: usize = 64;
 
 pub struct Context<'a> {
     pub project_id: &'a str,
@@ -141,7 +142,9 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
             ("session.started", vec![], format!("start:{}", evidence.detail.as_deref().unwrap_or("")))
         }
         ("SessionEnd", _) => {
-            evidence.detail = text(payload, "reason").map(str::to_owned);
+            // Kept as the hook reported it (a short enum such as `clear`, `logout`, `other`); only cut so an
+            // unexpected value cannot make the whole record invalid.
+            evidence.detail = text(payload, "reason").map(|r| r.chars().take(MAX_REASON_CHARS).collect());
             ("session.ended", vec![], "end".into())
         }
         ("Stop", _) => ("turn.ended", vec![], format!("stop:{}", text(payload, "prompt_id").map(str::to_owned).unwrap_or_else(|| unique(ctx.now_ms)))),
@@ -329,6 +332,42 @@ mod tests {
         assert_eq!(relative_path(root, None, "C:\\work\\app\\..\\other\\x"), OUTSIDE_PROJECT);
         assert_eq!(relative_path(root, None, "C:\\work\\application\\x"), OUTSIDE_PROJECT);
         assert_eq!(relative_path(Path::new("\\\\?\\C:\\work\\app"), None, "C:\\work\\app\\x.ts"), "x.ts");
+    }
+
+    fn session_end(reason: Option<&str>) -> RaioEvent {
+        let mut p = fixture("19-SessionEnd.json");
+        match reason {
+            Some(r) => p["reason"] = serde_json::json!(r),
+            None => {
+                p.as_object_mut().unwrap().remove("reason");
+            }
+        }
+        normalize(&p, &ctx()).unwrap()
+    }
+
+    #[test]
+    fn session_end_keeps_the_hooks_reason_as_reported() {
+        for reason in ["clear", "logout", "prompt_input_exit", "bypass_permissions_disabled", "resume", "other", "some-future-reason"] {
+            let e = session_end(Some(reason));
+            assert_eq!((e.kind.as_str(), e.evidence.detail.as_deref()), ("session.ended", Some(reason)));
+            assert_eq!(e.validate(), Ok(()));
+        }
+    }
+
+    #[test]
+    fn session_end_without_a_reason_claims_none() {
+        let e = session_end(None);
+        assert_eq!(e.kind, "session.ended");
+        assert_eq!(e.evidence.detail, None);
+        assert_eq!(e.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_overlong_reason_is_cut_not_allowed_to_invalidate_the_event() {
+        let e = session_end(Some(&"x".repeat(5_000)));
+        let detail = e.evidence.detail.as_deref().unwrap();
+        assert!(detail.len() <= 64 && detail.chars().all(|c| c == 'x'), "{detail}");
+        assert_eq!(e.validate(), Ok(()));
     }
 
     #[test]
