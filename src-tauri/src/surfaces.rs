@@ -114,9 +114,16 @@ pub fn defer_expanded(config: &mut tauri::Config) -> Option<WindowConfig> {
     Some(config.app.windows.remove(at))
 }
 
-/// Whether closing this window (its X button, Alt+F4) hides it instead of destroying it.
-pub fn hides_on_close(label: &str) -> bool {
+/// Whether closing this window (its X button, Alt+F4) minimizes it instead of destroying it.
+pub fn minimizes_on_close(label: &str) -> bool {
     label == EXPANDED
+}
+
+/// Whether `show` must un-minimize this window first: a window the user minimized (or whose X minimized it)
+/// stays iconic after a plain `show`, and focusing it would not bring it back. Only Expanded has a taskbar
+/// entry to be minimized from, and a window that is not minimized is left exactly as it is.
+fn restores_before_show(label: &str, minimized: bool) -> bool {
+    minimized && label == EXPANDED
 }
 
 /// Whether an exit request is to be refused: `None` is the runtime asking because no window is left.
@@ -130,25 +137,33 @@ fn prevents_exit_on(windows: bool, code: Option<i32>) -> bool {
     windows && code.is_none()
 }
 
-/// Closing Expanded (its X button, Alt+F4) hides it and keeps Raio running in the tray: a destroyed window
-/// would leave the tray's "Open Raio", a second launch and the Island's "Open" with nothing to show (and,
-/// with no other window, would end the app). Hooked to `RunEvent::WindowEvent` because that is where the
+/// Closing Expanded (its X button, Alt+F4) minimizes it: its taskbar entry stays and restoring it brings it
+/// back as it was. A destroyed window would leave the tray's "Open Raio", a second launch and the Island's
+/// "Open" with nothing to show (and, with no other window, would end the app). Hooked to `RunEvent::WindowEvent` because that is where the
 /// close request of every window was observed to arrive: in this build (tauri 2.12.1, Windows) neither
 /// `Builder::on_window_event` nor a per-window listener was ever called for the window created from the
 /// startup config, only for windows built later. No `show` lock on purpose: this runs on the main thread,
 /// which `show` may be waiting on to build a webview.
 ///
+/// No `surface-visible` event is sent on minimize: the window is still the surface that is shown, and the
+/// renderer already folds "minimized" into its visibility (see `surfaceVisibilityTracker.ts`), so it stops
+/// animating by itself and `show` need not special-case a restore. If the window cannot be minimized, it is
+/// hidden instead (and told so), so the X never does nothing.
+///
 /// Also keeps Raio alive when the last window goes (e.g. the Mini Player of a `--surface=mini` launch
 /// closed with Alt+F4): only an explicit exit, the tray's "Quit Raio" (`app.exit(0)`), ends the app.
 pub fn on_run_event(app: &AppHandle, event: &tauri::RunEvent) {
     match event {
-        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if hides_on_close(label) => {
+        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if minimizes_on_close(label) => {
             api.prevent_close();
-            if let Some(window) = app.get_webview_window(label) {
+            if let Some(window) = app.get_webview_window(label)
+                && let Err(e) = window.minimize()
+            {
+                eprintln!("Raio could not minimize the {label} window, hiding it instead: {e}");
                 let _ = window.hide();
+                // Hidden webviews may keep animating; tell the surface it is off screen.
+                let _ = app.emit_to(label.as_str(), "surface-visible", false);
             }
-            // Hidden webviews may keep animating; tell the surface it is off screen.
-            let _ = app.emit_to(label.as_str(), "surface-visible", false);
         }
         tauri::RunEvent::ExitRequested { code, api, .. } if prevents_exit(*code) => api.prevent_exit(),
         _ => {}
@@ -265,7 +280,8 @@ fn ensure_window(app: &AppHandle, state: &SurfaceState, label: &str) -> tauri::R
 /// Intents a surface may receive when it is shown.
 const INTENTS: [&str; 1] = ["replay"];
 
-/// Shows one surface and hides the others. Only the Expanded window takes keyboard focus. The Island and
+/// Shows one surface and hides the others. Only the Expanded window takes keyboard focus (and is restored
+/// first when it was minimized). The Island and
 /// the Mini Player (and the Expanded window, when Raio was launched into one of them) are created the first
 /// time they are shown (the page is given up to a second to load first, so the window does not appear
 /// blank). An optional intent (e.g. "replay") is stored for the surface to pull, or emitted as
@@ -292,7 +308,11 @@ pub fn show(app: &AppHandle, surface: &str, intent: Option<&str>) -> Result<(), 
     for label in SURFACES {
         let Some(window) = app.get_webview_window(label) else { continue };
         let result = if label == surface {
-            window.show().and_then(|_| if label == EXPANDED { window.set_focus() } else { Ok(()) })
+            let minimized = window.is_minimized().unwrap_or(false);
+            window
+                .show()
+                .and_then(|_| if restores_before_show(label, minimized) { window.unminimize() } else { Ok(()) })
+                .and_then(|_| if label == EXPANDED { window.set_focus() } else { Ok(()) })
         } else {
             window.hide()
         };
@@ -396,11 +416,19 @@ mod tests {
     }
 
     #[test]
-    fn closing_expanded_hides_it_so_it_can_be_shown_again() {
-        assert!(hides_on_close(EXPANDED));
-        assert!(!hides_on_close(ISLAND), "recreated by ensure_window on its next show");
-        assert!(!hides_on_close(MINI));
-        assert!(!hides_on_close("other"));
+    fn closing_expanded_minimizes_it_so_it_can_be_shown_again() {
+        assert!(minimizes_on_close(EXPANDED));
+        assert!(!minimizes_on_close(ISLAND), "recreated by ensure_window on its next show");
+        assert!(!minimizes_on_close(MINI));
+        assert!(!minimizes_on_close("other"));
+    }
+
+    #[test]
+    fn showing_expanded_restores_it_only_when_it_is_minimized() {
+        assert!(restores_before_show(EXPANDED, true), "a minimized window stays minimized after a plain show");
+        assert!(!restores_before_show(EXPANDED, false), "unminimizing a normal or maximized window would change it");
+        assert!(!restores_before_show(MINI, true), "floating surfaces have no taskbar entry to minimize from");
+        assert!(!restores_before_show(ISLAND, true));
     }
 
     #[test]
