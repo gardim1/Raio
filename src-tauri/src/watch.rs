@@ -57,7 +57,7 @@ impl Filter {
     }
 
     /// Rules of `dir/.gitignore`, refreshed when the file appeared, changed or vanished.
-    fn rules_for(&self, dir: &Path) -> Option<Gitignore> {
+    pub fn rules_for(&self, dir: &Path) -> Option<Gitignore> {
         let file = dir.join(".gitignore");
         let stamp = stamp_of(&file);
         let mut levels = self.levels.lock().ok()?;
@@ -73,15 +73,21 @@ impl Filter {
         stamp.is_some().then_some(rules)
     }
 
+    /// True when a project-relative path is ignored whatever any `.gitignore` says: not in the project, inside an
+    /// always-ignored folder, or the temp file of an atomic write. Needs no filesystem access.
+    pub fn is_noise(rel: &str) -> bool {
+        rel == OUTSIDE_PROJECT || rel == "." || rel.is_empty() || rel.split('/').any(|seg| ALWAYS_IGNORED.contains(&seg)) || is_atomic_write_temp(rel)
+    }
+
+    /// True when the deepest rule set with an opinion about `entry` ignores it. `rules` are the `.gitignore` files
+    /// of the directories above `entry`, from the root down; `is_dir` is whether `entry` is a directory.
+    pub fn gitignored(rules: &[Gitignore], entry: &Path, is_dir: bool) -> bool {
+        rules.iter().rev().map(|r| r.matched(entry, is_dir)).find(|m| !m.is_none()).is_some_and(|m| m.is_ignore())
+    }
+
     /// True when a project-relative path should not be reported.
     pub fn ignored(&self, rel: &str) -> bool {
-        if rel == OUTSIDE_PROJECT || rel == "." || rel.is_empty() {
-            return true;
-        }
-        if rel.split('/').any(|seg| ALWAYS_IGNORED.contains(&seg)) {
-            return true;
-        }
-        if is_atomic_write_temp(rel) {
+        if Self::is_noise(rel) {
             return true;
         }
         // Walk down from the root like git: each entry is matched against the `.gitignore` of every
@@ -93,8 +99,7 @@ impl Filter {
             entry.push(segment);
             let last = i + 1 == segments.len();
             let is_dir = !last || entry.is_dir();
-            let verdict = above.iter().rev().map(|r| r.matched(&entry, is_dir)).find(|m| !m.is_none());
-            if verdict.is_some_and(|m| m.is_ignore()) {
+            if Self::gitignored(&above, &entry, is_dir) {
                 return true;
             }
             if !last {

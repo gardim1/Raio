@@ -8,6 +8,7 @@ pub mod event;
 pub mod hook_guard;
 pub mod imports;
 pub mod inbox;
+pub mod inventory;
 pub mod instance;
 mod island;
 pub mod paths;
@@ -73,6 +74,7 @@ pub fn run() {
             core::connect_project,
             core::disconnect_project,
             imports::project_imports,
+            inventory::project_inventory,
         ])
         .setup(|app| {
             tray::install(app.handle())?;

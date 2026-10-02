@@ -341,7 +341,7 @@ fn call_source<'a>(toks: &[Tok<'a>], at: usize) -> Option<&'a [u8]> {
 const MAX_SPECIFIER_BYTES: usize = 1_024;
 const MAX_SPECIFIERS: usize = 1_000;
 
-fn is_cloud_placeholder(attributes: u32) -> bool {
+pub(crate) fn is_cloud_placeholder(attributes: u32) -> bool {
     /// FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_OPEN (a folder).
     const CLOUD_ONLY: u32 = 0x0040_0000 | 0x0000_1000 | 0x0004_0000;
     attributes & CLOUD_ONLY != 0
@@ -395,7 +395,7 @@ pub fn specifiers(source: &[u8]) -> Vec<String> {
 
 const EXTENSIONS: [&str; 8] = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 /// Deeper trees are cut off (and reported as truncated) rather than risking the stack.
-const MAX_DEPTH: usize = 128;
+pub(crate) const MAX_DEPTH: usize = 128;
 
 fn is_scannable(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -413,7 +413,7 @@ struct Walk<'a> {
 }
 
 /// Attribute bits of a directory entry (Windows only; 0 elsewhere).
-fn attributes_of(meta: &fs::Metadata) -> u32 {
+pub(crate) fn attributes_of(meta: &fs::Metadata) -> u32 {
     #[cfg(windows)]
     {
         std::os::windows::fs::MetadataExt::file_attributes(meta)
@@ -425,40 +425,45 @@ fn attributes_of(meta: &fs::Metadata) -> u32 {
     }
 }
 
-struct Entry {
-    name: String,
-    kind: fs::FileType,
-    attributes: u32,
-    len: u64,
+pub(crate) struct Entry {
+    pub(crate) name: String,
+    pub(crate) kind: fs::FileType,
+    pub(crate) attributes: u32,
+    pub(crate) len: u64,
+}
+
+/// Entries of `abs`, sorted by name. What cannot be listed or named is counted in `skipped`, never silently
+/// lost; a name that is not valid Unicode cannot be reported and is counted when `counted(is_dir, lossy_name)`.
+/// Shared by the import scan and the project inventory so both walk the same way.
+pub(crate) fn list_entries(abs: &Path, skipped: &mut usize, counted: impl Fn(bool, &str) -> bool) -> Vec<Entry> {
+    let Ok(read) = fs::read_dir(abs) else {
+        *skipped += 1;
+        return vec![];
+    };
+    let mut entries = Vec::new();
+    for entry in read {
+        let Ok(entry) = entry else {
+            *skipped += 1;
+            continue;
+        };
+        let Ok(kind) = entry.file_type() else {
+            *skipped += 1;
+            continue;
+        };
+        let meta = entry.metadata().ok();
+        let (attributes, len) = meta.as_ref().map_or((0, u64::MAX), |m| (attributes_of(m), m.len()));
+        match entry.file_name().into_string() {
+            Ok(name) => entries.push(Entry { name, kind, attributes, len }),
+            Err(raw) => *skipped += usize::from(counted(kind.is_dir(), &raw.to_string_lossy())),
+        }
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
 }
 
 impl Walk<'_> {
-    /// Entries of `abs`, sorted. What cannot be listed or named is counted in `skipped`, never silently lost.
     fn entries(&mut self, abs: &Path) -> Vec<Entry> {
-        let Ok(read) = fs::read_dir(abs) else {
-            self.skipped += 1;
-            return vec![];
-        };
-        let mut entries = Vec::new();
-        for entry in read {
-            let Ok(entry) = entry else {
-                self.skipped += 1;
-                continue;
-            };
-            let Ok(kind) = entry.file_type() else {
-                self.skipped += 1;
-                continue;
-            };
-            let meta = entry.metadata().ok();
-            let (attributes, len) = meta.as_ref().map_or((0, u64::MAX), |m| (attributes_of(m), m.len()));
-            match entry.file_name().into_string() {
-                Ok(name) => entries.push(Entry { name, kind, attributes, len }),
-                // A name that is not valid Unicode cannot be reported: count it when it would have been scanned.
-                Err(raw) => self.skipped += usize::from(kind.is_dir() || is_scannable(&raw.to_string_lossy())),
-            }
-        }
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-        entries
+        list_entries(abs, &mut self.skipped, |is_dir, name| is_dir || is_scannable(name))
     }
 
     fn dir(&mut self, abs: &Path, rel: &str, depth: usize) {
