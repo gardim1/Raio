@@ -1,6 +1,7 @@
 import type { RiskKind, ValidationKind, ValidationStatus } from '../session/model/script';
 import type { SessionSnapshot } from '../../platform/desktopBridge';
 import type { EditConfidence } from './diskEvidence';
+import type { Relationships } from './importEdges';
 
 /** Shown next to a disk change that no reported edit accounts for. */
 export const UNASSIGNED_CHANGE_NOTE = 'Changed in project, author unknown';
@@ -64,10 +65,10 @@ export const currentValidations = (validations: readonly ValidationInsight[]): r
 
 /** What the replay log cannot carry. UI wiring is a later task; every claim here is a heuristic unless noted. */
 export interface ProjectInsights {
-  /** Wording for the UI: groups are guessed from folder names. */
+  /** Wording for the UI: groups are guessed from folder names; relationships are unknown or static imports (heuristic). */
   readonly note: string;
-  /** The projection never creates edges; the map says relationships are unknown. */
-  readonly relationships: 'unknown';
+  /** `unknown` unless a TS/JS import scan exists; the activity trail never creates or reveals an edge. */
+  readonly relationships: Relationships;
   /** Two or more actors (main agent, subagents) interleaved. States overlap only, never a causal chain. */
   readonly parallel: boolean;
   readonly actors: number;

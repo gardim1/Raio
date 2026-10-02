@@ -110,6 +110,245 @@ describe('native bridge refresh', () => {
   });
 });
 
+describe('native bridge: import edges', () => {
+  const SCAN = {
+    files: [
+      { path: 'src/api/x.ts', specifiers: ['../auth/login', 'zod'] },
+      { path: 'src/auth/login.ts', specifiers: [] },
+    ],
+    truncated: false,
+    skipped: 0,
+    scannedAtMs: 5,
+  };
+  const SESSION = () => [event(1, 'session.started'), event(2, 'file.edit.reported', { paths: ['src/auth/login.ts'] }), event(3, 'file.edit.reported', { paths: ['src/api/x.ts'] })];
+
+  /** An ipc whose `project_imports` is under the test's control. */
+  const scanIpc = (events: RaioEvent[], scan: () => Promise<unknown>, projects: unknown[] = [project]) => {
+    const fake = fakeIpc(projects, events);
+    const base = fake.ipc.invoke;
+    const ipc: NativeIpc = {
+      ...fake.ipc,
+      invoke: <T,>(command: string, args?: Record<string, unknown>) => {
+        if (command !== 'project_imports') return base<T>(command, args);
+        fake.calls.push([command, args]);
+        return scan() as Promise<T>;
+      },
+    };
+    return { ...fake, ipc };
+  };
+  const scans = (calls: [string, unknown][]) => calls.filter(([c]) => c === 'project_imports');
+
+  it('draws the static import edges the core reports and says they are a heuristic', async () => {
+    const fake = scanIpc(SESSION(), () => Promise.resolve(SCAN));
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    await settle();
+    await settle();
+    const snapshot = bridge.currentSession();
+    expect(snapshot?.graph.edges.map((e) => e.id)).toEqual(['api->auth']);
+    expect(snapshot?.evidence?.relationships).toMatchObject({ kind: 'static-imports', edges: 1, unresolved: 1 });
+    expect(snapshot?.evidence?.note).toContain('static imports between areas (heuristic)');
+    expect(fake.calls).toContainEqual(['project_imports', { projectId: 'p1' }]);
+  });
+
+  it('shows the session before the scan returns, then adds edges without losing it', async () => {
+    let release: (value: unknown) => void = () => {};
+    const fake = scanIpc(SESSION(), () => new Promise((resolve) => (release = resolve)));
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    await settle();
+    expect(bridge.currentSession()?.graph.nodes).toHaveLength(2);
+    expect(bridge.currentSession()?.graph.edges).toEqual([]);
+    expect(bridge.currentSession()?.evidence?.relationships).toBe('unknown');
+    release(SCAN);
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.graph.edges).toHaveLength(1);
+  });
+
+  it('keeps "relationships unknown" and invents nothing when the scan fails or is malformed', async () => {
+    for (const scan of [() => Promise.reject(new Error('unknown command')), () => Promise.resolve({ files: 'x' }), () => Promise.resolve(undefined)]) {
+      const bridge = createNativeBridge('expanded', scanIpc(SESSION(), scan).ipc);
+      await settle();
+      await settle();
+      const snapshot = bridge.currentSession();
+      expect(snapshot?.graph.nodes).toHaveLength(2);
+      expect(snapshot?.graph.edges).toEqual([]);
+      expect(snapshot?.evidence?.relationships).toBe('unknown');
+    }
+  });
+
+  it('hands out the cached scan through the bridge, without scanning again: null until there is one', async () => {
+    const fake = scanIpc(SESSION(), () => Promise.resolve(SCAN));
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    await expect(bridge.projectImports()).resolves.toBeNull();
+    await settle();
+    await settle();
+    await expect(bridge.projectImports()).resolves.toEqual(SCAN);
+    await bridge.projectImports();
+    expect(scans(fake.calls)).toHaveLength(1);
+    for (const scan of [() => Promise.reject(new Error('boom')), () => Promise.resolve({ nope: true })]) {
+      const failing = createNativeBridge('expanded', scanIpc(SESSION(), scan).ipc);
+      await settle();
+      await settle();
+      await expect(failing.projectImports()).resolves.toBeNull();
+    }
+    const empty = createNativeBridge('expanded', scanIpc([], () => Promise.resolve(SCAN), []).ipc);
+    await settle();
+    await expect(empty.projectImports()).resolves.toBeNull();
+  });
+
+  it('scans only on the surfaces that draw the map, so one project is not scanned three times', async () => {
+    const calls = new Map<string, number>();
+    for (const surface of ['island', 'mini', 'expanded'] as const) {
+      const fake = scanIpc(SESSION(), () => Promise.resolve(SCAN));
+      const bridge = createNativeBridge(surface, fake.ipc);
+      await settle();
+      await settle();
+      calls.set(surface, scans(fake.calls).length);
+      if (surface === 'island') {
+        expect(bridge.currentSession()?.graph.edges).toEqual([]);
+        await expect(bridge.projectImports()).resolves.toBeNull();
+      }
+    }
+    expect(Object.fromEntries(calls)).toEqual({ island: 0, mini: 1, expanded: 1 });
+  });
+
+  it('is not blocked by a scan that never answers: it gives up after the timeout and scans again after new activity', async () => {
+    const events = SESSION();
+    let now = 100_000;
+    const answers: (() => Promise<unknown>)[] = [() => new Promise(() => {}), () => Promise.resolve(SCAN)];
+    const fake = scanIpc(events, () => answers.shift()!());
+    const bridge = createNativeBridge('expanded', fake.ipc, () => now, 20);
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(1);
+    expect(bridge.currentSession()?.evidence?.relationships).toBe('unknown');
+    await new Promise((r) => setTimeout(r, 60)); // past the 20 ms timeout
+    now += 11_000;
+    events.push(event(5, 'file.edit.reported', { paths: ['src/api/y.ts'] }));
+    fake.ingest();
+    await settle();
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(2);
+    expect(bridge.currentSession()?.graph.edges).toHaveLength(1);
+  });
+
+  it('ignores a scan that answers after its timeout', async () => {
+    let late: (value: unknown) => void = () => {};
+    const fake = scanIpc(SESSION(), () => new Promise((resolve) => (late = resolve)));
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 20);
+    await settle();
+    await new Promise((r) => setTimeout(r, 60));
+    late(SCAN);
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.graph.edges).toEqual([]);
+    expect(bridge.currentSession()?.evidence?.relationships).toBe('unknown');
+  });
+
+  it('starts scanning the new project right away when the project changes mid-scan, and drops the old project\'s late answer', async () => {
+    const p2 = { id: 'p2', name: 'other', root: 'C:/work/other' };
+    let current: typeof project = project;
+    const pending = new Map<string, (value: unknown) => void>();
+    const calls: [string, unknown][] = [];
+    let ingested: () => void = () => {};
+    const session = (id: string) => [event(1, 'session.started', { projectId: id }), event(2, 'file.edit.reported', { projectId: id, paths: ['src/auth/login.ts'] }), event(3, 'file.edit.reported', { projectId: id, paths: ['src/api/x.ts'] })];
+    const ipc: NativeIpc = {
+      invoke: <T,>(command: string, args?: Record<string, unknown>) => {
+        calls.push([command, args]);
+        if (command === 'list_projects') return Promise.resolve([current] as T);
+        if (command === 'project_events') return Promise.resolve(session(String(args?.projectId)) as T);
+        if (command === 'project_imports') return new Promise<T>((resolve) => pending.set(String(args?.projectId), resolve as (value: unknown) => void));
+        return Promise.resolve(undefined as T);
+      },
+      onIngested: (l) => (ingested = l),
+      chooseFolder: () => Promise.resolve(null),
+    };
+    const bridge = createNativeBridge('expanded', ipc);
+    await settle();
+    expect(pending.has('p1')).toBe(true);
+    current = p2;
+    ingested();
+    await settle();
+    expect(pending.has('p2')).toBe(true); // not held back by the unanswered scan of p1
+    pending.get('p1')!(SCAN); // the old project answers late
+    await settle();
+    expect(bridge.currentSession()?.project).toBe('other');
+    expect(bridge.currentSession()?.graph.edges).toEqual([]);
+    pending.get('p2')!(SCAN);
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.graph.edges.map((e) => e.id)).toEqual(['api->auth']);
+    expect(calls.filter(([c]) => c === 'project_imports')).toEqual([['project_imports', { projectId: 'p1' }], ['project_imports', { projectId: 'p2' }]]);
+  });
+
+  it('says the relationships are as of the last scan when a rescan after file activity fails, and clears it when one works', async () => {
+    const events = SESSION();
+    let now = 100_000;
+    const answers: (() => Promise<unknown>)[] = [() => Promise.resolve(SCAN), () => Promise.reject(new Error('boom')), () => Promise.resolve(SCAN)];
+    const fake = scanIpc(events, () => answers.shift()!());
+    const bridge = createNativeBridge('expanded', fake.ipc, () => now);
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.evidence?.relationships).toMatchObject({ kind: 'static-imports' });
+    expect(bridge.currentSession()?.evidence?.note).not.toMatch(/last scan/);
+    now += 11_000;
+    events.push(event(5, 'file.edit.reported', { paths: ['src/api/y.ts'] }));
+    fake.ingest();
+    await settle();
+    await settle();
+    const stale = bridge.currentSession();
+    expect(stale?.graph.edges).toHaveLength(1); // the last good scan still draws
+    expect(stale?.evidence?.relationships).toMatchObject({ kind: 'static-imports', stale: true });
+    expect(stale?.evidence?.note).toMatch(/as of the last scan/);
+    now += 11_000;
+    events.push(event(6, 'file.edit.reported', { paths: ['src/api/z.ts'] }));
+    fake.ingest();
+    await settle();
+    await settle();
+    expect(bridge.currentSession()?.evidence?.relationships).not.toHaveProperty('stale');
+  });
+
+  it('does not scan without a connected project or before there is a session', async () => {
+    const noProject = scanIpc([], () => Promise.resolve(SCAN), []);
+    createNativeBridge('expanded', noProject.ipc);
+    await settle();
+    expect(scans(noProject.calls)).toEqual([]);
+    const noSession = scanIpc([], () => Promise.resolve(SCAN));
+    createNativeBridge('expanded', noSession.ipc);
+    await settle();
+    expect(scans(noSession.calls)).toEqual([]);
+  });
+
+  it('scans once, and again only after new file activity and not more often than every 10 seconds', async () => {
+    const events = SESSION();
+    let now = 100_000;
+    const fake = scanIpc(events, () => Promise.resolve(SCAN));
+    createNativeBridge('expanded', fake.ipc, () => now);
+    await settle();
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(1);
+    // Events that are not file activity: no new scan.
+    events.push(event(4, 'turn.ended'));
+    fake.ingest();
+    await settle();
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(1);
+    // File activity, but too soon.
+    now += 3_000;
+    events.push(event(5, 'file.edit.reported', { paths: ['src/api/y.ts'] }));
+    fake.ingest();
+    await settle();
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(1);
+    // File activity after the interval.
+    now += 10_000;
+    events.push(event(6, 'file.edit.reported', { paths: ['src/api/z.ts'] }));
+    fake.ingest();
+    await settle();
+    await settle();
+    expect(scans(fake.calls)).toHaveLength(2);
+  });
+});
+
 describe('take_surface_intent', () => {
   const ipcReturning = (value: unknown) => {
     const calls: [string, unknown][] = [];

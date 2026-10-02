@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { demoGraph } from '../features/architecture/model/demoProject';
+import { deriveImportEdges, drawnLinks, isProjectImports } from '../features/project/importEdges';
 import { demoSessionLog } from '../features/session/model/demoSession';
+import { demoGroupOf, demoImportFacts } from './demoImports';
 import { createFixtureBridge, createSimulatedFeedBridge, demoSnapshot, feedArrivals } from './fixtureBridge';
 
 describe('fixture bridge', () => {
@@ -18,14 +21,48 @@ describe('fixture bridge', () => {
   });
 });
 
+describe('fixture bridge: import facts', () => {
+  it('serves deterministic demo facts in the contract shape, from both fixture bridges', async () => {
+    const a = await createFixtureBridge().projectImports();
+    expect(isProjectImports(a)).toBe(true);
+    expect(a).toEqual(await createFixtureBridge(null).projectImports());
+    expect(a).toEqual(await createSimulatedFeedBridge({ fixedNowMs: 0 }).projectImports());
+  });
+
+  it("derives exactly the approved concept's relationships (same pairs, same directions), and nothing else", () => {
+    const concept = demoGraph.edges.map((e) => `${e.from}->${e.to}`).sort();
+    const derived = drawnLinks(deriveImportEdges(demoImportFacts, demoGroupOf).edges).map((l) => `${l.from}->${l.to}`).sort();
+    expect(derived).toEqual(concept);
+    expect(derived).toContain('auth->api');
+    expect(derived).toContain('config->frontend');
+    expect(derived).toContain('api->storage');
+    expect(derived).not.toContain('payments->storage');
+  });
+
+  it('has demo facts whose edges stay among the demo groups, with unresolved packages and self-group imports left out', () => {
+    const result = deriveImportEdges(demoImportFacts, demoGroupOf);
+    const ids = new Set(demoGraph.nodes.map((n) => n.id));
+    expect(result.edges.length).toBeGreaterThanOrEqual(3);
+    for (const e of result.edges) expect(ids.has(e.from) && ids.has(e.to) && e.from !== e.to).toBe(true);
+    expect(result.unresolved).toBeGreaterThan(0);
+    expect(result.truncated).toBe(false);
+  });
+});
+
 describe('simulated live feed bridge (dev/test only)', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('stays a labelled fixture, with a map that has no relationships', () => {
+  it('stays a labelled fixture, with edges only from the demo import facts', () => {
     const snapshot = createSimulatedFeedBridge({ fixedNowMs: 5000 }).currentSession();
     expect(snapshot?.provenance).toBe('fixture');
     expect(snapshot?.simulatedFeed).toBeDefined();
-    expect(snapshot?.graph.edges).toEqual([]);
+    const derived = deriveImportEdges(demoImportFacts, demoGroupOf);
+    expect(snapshot?.graph.edges.map((e) => e.id)).toEqual(drawnLinks(derived.edges).map((e) => `${e.from}->${e.to}`));
+    expect(snapshot?.graph.edges.length).toBeGreaterThanOrEqual(3);
+    for (const e of snapshot!.graph.edges) {
+      expect(snapshot!.graph.nodeById.has(e.from)).toBe(true);
+      expect(snapshot!.graph.nodeById.has(e.to)).toBe(true);
+    }
   });
 
   it('serves exactly the events that had arrived at a fixed clock, and never schedules anything', () => {

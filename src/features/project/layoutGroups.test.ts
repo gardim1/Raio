@@ -34,6 +34,23 @@ describe('layoutGroups', () => {
     expect(graph.nodeById.get('g03')?.label).toBe('Group 03');
   });
 
+  it('draws edges only for links between groups on the map', () => {
+    const graph = layoutGroups(groups(3), [
+      { from: 'g00', to: 'g01' },
+      { from: 'g02', to: 'g00' },
+      { from: 'g00', to: 'ghost' },
+      { from: 'g01', to: 'g01' },
+    ]);
+    expect(graph.edges.map((e) => e.id)).toEqual(['g00->g01', 'g02->g00']);
+    expect(graph.edgeById.get('g00->g01')?.path.length).toBeGreaterThan(0);
+  });
+
+  it('keeps node positions identical whether or not there are edges (no relayout)', () => {
+    const plain = layoutGroups(groups(6));
+    const linked = layoutGroups(groups(6), [{ from: 'g00', to: 'g05' }]);
+    expect(linked.nodes).toEqual(plain.nodes);
+  });
+
   it('orders nodes by kind and then by label, whatever the input order', () => {
     const input: PathGroup[] = [
       { groupId: 'z', label: 'Zed', kind: 'other' },
@@ -96,5 +113,85 @@ describe('layoutGroups', () => {
   it('gives every node a distinct position', () => {
     const keys = layoutGroups(groups(13)).nodes.map((n) => `${n.position.x},${n.position.y}`);
     expect(new Set(keys).size).toBe(13);
+  });
+});
+
+describe('layoutGroups: memoised by (groups, links)', () => {
+  const links = [{ from: 'g00', to: 'g02' }, { from: 'g01', to: 'g02' }];
+
+  it('returns the very same graph for the same groups and links, so a refresh does not reroute or recompile', () => {
+    const first = layoutGroups(groups(4), links);
+    expect(layoutGroups(groups(4), links.map((l) => ({ ...l })))).toBe(first);
+    expect(layoutGroups([...groups(4)].reverse(), links)).toBe(first);
+  });
+
+  it('builds a new graph when a group (id, label or kind) or a link changes', () => {
+    const first = layoutGroups(groups(4), links);
+    expect(layoutGroups(groups(5), links)).not.toBe(first);
+    expect(layoutGroups(groups(4), [links[0]!])).not.toBe(first);
+    expect(layoutGroups(groups(4), [...links].reverse())).not.toBe(first); // link order picks which direction a pair keeps
+    const renamed = groups(4).map((g, i) => (i === 0 ? { ...g, label: 'Renamed' } : g));
+    expect(layoutGroups(renamed, links)).not.toBe(first);
+    const rekinded = groups(4).map((g, i) => (i === 0 ? { ...g, kind: 'api' as const } : g));
+    expect(layoutGroups(rekinded, links)).not.toBe(first);
+  });
+
+  it('does not change what a layout looks like because it was memoised', () => {
+    const a = layoutGroups(groups(7), links);
+    const b = layoutGroups(groups(7), links);
+    expect(b.nodes).toEqual(a.nodes);
+    expect(b.edges.map((e) => e.path.toSvg())).toEqual(a.edges.map((e) => e.path.toSvg()));
+  });
+
+  it('stays bounded however many different maps it has seen', () => {
+    for (let i = 1; i <= 40; i++) layoutGroups(groups(1 + (i % 13)), [{ from: 'g00', to: `g${String(i % 13).padStart(2, '0')}` }]);
+    expect(layoutGroups(groups(3), links).nodes).toHaveLength(3);
+  });
+});
+
+describe('layoutGroups: edges on a dense map', () => {
+  /** How many drawn lines pass over a node that is not one of their two ends (with a few units of air), and how many leave the world. */
+  const measure = (count: number, links: (ids: string[]) => { from: string; to: string }[]) => {
+    const ids = groups(count).map((g) => g.groupId);
+    const graph = layoutGroups(groups(count), links(ids));
+    let crossing = 0;
+    let outside = 0;
+    for (const edge of graph.edges) {
+      const points = Array.from({ length: 65 }, (_, i) => edge.path.pointAt(i / 64));
+      if (points.some((p) => p.x < 0 || p.x > WORLD.width || p.y < 0 || p.y > WORLD.height)) outside++;
+      const over = graph.nodes.some((n) => n.id !== edge.from && n.id !== edge.to && points.some((p) => Math.abs(p.x - n.position.x) < NODE_SIZE.width / 2 + 4 && Math.abs(p.y - n.position.y) < NODE_SIZE.height / 2 + 4));
+      if (over) crossing++;
+    }
+    return { graph, crossing, outside };
+  };
+  const everyPair = (ids: string[]) => ids.flatMap((a, i) => ids.slice(i + 1).map((b) => ({ from: a, to: b })));
+  const ring = (ids: string[]) => ids.flatMap((a, i) => [1, 2, 3, 5].map((k) => ({ from: a, to: ids[(i + k) % ids.length]! })));
+
+  /**
+   * Residual cases, measured and accepted: on 11 to 13 nodes with every pair linked (or four links per node on 13)
+   * a line can still pass over a node, because the rows leave only a 24-unit channel. Up to 10 nodes, none does.
+   */
+  const RESIDUAL_EVERY_PAIR: Readonly<Record<number, number>> = { 11: 2, 12: 4, 13: 8 };
+  const RESIDUAL_RING: Readonly<Record<number, number>> = { 11: 1, 13: 6 };
+
+  for (let count = 1; count <= 13; count++) {
+    it(`draws one line per pair with no line over a node and none outside the world (${count} groups, every pair linked)`, () => {
+      const { graph, crossing, outside } = measure(count, everyPair);
+      expect(graph.edges).toHaveLength((count * (count - 1)) / 2);
+      expect(outside).toBe(0);
+      expect(crossing).toBeLessThanOrEqual(RESIDUAL_EVERY_PAIR[count] ?? 0);
+    });
+
+    it(`keeps four links per node (a ring) clear of other nodes (${count} groups)`, () => {
+      const { graph, crossing, outside } = measure(count, ring);
+      expect(new Set(graph.edges.map((e) => [e.from, e.to].sort().join('|'))).size).toBe(graph.edges.length);
+      expect(outside).toBe(0);
+      expect(crossing).toBeLessThanOrEqual(RESIDUAL_RING[count] ?? 0);
+    });
+  }
+
+  it('does not move a node when edges are added to a dense map', () => {
+    const ids = groups(13).map((g) => g.groupId);
+    expect(layoutGroups(groups(13), everyPair(ids)).nodes).toEqual(layoutGroups(groups(13)).nodes);
   });
 });

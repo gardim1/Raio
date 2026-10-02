@@ -141,6 +141,49 @@ const remap = (from: ChoreographyScript, to: ChoreographyScript, t: number): num
   return t;
 };
 
+/** The same events, stop for stop (only the motion between them can differ: the map's edges changed, not the session). */
+const sameSession = (a: ChoreographyScript, b: ChoreographyScript): boolean => {
+  const x = a.live;
+  const y = b.live;
+  if (!x || !y || x.open !== y.open || x.visits.length !== y.visits.length) return false;
+  if (!x.visits.every((v, i) => v.nodeId === y.visits[i]!.nodeId && v.notices === y.visits[i]!.notices)) return false;
+  const checks = (script: ChoreographyScript): string => script.validations.map((v) => `${v.kind}:${v.status}`).join(',');
+  return a.story.length === b.story.length && a.risks.length === b.risks.length && checks(a) === checks(b);
+};
+
+/** Where a script comes to rest: the last scheduled cue of an open session, or the end-state view. */
+const restAt = (script: ChoreographyScript): number => (marksOf(script).open ? marksOf(script).quietAt : settledAt(script));
+
+/**
+ * Maps the playhead when only the map changed (same stops, different motion): no motion plays again and nothing is
+ * skipped. A session at rest stays at rest. Otherwise the playhead keeps its place inside the same stop, clamped to
+ * that stop in the new script (a shorter script never throws it forward into the next one); between two stops it keeps
+ * the time left before the next arrival.
+ */
+const remapSameSession = (state: LiveState, to: ChoreographyScript): number => {
+  const before = marksOf(state.script);
+  const after = marksOf(to);
+  if (isSettled(state, false)) return restAt(to);
+  let index = -1;
+  before.visits.forEach((v, i) => {
+    if (state.t >= v.arrivalAt) index = i;
+  });
+  if (index < 0) return state.t;
+  const was = before.visits[index]!;
+  const now = after.visits[index]!;
+  const clamp = (t: number, low: number, high: number): number => Math.min(Math.max(t, low), Math.max(low, high));
+  if (index === before.visits.length - 1) {
+    // Parked at the latest stop of an open session: the new script's rest, not a replay of its arrival.
+    if (state.t >= was.readyAt) return after.open ? restAt(to) : now.readyAt + (state.t - was.readyAt);
+    return clamp(now.arrivalAt + (state.t - was.arrivalAt), now.arrivalAt, now.readyAt);
+  }
+  if (state.t < was.readyAt) return clamp(now.arrivalAt + (state.t - was.arrivalAt), now.arrivalAt, now.readyAt);
+  // On its way to the next stop: the same time left before arriving, between this stop's end and that arrival.
+  const nextWas = before.visits[index + 1]!;
+  const nextNow = after.visits[index + 1]!;
+  return clamp(nextNow.arrivalAt - (nextWas.arrivalAt - state.t), now.readyAt, nextNow.arrivalAt);
+};
+
 /**
  * First time a session is seen. A session that has only just started plays from the beginning so the
  * viewer sees Raio wake; anything further along (or already ended) is shown as it stands now.
@@ -157,6 +200,11 @@ export const retargetLive = (state: LiveState, script: ChoreographyScript, wallM
   if (state.script === script) return state;
   // Another session: it is seen for the first time, whatever the old playhead was.
   if (state.script.id !== script.id) return { ...startLive(script, wallMs), stale: state.stale };
+  // Same events, different map: no new content, so nothing to catch up on and nothing to play again.
+  if (sameSession(state.script, script)) {
+    const t = Math.min(remapSameSession(state, script), restAt(script));
+    return { ...state, script, t, wallMs };
+  }
   const t = remap(state.script, script, state.t);
   if (state.stale) return { ...state, script, t: Math.min(t, marksOf(script).eventsEndAt), rate: 1, wallMs };
   return { ...state, script, ...catchUp(script, t), wallMs };

@@ -1,8 +1,10 @@
 import { demoGraph } from '../features/architecture/model/demoProject';
-import { createGraph } from '../features/architecture/model/graph';
+import { connectNodes, createGraph } from '../features/architecture/model/graph';
+import { deriveImportEdges, drawnLinks } from '../features/project/importEdges';
 import type { SessionLog } from '../features/session/model/events';
 import { demoSessionLog } from '../features/session/model/demoSession';
 import { useSessionUi } from '../features/session/store/sessionStore';
+import { demoGroupOf, demoImportFacts } from './demoImports';
 import type { DesktopBridge, SessionSnapshot } from './desktopBridge';
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
@@ -32,6 +34,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     showSurface: showSurfaceInPlace,
     setPinned: () => {},
     setIslandHitRect: () => {},
+    projectImports: () => Promise.resolve(demoImportFacts),
     connector: null,
   };
 };
@@ -62,8 +65,17 @@ export interface SimulatedFeedOptions {
   readonly fixedNowMs?: number;
 }
 
-/** The map the live product has today: the demo's systems, no relationships (never invented). */
-const feedGraph = createGraph(demoGraph.nodes, []);
+/**
+ * The map the live product draws: the demo's systems, with edges only where the demo's import facts have a
+ * static import between two of them (the same derivation as live data; the film's hand-drawn relationships are not used).
+ */
+const feedGraph = createGraph(
+  demoGraph.nodes,
+  connectNodes(
+    demoGraph.nodes,
+    drawnLinks(deriveImportEdges(demoImportFacts, demoGroupOf).edges),
+  ),
+);
 
 /**
  * Dev/test bridge that appends a demo session's events over time, like a real agent would. It stays a
@@ -117,6 +129,7 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     showSurface: showSurfaceInPlace,
     setPinned: () => {},
     setIslandHitRect: () => {},
+    projectImports: () => Promise.resolve(demoImportFacts),
     connector: null,
   };
 };

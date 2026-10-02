@@ -250,6 +250,122 @@ describe('live director — failures and notices are never skipped', () => {
   });
 });
 
+describe('live director — the map changes but the session does not', () => {
+  const noEdges = createGraph(demoGraph.nodes, []);
+  const events = [write(1000, 'frontend'), write(2000, 'auth'), write(3000, 'api'), write(4000, 'db')];
+  const plain = compileReplay(log(events), noEdges, { live: true });
+  const linked = compileReplay(log(events), demoGraph, { live: true });
+  /** The orb segment that is playing at `t`. */
+  const segmentAt = (script: ChoreographyScript, t: number) => script.orb.find((seg) => t >= seg.t0 && t < seg.t1);
+  /** Index of the stop the playhead is at or past. */
+  const visitAt = (script: ChoreographyScript, t: number) => script.live!.visits.reduce((index, v, i) => (t >= v.arrivalAt ? i : index), -1);
+
+  it('has scripts that differ only by the edges (same stops, different motion)', () => {
+    expect(linked.live!.visits.map((v) => v.nodeId)).toEqual(plain.live!.visits.map((v) => v.nodeId));
+    expect(plain.orb.some((seg) => seg.kind === 'edge')).toBe(false);
+    expect(linked.orb.some((seg) => seg.kind === 'edge')).toBe(true);
+    expect(linked.live!.eventsEndAt).not.toBeCloseTo(plain.live!.eventsEndAt, 3);
+  });
+
+  it('does not replay motion for a parked session when edges appear', () => {
+    let s = run(startLive(plain, 0), 1).state; // parked, still blinking
+    const before = s.t;
+    s = retargetLive(s, linked, s.wallMs);
+    expect(s.t).toBeGreaterThanOrEqual(before);
+    expect(s.t).toBeGreaterThanOrEqual(linked.live!.visits.at(-1)!.readyAt);
+    expect(segmentAt(linked, s.t)?.kind).toBe('hover');
+    const { steps } = run(s, 12);
+    expect(steps.every((x) => x.to >= x.from)).toBe(true);
+    expect(steps.every((x) => segmentAt(linked, x.to)?.kind === 'hover')).toBe(true);
+  });
+
+  it('keeps a session that had already come to rest at rest', () => {
+    let s = run(startLive(plain, 0), 120).state;
+    expect(isSettled(s, false)).toBe(true);
+    s = retargetLive(s, linked, s.wallMs);
+    expect(isSettled(s, false)).toBe(true);
+  });
+
+  it('does not rewind when the same log is recompiled with and then without edges', () => {
+    let s = run(startLive(linked, 0), 120).state;
+    const before = s.t;
+    s = retargetLive(s, plain, s.wallMs);
+    expect(s.t).toBeGreaterThanOrEqual(Math.min(before, plain.live!.quietAt));
+    expect(isSettled(s, false)).toBe(true);
+  });
+
+  it('keeps the place inside the same stop when edges appear or go (the first stop has a dwell)', () => {
+    for (const [from, to] of [[plain, linked], [linked, plain]] as const) {
+      const stop = from.live!.visits[0]!;
+      const start = { ...startLive(from, 0), t: stop.arrivalAt + 0.2, rate: 1 };
+      const next = retargetLive(start, to, start.wallMs);
+      const target = to.live!.visits[0]!;
+      expect(next.t).toBeCloseTo(Math.min(target.arrivalAt + 0.2, target.readyAt), 6);
+      expect(visitAt(to, next.t)).toBe(0);
+      expect(run(next, 6).steps.every((x) => x.to >= x.from)).toBe(true);
+    }
+  });
+
+  it('does not jump forward when the script gets shorter (an edge is removed: travel becomes a jump)', () => {
+    for (const index of [1, 2, 3]) {
+      const stop = linked.live!.visits[index]!;
+      const start = { ...startLive(linked, 0), t: stop.arrivalAt + 0.1, rate: 1 };
+      const next = retargetLive(start, plain, start.wallMs);
+      const target = plain.live!.visits[index]!;
+      expect(next.t, `stop ${index}`).toBeGreaterThanOrEqual(target.arrivalAt - 1e-9);
+      expect(next.t, `stop ${index}`).toBeLessThanOrEqual(target.readyAt + 1e-9);
+      expect(next.t, `stop ${index}`).toBeCloseTo(Math.min(target.arrivalAt + 0.1, target.readyAt), 6);
+      expect(visitAt(plain, next.t)).toBe(index);
+    }
+  });
+
+  it('keeps a stop at its end when the offset is longer than the new stop (clamped to the stop)', () => {
+    const stop = linked.live!.visits[1]!;
+    const late = { ...startLive(linked, 0), t: stop.readyAt - 0.001, rate: 1 };
+    const next = retargetLive(late, plain, late.wallMs);
+    const target = plain.live!.visits[1]!;
+    expect(next.t).toBeLessThanOrEqual(target.readyAt + 1e-9);
+    expect(next.t).toBeGreaterThanOrEqual(target.arrivalAt - 1e-9);
+  });
+
+  it('keeps the time left before the next arrival when the orb is between two stops', () => {
+    for (const [from, to] of [[linked, plain], [plain, linked]] as const) {
+      const was = from.live!.visits;
+      const now = to.live!.visits;
+      const between = (was[1]!.readyAt + was[2]!.arrivalAt) / 2;
+      const start = { ...startLive(from, 0), t: between, rate: 1 };
+      const next = retargetLive(start, to, start.wallMs);
+      expect(next.t).toBeGreaterThanOrEqual(now[1]!.readyAt - 1e-9);
+      expect(next.t).toBeLessThanOrEqual(now[2]!.arrivalAt + 1e-9);
+      // The playhead never lands past the next stop's arrival, so nothing that has not been reached is skipped.
+      expect(visitAt(to, next.t)).toBe(1);
+    }
+  });
+
+  it('leaves a playhead before the first stop alone', () => {
+    const start = { ...startLive(plain, 0), t: 0.3, rate: 1 };
+    expect(retargetLive(start, linked, start.wallMs).t).toBeCloseTo(0.3, 6);
+  });
+
+  it('does not rewind an ended session that had already settled', () => {
+    const end = { kind: 'session.end', atMs: 5000, outcome: 'completed' } as const;
+    const endedPlain = compileReplay(log([...events, end]), noEdges, { live: true });
+    const endedLinked = compileReplay(log([...events, end]), demoGraph, { live: true });
+    let s = startLive(endedPlain, 0);
+    expect(isSettled(s, false)).toBe(true);
+    s = retargetLive(s, endedLinked, s.wallMs);
+    expect(isSettled(s, false)).toBe(true);
+    expect(s.t).toBeGreaterThanOrEqual(settledAt(endedLinked) - 1e-9);
+  });
+
+  it('still treats a different number of stops as new content (not a map change)', () => {
+    const more = compileReplay(log([...events, write(5000, 'payments')]), demoGraph, { live: true });
+    let s = run(startLive(plain, 0), 3).state;
+    s = retargetLive(s, more, s.wallMs);
+    expect(s.t).toBeLessThan(settledAt(more));
+  });
+});
+
 describe('live director — hidden, reduced motion, session end', () => {
   it('does not advance while hidden and jumps to the latest state on show (no backlog replay)', () => {
     let script = live([write(1000, 'auth')]);

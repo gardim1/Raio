@@ -1,4 +1,5 @@
 import type { ArchitectureGraph } from '../features/architecture/model/types';
+import type { ProjectImports } from '../features/project/importEdges';
 import type { ProjectInsights } from '../features/project/projectInsights';
 import type { SessionLog } from '../features/session/model/events';
 
@@ -86,6 +87,12 @@ export interface DesktopBridge {
   setPinned(pinned: boolean): void;
   /** Island click-through: the capsule area that should receive the pointer. No-op in the browser. */
   setIslandHitRect(rect: Rect): void;
+  /**
+   * The latest static import facts of the connected project (paths and specifiers only) that this bridge holds, or
+   * null when there is none: no project, no scan yet, or the scan failed, timed out or was malformed. It never
+   * starts a scan; the map has edges only from a scan the bridge itself accepted.
+   */
+  projectImports(): Promise<ProjectImports | null>;
   /** Project connection; null where it is not available (browser, fixtures). */
   readonly connector: Connector | null;
 }

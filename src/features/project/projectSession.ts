@@ -2,8 +2,9 @@ import type { SessionSnapshot } from '../../platform/desktopBridge';
 import type { RaioEvent } from '../ingest/raioEvent';
 import type { AgentEvent, SessionLog } from '../session/model/events';
 import type { AgentId, ValidationKind, ValidationStatus } from '../session/model/script';
-import { classifyPath, groupPaths, HEURISTIC_NOTE, type PathGroup } from './classifyPath';
+import { classifyPath, groupPaths, type PathGroup } from './classifyPath';
 import { assessReportedEdits, DISK_WINDOW_MS, findUnassignedChanges, firstChangeAfter, type PathMoment } from './diskEvidence';
+import { deriveMapImportEdges, drawnLinks, type ProjectImports, relationshipsFrom, relationshipsNote } from './importEdges';
 import { noticeKindForPath } from './pathKinds';
 import type { ProjectedSession, ProjectInsights, ReportedEditInsight, UnassignedChangeInsight, ValidationInsight } from './projectInsights';
 import { layoutGroups } from './layoutGroups';
@@ -65,14 +66,17 @@ const detectParallel = (events: readonly RaioEvent[]): { parallel: boolean; acto
 
 /**
  * Projects the project's events into the session the surfaces show: a `SessionLog` that `compileReplay`
- * and `deriveInsights` consume unchanged, a group map without edges, and the extra evidence the log
- * cannot carry (disk consistency, unassigned changes, stale checks, parallel activity).
+ * and `deriveInsights` consume unchanged, a group map, and the extra evidence the log cannot carry
+ * (disk consistency, unassigned changes, stale checks, parallel activity). The map has edges only when
+ * `imports` (a TS/JS static import scan) produced them between groups on the map; the session's activity
+ * never creates one, and without a scan (or without TS/JS files) relationships stay unknown. `importsStale`: a later
+ * rescan failed, so the relationships are as of the last scan that worked.
  *
  * `events` are all events of the project (any session, plus filesystem changes): staleness and
  * attribution need the whole project. Returns null when there are no agent events ("no telemetry").
  * Everything about groups, consistency and staleness is a heuristic; see HEURISTIC_NOTE and diskEvidence.ts.
  */
-export const projectSessionDetailed = (project: ProjectRef, events: readonly RaioEvent[], sessionId?: string): ProjectedSession | null => {
+export const projectSessionDetailed = (project: ProjectRef, events: readonly RaioEvent[], sessionId?: string, imports?: ProjectImports | null, importsStale = false): ProjectedSession | null => {
   const projectEvents = events.filter((e) => e.projectId === project.id);
   const selected = pickSession(projectEvents.filter(isAgentEvent), sessionId);
   if (!selected) return null;
@@ -180,6 +184,9 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
       return { path: c.path, groupId: group.groupId, groupLabel: group.label, atMs: c.at - startAt, notice: noticeKindForPath(c.path) };
     });
 
+  // Edges come from the import scan only, between groups that are on the map; a path in a group that was merged into Other counts as Other.
+  const derived = imports ? deriveMapImportEdges(imports, new Set(groups.map((g) => g.groupId)), new Set(groupedPaths.map((path) => classifyPath(path).groupId))) : null;
+  const relationships = derived ? relationshipsFrom(derived, { stale: importsStale }) : 'unknown';
   const agent: AgentId = first.agent;
   const sessionLog: SessionLog = {
     id: first.sessionId!,
@@ -193,12 +200,12 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
   const snapshot: SessionSnapshot = {
     provenance: sessionEvents.some((e) => e.provenance === 'fixture' || e.source === 'fixture') ? 'fixture' : 'live',
     project: project.name,
-    graph: layoutGroups(groups),
+    graph: layoutGroups(groups, derived ? drawnLinks(derived.edges) : []),
     log: sessionLog,
   };
   const insights: ProjectInsights = {
-    note: HEURISTIC_NOTE,
-    relationships: 'unknown',
+    note: relationshipsNote(relationships),
+    relationships,
     ...detectParallel(sessionEvents),
     reportedEdits,
     unassigned,

@@ -1,4 +1,4 @@
-import { createGraph, WORLD } from '../architecture/model/graph';
+import { connectNodes, createGraph, type NodeLink, WORLD } from '../architecture/model/graph';
 import type { ArchitectureGraph, ArchitectureNode, SystemKind } from '../architecture/model/types';
 import type { PathGroup } from './classifyPath';
 
@@ -28,13 +28,29 @@ const rowCountFor = (count: number): 1 | 2 | 4 => (count <= 3 ? 1 : count <= 8 ?
 /** Splits `count` nodes over `rows` rows as evenly as possible, earlier rows taking the remainder. */
 const rowSizes = (count: number, rows: number): number[] => Array.from({ length: rows }, (_, row) => Math.floor(count / rows) + (row < count % rows ? 1 : 0));
 
+/** Layouts and their edge routing are pure in (groups, links), so a refresh with the same map reuses the same graph. */
+const MEMO_LIMIT = 16;
+const memo = new Map<string, ArchitectureGraph>();
+
 /**
  * Deterministic map layout for groups: stable order (kind, then label), row-major with each row centred,
  * and every row clear of the orb's rest position. No randomness and no relayout beyond what the group list implies.
- * The graph has no edges: relationships between groups are not known to the projection.
+ * Memoised by (groups, links): the same map returns the same graph object, so nothing is rerouted or recompiled.
+ * Edges exist only for the given `links` (static import relations derived elsewhere) between groups on the map;
+ * without links the graph has none. Edges never move a node.
  */
-export const layoutGroups = (groups: readonly PathGroup[]): ArchitectureGraph => {
+export const layoutGroups = (groups: readonly PathGroup[], links: readonly NodeLink[] = []): ArchitectureGraph => {
   const ordered = [...groups].sort(compareGroups);
+  const key = JSON.stringify([ordered.map((g) => [g.groupId, g.label, g.kind]), links.map((l) => [l.from, l.to])]);
+  const known = memo.get(key);
+  if (known) return known;
+  const graph = buildLayout(ordered, links);
+  if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value!);
+  memo.set(key, graph);
+  return graph;
+};
+
+const buildLayout = (ordered: readonly PathGroup[], links: readonly NodeLink[]): ArchitectureGraph => {
   const rows = rowCountFor(ordered.length);
   const sizes = rowSizes(ordered.length, rows);
   const slot = Math.min(MAX_SLOT, ROW_WIDTH / Math.max(1, ...sizes));
@@ -51,5 +67,5 @@ export const layoutGroups = (groups: readonly PathGroup[]): ArchitectureGraph =>
       });
     }
   });
-  return createGraph(nodes, []);
+  return createGraph(nodes, connectNodes(nodes, links));
 };

@@ -4,6 +4,8 @@ import { compileReplay } from '../session/model/compileReplay';
 import { AGENT_LABEL, type AgentEvent } from '../session/model/events';
 import { deriveInsights } from '../session/model/insights';
 import { DISK_WINDOW_MS } from './diskEvidence';
+import { HEURISTIC_NOTE } from './classifyPath';
+import type { ProjectImports } from './importEdges';
 import { projectSession, projectSessionDetailed } from './projectSession';
 
 const PROJECT = { id: 'p1', name: 'acme-mini' };
@@ -571,5 +573,89 @@ describe('projectSession: Claude Code 2.1.286 fixture session', () => {
     const script = compileReplay(snapshot.log, snapshot.graph);
     expect(script.status.at(-1)?.state).toBe('complete');
     expect(script.duration).toBeLessThanOrEqual(10.05);
+  });
+});
+
+describe('projectSession: static import edges', () => {
+  const scanOf = (files: Record<string, string[]>, extra: Partial<ProjectImports> = {}): ProjectImports => ({
+    files: Object.entries(files).map(([path, specifiers]) => ({ path, specifiers })),
+    truncated: false,
+    skipped: 0,
+    scannedAtMs: 1,
+    ...extra,
+  });
+  const withImports = (events: readonly RaioEvent[], imports: ProjectImports | null | undefined) => {
+    const projected = projectSessionDetailed(PROJECT, events, undefined, imports);
+    if (!projected) throw new Error('expected a projection');
+    return projected;
+  };
+  const SESSION = [started(0), edit(1, 'src/web/app.ts'), edit(2, 'src/api/users.ts'), read(3, 'src/auth/session.ts')];
+  const FILES = { 'src/web/app.ts': ['../api/users', 'react'], 'src/api/users.ts': ['../auth/session'], 'src/auth/session.ts': [] };
+
+  it('puts the derived import edges between the touched groups on the map and says so (heuristic)', () => {
+    const { snapshot, insights } = withImports(SESSION, scanOf(FILES));
+    expect(snapshot.graph.edges.map((e) => e.id).sort()).toEqual(['api->auth', 'web->api']);
+    expect(insights.relationships).toEqual({ kind: 'static-imports', edges: 2, imports: 2, unresolved: 1, truncated: false, skipped: 0 });
+    expect(insights.note).toContain('Relationships: static imports between areas (heuristic)');
+    expect(insights.note).toMatch(/1 import specifier was not resolved/);
+  });
+
+  it('draws one line for areas that import each other, directed from the heavier side, and counts it once', () => {
+    const { snapshot, insights } = withImports(SESSION, scanOf({ 'src/web/app.ts': ['../api/users'], 'src/api/users.ts': ['../web/app', '../web/app.ts'], 'src/auth/session.ts': [] }));
+    expect(snapshot.graph.edges.map((e) => e.id)).toEqual(['api->web']);
+    expect(insights.relationships).toMatchObject({ kind: 'static-imports', edges: 1, imports: 3 });
+  });
+
+  it('says the relationships are as of the last scan when a later rescan failed', () => {
+    const projected = projectSessionDetailed(PROJECT, SESSION, undefined, scanOf(FILES), true)!;
+    expect(projected.insights.relationships).toMatchObject({ kind: 'static-imports', stale: true });
+    expect(projected.insights.note).toMatch(/as of the last scan/);
+    expect(projected.snapshot.graph.edges).toHaveLength(2);
+    expect(withImports(SESSION, scanOf(FILES)).insights.note).not.toMatch(/last scan/);
+    expect(projectSessionDetailed(PROJECT, SESSION, undefined, null, true)!.insights.relationships).toBe('unknown');
+  });
+
+  it('keeps "relationships unknown" with no scan, a failed scan or no TS/JS files, and creates no edge', () => {
+    for (const imports of [undefined, null, scanOf({})]) {
+      const { snapshot, insights } = withImports(SESSION, imports);
+      expect(snapshot.graph.edges).toEqual([]);
+      expect(insights.relationships).toBe('unknown');
+      expect(insights.note).toBe(HEURISTIC_NOTE);
+    }
+  });
+
+  it('ignores imports of areas the session never touched and files outside the map', () => {
+    const { snapshot, insights } = withImports(SESSION, scanOf({ 'src/web/app.ts': ['../jobs/run'], 'src/jobs/run.ts': ['../web/app'], 'src/auth/session.ts': [] }));
+    expect(snapshot.graph.edges).toEqual([]);
+    expect(insights.relationships).toMatchObject({ kind: 'static-imports', edges: 0 });
+    expect(insights.relationships).toMatchObject({ unresolved: 0 });
+  });
+
+  it('flags a partial scan in the copy and never lets activity order create an edge', () => {
+    const { snapshot, insights } = withImports(SESSION, scanOf({ 'src/web/app.ts': [], 'src/api/users.ts': [] }, { truncated: true }));
+    expect(snapshot.graph.edges).toEqual([]);
+    expect(insights.note).toMatch(/partial/i);
+  });
+
+  it('points imports of merged groups at Other', () => {
+    const edits = Array.from({ length: 15 }, (_, i) => edit(i + 1, `dir${String(i).padStart(2, '0')}/f.ts`, 'added'));
+    const { snapshot } = withImports([started(0), ...edits], scanOf({ 'dir14/f.ts': ['../dir00/f'], 'dir13/f.ts': ['../dir14/f'], 'dir00/f.ts': [] }));
+    expect(snapshot.graph.edges.map((e) => e.id)).toEqual(['merged-other->dir00']);
+  });
+
+  it('lets the replay travel an edge only when the imports created it', () => {
+    const edges = (imports: ProjectImports) => {
+      const { snapshot } = withImports([started(0), edit(1, 'src/web/app.ts'), edit(2, 'src/api/users.ts')], imports);
+      return compileReplay(snapshot.log, snapshot.graph).edges.map((c) => c.edgeId);
+    };
+    expect(edges(scanOf({ 'src/web/app.ts': ['../api/users'], 'src/api/users.ts': [] }))).toEqual(['web->api']);
+    expect(edges(scanOf({ 'src/web/app.ts': [], 'src/api/users.ts': [] }))).toEqual([]);
+    expect(edges(scanOf({}))).toEqual([]);
+  });
+
+  it('is deterministic for the same events and scan', () => {
+    const a = withImports(SESSION, scanOf(FILES));
+    const b = withImports(SESSION, scanOf(FILES));
+    expect(b.snapshot.graph.edges.map((e) => [e.id, e.path.toSvg()])).toEqual(a.snapshot.graph.edges.map((e) => [e.id, e.path.toSvg()]));
   });
 });
