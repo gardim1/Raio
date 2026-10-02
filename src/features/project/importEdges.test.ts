@@ -347,3 +347,46 @@ describe('relationshipsNote', () => {
     expect(relationshipsNote({ ...base, truncated: false, skipped: 0 })).not.toMatch(/not read/);
   });
 });
+
+describe('relationshipsNote: areas from the whole project', () => {
+  it('words the areas as a guess from folders and manifests, for unknown and for known relationships', () => {
+    expect(relationshipsNote('unknown', 'inventory')).toBe('Areas are a heuristic guess from folders and manifests, not verified dependencies. Relationships between areas are unknown.');
+    const known = relationshipsNote({ kind: 'static-imports', edges: 1, imports: 1, unresolved: 0, truncated: false, skipped: 0 }, 'inventory');
+    expect(known).toBe('Areas are a heuristic guess from folders and manifests, not verified dependencies. Relationships: static imports between areas (heuristic).');
+  });
+
+  it('keeps the wording from sessions by default', () => {
+    expect(relationshipsNote('unknown', 'sessions')).toBe(relationshipsNote('unknown'));
+  });
+});
+
+describe('deriveMapImportEdges: a classifier of the map', () => {
+  const imports = { files: [{ path: 'libs/ui/a.ts', specifiers: ['../core/b'] }, { path: 'libs/core/b.ts', specifiers: [] }], truncated: false, skipped: 0, scannedAtMs: 1 };
+  const classifier = (path: string) => ({ groupId: path.split('/').slice(0, 2).join('/'), label: path, kind: 'other' as const });
+
+  it('uses the classifier instead of the default folders, and does not mix its memo with the default', () => {
+    const mapped = new Set(['libs/ui', 'libs/core']);
+    expect(deriveMapImportEdges(imports, mapped, new Set(), classifier).edges.map((e) => `${e.from}->${e.to}`)).toEqual(['libs/ui->libs/core']);
+    expect(deriveMapImportEdges(imports, mapped, new Set()).edges).toEqual([]);
+    expect(deriveMapImportEdges(imports, mapped, new Set(), classifier)).toBe(deriveMapImportEdges(imports, mapped, new Set(), classifier));
+  });
+});
+
+describe('relationshipsFrom: areas that import each other', () => {
+  const scan = (files: Record<string, string[]>) => ({ files: Object.entries(files).map(([path, specifiers]) => ({ path, specifiers })), truncated: false, skipped: 0, scannedAtMs: 1 });
+  const groupOf = (path: string) => path.split('/')[0] ?? null;
+
+  it('counts the drawn pairs that have imports in both directions, and says nothing when there are none', () => {
+    const both = deriveImportEdges(scan({ 'a/x.ts': ['../b/y'], 'b/y.ts': ['../a/x'], 'c/z.ts': ['../a/x'] }), groupOf);
+    expect(relationshipsFrom(both)).toMatchObject({ kind: 'static-imports', edges: 2, mutual: 1 });
+    const one = deriveImportEdges(scan({ 'a/x.ts': ['../b/y'], 'b/y.ts': [] }), groupOf);
+    expect(relationshipsFrom(one)).not.toHaveProperty('mutual');
+  });
+
+  it('tells in the copy that the line points the way with more imports', () => {
+    const base = { kind: 'static-imports' as const, edges: 3, imports: 5, unresolved: 0, truncated: false, skipped: 0 };
+    expect(relationshipsNote({ ...base, mutual: 1 })).toContain('1 pair of areas import each other; the line points the way with more imports.');
+    expect(relationshipsNote({ ...base, mutual: 2 })).toContain('2 pairs of areas import each other; the line points the way with more imports.');
+    expect(relationshipsNote(base)).not.toContain('each other');
+  });
+});

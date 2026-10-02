@@ -63,9 +63,10 @@ TypeScript renderer (all semantics): projection (paths -> areas, validation, sta
 
 ## Map meaning
 
-- Nodes: heuristic directory-convention groups (workspace packages, conventional folders, top-level fallback), max 12 + "Other", labelled heuristic and user-correctable.
+- Nodes: heuristic directory-convention groups (workspace packages split by their own layout, conventional folders, top-level fallback), labelled heuristic and user-correctable. As implemented (2026-10-02): groups come from the **whole project** listing (`project_inventory`: paths the watcher would not ignore, up to 20 000), not only from what a session touched; areas the session did not touch are shown dimmed, as in the approved design. The 12 kept areas are the largest by file count of the current listing, so positions do not move between sessions; anything touched outside them (including loose root files and new folders) is shown inside "Other", marked touched and listed in its inspector ("Other" has a reserved slot, so no other node moves when it appears). Without a listing (not yet scanned, failed), groups fall back to the session's own paths; a failed relisting keeps the last one and says so. A listing that hit a limit is flagged partial; on very sparse trees near the 2 s budget two scans can differ.
+- Technology hints: names read only from known manifests (package.json, pyproject/requirements, go.mod, Cargo.toml, docker-compose images, schema.prisma provider/models) — never versions, values, script bodies or `.env` files — and shown as heuristic hints. A database or cache **engine** is named only from a compose image or the Prisma provider; driver packages (pg, psycopg, pgx, ioredis, ...) are listed by their literal names and never imply an engine.
 - Edges: only static import relations between groups for TS/JS (lightweight import/require scan), labelled heuristic. Other languages show "relationships unknown"; no invented edges.
-- Activity trail is a separate layer. The orb travels along an edge only when the edge exists; otherwise it uses the design's jump. **The trail never creates or reveals an edge.** Node positions are persisted; no continuous relayout.
+- Activity trail is a separate layer. The orb travels along an edge only when the edge exists; otherwise it uses the design's jump. **The trail never creates or reveals an edge.** Node positions are deterministic from the listing (not yet persisted or user-editable); no continuous relayout.
 
 ### Semantic corrections to the approved design (visual language kept)
 

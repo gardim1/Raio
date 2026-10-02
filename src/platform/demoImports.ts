@@ -1,4 +1,5 @@
 import type { ProjectImports } from '../features/project/importEdges';
+import type { ProjectInventory } from '../features/project/projectInventory';
 
 /**
  * Import facts of the demo project ("acme-web"), in the shape the core's `project_imports` returns. The relative
@@ -22,6 +23,20 @@ export const demoImportFacts: ProjectImports = {
   truncated: false,
   skipped: 0,
   scannedAtMs: 0,
+};
+
+/**
+ * Inventory of the demo project ("acme-web"), in the shape the core's `project_inventory` returns: the files behind
+ * the demo's systems (the scanned ones plus a stylesheet and the root manifest) and a root `package.json` naming
+ * React and Express. Grouping it gives one area per demo system (web, auth, server, db, payments, storage, config).
+ * Fixture data only: never real telemetry.
+ */
+export const demoInventory: ProjectInventory = {
+  files: ['package.json', 'web/components/login.css', ...demoImportFacts.files.map((f) => f.path)],
+  truncated: false,
+  skipped: 0,
+  scannedAtMs: 0,
+  manifests: [{ path: 'package.json', kind: 'npm', facts: { dependencies: ['express', 'react'], scripts: ['build', 'dev'] } }],
 };
 
 const DEMO_GROUP_BY_FOLDER: Readonly<Record<string, string>> = { web: 'frontend', server: 'api', db: 'db', payments: 'payments', storage: 'storage', config: 'config' };

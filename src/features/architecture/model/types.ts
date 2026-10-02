@@ -12,6 +12,10 @@ export interface ArchitectureNode {
   readonly id: NodeId;
   readonly label: string;
   readonly kind: SystemKind;
+  /** Technology the project's manifests name for this area (`API · Express`). A heuristic; absent when none is named. */
+  readonly hint?: string;
+  /** Only on `Other`: the areas a session touched that did not fit among the 12 largest and are shown inside it. */
+  readonly members?: readonly string[];
   readonly position: Vec;
 }
 

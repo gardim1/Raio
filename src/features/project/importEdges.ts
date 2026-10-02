@@ -1,4 +1,4 @@
-import { classifyPath, HEURISTIC_NOTE, OTHER_GROUP } from './classifyPath';
+import { classifyPath, HEURISTIC_NOTE, OTHER_GROUP, type PathGroup } from './classifyPath';
 
 /** One scanned TS/JS file: its project-relative POSIX path and the string-literal sources it imports (facts only). */
 export interface ImportFile {
@@ -47,6 +47,8 @@ export interface StaticImportRelationships {
   readonly skipped: number;
   /** A rescan after file activity failed: these relationships are as of the last scan that worked. */
   readonly stale?: true;
+  /** Pairs of areas whose line stands for imports in both directions (the line points the way with more imports). Only when above zero. */
+  readonly mutual?: number;
 }
 
 const EXTENSIONS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs'] as const;
@@ -150,53 +152,72 @@ export const drawnLinks = (edges: readonly GroupImportEdge[]): { readonly from: 
 };
 
 /** The map's group for a scanned path: a group on the map, `Other` for a group merged into it, null for a group the map does not show. */
-const mapGroupOf = (mapped: ReadonlySet<string>, touched: ReadonlySet<string>) => (path: string): string | null => {
-  const id = classifyPath(path).groupId;
+const mapGroupOf = (mapped: ReadonlySet<string>, touched: ReadonlySet<string>, classify: PathClassifier) => (path: string): string | null => {
+  const id = classify(path).groupId;
   return mapped.has(id) ? id : touched.has(id) ? OTHER_GROUP.groupId : null;
 };
 
+/** Which area of the map a project path belongs to. The default is the session-only classification by folder names. */
+export type PathClassifier = (path: string) => PathGroup;
+
 const MEMO_PER_SCAN = 8;
-const memo = new WeakMap<ProjectImports, Map<string, ImportEdgeResult>>();
+const memo = new WeakMap<ProjectImports, WeakMap<PathClassifier, Map<string, ImportEdgeResult>>>();
+const defaultClassifier: PathClassifier = (path) => classifyPath(path);
 const keyOf = (ids: ReadonlySet<string>): string => [...ids].sort().join('\u0001');
 
 /**
  * `deriveImportEdges` for the groups on the map, memoised by (scan object, group set): the projection runs on every
  * event, the scan changes rarely. `mapped` are the node ids of the map; `touched` the groups the session's paths fall in
- * (those not in `mapped` were merged into Other).
+ * (those not in `mapped` were merged into Other). `classify` is the map's own classification of a path (the whole-project
+ * areas); a classifier is expected to be long-lived (one per inventory), since results are memoised by its identity.
  */
-export const deriveMapImportEdges = (imports: ProjectImports, mapped: ReadonlySet<string>, touched: ReadonlySet<string>): ImportEdgeResult => {
-  let results = memo.get(imports);
-  if (!results) memo.set(imports, (results = new Map()));
+export const deriveMapImportEdges = (imports: ProjectImports, mapped: ReadonlySet<string>, touched: ReadonlySet<string>, classify: PathClassifier = defaultClassifier): ImportEdgeResult => {
+  let byClassifier = memo.get(imports);
+  if (!byClassifier) memo.set(imports, (byClassifier = new WeakMap()));
+  let results = byClassifier.get(classify);
+  if (!results) byClassifier.set(classify, (results = new Map()));
   const key = `${keyOf(mapped)}\u0002${keyOf(touched)}`;
   let result = results.get(key);
   if (!result) {
     if (results.size >= MEMO_PER_SCAN) results.delete(results.keys().next().value!);
-    result = deriveImportEdges(imports, mapGroupOf(mapped, touched));
+    result = deriveImportEdges(imports, mapGroupOf(mapped, touched, classify));
     results.set(key, result);
   }
   return result;
 };
 
 /** What the evidence panel and map say about relationships, from what the derivation found. */
-export const relationshipsFrom = (result: ImportEdgeResult, options: { readonly stale?: boolean } = {}): Relationships =>
-  result.hasScriptFiles
-    ? {
-        kind: 'static-imports',
-        edges: drawnLinks(result.edges).length,
-        imports: result.edges.reduce((sum, e) => sum + e.count, 0),
-        unresolved: result.unresolved,
-        truncated: result.truncated,
-        skipped: result.skipped,
-        ...(options.stale ? { stale: true as const } : {}),
-      }
-    : 'unknown';
+export const relationshipsFrom = (result: ImportEdgeResult, options: { readonly stale?: boolean } = {}): Relationships => {
+  if (!result.hasScriptFiles) return 'unknown';
+  const drawn = drawnLinks(result.edges);
+  const directed = new Set(result.edges.map((e) => `${e.from}\u0000${e.to}`));
+  const mutual = drawn.filter((l) => directed.has(`${l.from}\u0000${l.to}`) && directed.has(`${l.to}\u0000${l.from}`)).length;
+  return {
+    kind: 'static-imports',
+    edges: drawn.length,
+    imports: result.edges.reduce((sum, e) => sum + e.count, 0),
+    unresolved: result.unresolved,
+    truncated: result.truncated,
+    skipped: result.skipped,
+    ...(options.stale ? { stale: true as const } : {}),
+    ...(mutual > 0 ? { mutual } : {}),
+  };
+};
 
 const GROUPS_ARE_HEURISTIC = 'Groups are a heuristic guess from folder names, not verified dependencies.';
+const AREAS_ARE_HEURISTIC = 'Areas are a heuristic guess from folders and manifests, not verified dependencies.';
+
+/** What the areas were derived from: the paths a session touched, or the whole project (its folders and manifests). */
+export type AreasBasis = 'sessions' | 'inventory';
 
 /** The map copy for the current relationships knowledge. Unknown keeps the existing wording unchanged. */
-export const relationshipsNote = (relationships: Relationships): string => {
-  if (relationships === 'unknown') return HEURISTIC_NOTE;
-  const parts = [GROUPS_ARE_HEURISTIC, 'Relationships: static imports between areas (heuristic).'];
+export const relationshipsNote = (relationships: Relationships, areas: AreasBasis = 'sessions'): string => {
+  if (relationships === 'unknown') return areas === 'inventory' ? `${AREAS_ARE_HEURISTIC} Relationships between areas are unknown.` : HEURISTIC_NOTE;
+  const parts = [areas === 'inventory' ? AREAS_ARE_HEURISTIC : GROUPS_ARE_HEURISTIC, 'Relationships: static imports between areas (heuristic).'];
+  if (relationships.mutual) {
+    const n = relationships.mutual;
+    parts.push(`${n} ${n === 1 ? 'pair' : 'pairs'} of areas import each other; the line points the way with more imports.`);
+  }
   if (relationships.unresolved > 0) {
     const n = relationships.unresolved;
     parts.push(`${n} import ${n === 1 ? 'specifier was' : 'specifiers were'} not resolved (packages, aliases, non-script or missing files).`);

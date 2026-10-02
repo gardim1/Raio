@@ -38,19 +38,22 @@ const memo = new Map<string, ArchitectureGraph>();
  * Memoised by (groups, links): the same map returns the same graph object, so nothing is rerouted or recompiled.
  * Edges exist only for the given `links` (static import relations derived elsewhere) between groups on the map;
  * without links the graph has none. Edges never move a node.
+ * `reserved` groups take their place in the layout but are not drawn: a group that may appear later (the `Other` of a
+ * project map, once a session touches something outside the listing) leaves every other node where it will stay.
  */
-export const layoutGroups = (groups: readonly PathGroup[], links: readonly NodeLink[] = []): ArchitectureGraph => {
-  const ordered = [...groups].sort(compareGroups);
-  const key = JSON.stringify([ordered.map((g) => [g.groupId, g.label, g.kind]), links.map((l) => [l.from, l.to])]);
+export const layoutGroups = (groups: readonly PathGroup[], links: readonly NodeLink[] = [], reserved: readonly PathGroup[] = []): ArchitectureGraph => {
+  const ordered = [...groups, ...reserved].sort(compareGroups);
+  const held = new Set(reserved.map((g) => g.groupId));
+  const key = JSON.stringify([ordered.map((g) => [g.groupId, g.label, g.kind, g.hint ?? '', g.members ?? [], held.has(g.groupId)]), links.map((l) => [l.from, l.to])]);
   const known = memo.get(key);
   if (known) return known;
-  const graph = buildLayout(ordered, links);
+  const graph = buildLayout(ordered, links, held);
   if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value!);
   memo.set(key, graph);
   return graph;
 };
 
-const buildLayout = (ordered: readonly PathGroup[], links: readonly NodeLink[]): ArchitectureGraph => {
+const buildLayout = (ordered: readonly PathGroup[], links: readonly NodeLink[], held: ReadonlySet<string>): ArchitectureGraph => {
   const rows = rowCountFor(ordered.length);
   const sizes = rowSizes(ordered.length, rows);
   const slot = Math.min(MAX_SLOT, ROW_WIDTH / Math.max(1, ...sizes));
@@ -63,9 +66,12 @@ const buildLayout = (ordered: readonly PathGroup[], links: readonly NodeLink[]):
         id: group.groupId,
         label: group.label,
         kind: group.kind,
+        ...(group.hint ? { hint: group.hint } : {}),
+        ...(group.members ? { members: group.members } : {}),
         position: { x: WORLD.width / 2 + (column - (inRow - 1) / 2) * slot, y: ROW_Y[rows][row] ?? WORLD.height / 2 },
       });
     }
   });
-  return createGraph(nodes, connectNodes(nodes, links));
+  const drawn = nodes.filter((n) => !held.has(n.id));
+  return createGraph(drawn, connectNodes(drawn, links));
 };

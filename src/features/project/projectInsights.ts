@@ -69,6 +69,8 @@ export interface ProjectInsights {
   readonly note: string;
   /** `unknown` unless a TS/JS import scan exists; the activity trail never creates or reveals an edge. */
   readonly relationships: Relationships;
+  /** One line per technology area the project's manifests name (`Frontend · Next.js`); names only, a heuristic. Only when areas come from the whole project. */
+  readonly technologies?: readonly string[];
   /** Two or more actors (main agent, subagents) interleaved. States overlap only, never a causal chain. */
   readonly parallel: boolean;
   readonly actors: number;

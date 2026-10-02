@@ -3,15 +3,31 @@ import { classifyPath, groupPaths, HEURISTIC_NOTE, MAX_GROUPS, OTHER_GROUP } fro
 
 describe('classifyPath', () => {
   it('uses the package for monorepo roots', () => {
-    expect(classifyPath('apps/web/src/main.tsx')).toEqual({ groupId: 'apps/web', label: 'web', kind: 'frontend' });
+    expect(classifyPath('apps/web/src/main.tsx')).toEqual({ groupId: 'apps/web/src', label: 'web/Src', kind: 'frontend' });
     expect(classifyPath('packages/auth/index.ts')).toEqual({ groupId: 'packages/auth', label: 'auth', kind: 'auth' });
     expect(classifyPath('services/billing/handler.ts')).toMatchObject({ groupId: 'services/billing', kind: 'payments' });
     expect(classifyPath('packages/ui-kit/button.tsx')).toMatchObject({ groupId: 'packages/ui-kit', kind: 'other' });
   });
 
-  it('keeps a monorepo package together with its own manifests and tests', () => {
-    expect(classifyPath('apps/web/package.json').groupId).toBe('apps/web');
-    expect(classifyPath('apps/web/test/app.test.ts').groupId).toBe('apps/web');
+  it('splits a monorepo package by its own layout, with the package name as label prefix', () => {
+    expect(classifyPath('apps/web/app/page.tsx')).toEqual({ groupId: 'apps/web/app', label: 'web/App', kind: 'frontend' });
+    expect(classifyPath('apps/web/components/Header.tsx')).toEqual({ groupId: 'apps/web/components', label: 'web/Components', kind: 'frontend' });
+    expect(classifyPath('apps/web/lib/db.ts')).toEqual({ groupId: 'apps/web/lib', label: 'web/Lib', kind: 'other' });
+    expect(classifyPath('apps/web/test/app.test.ts')).toEqual({ groupId: 'apps/web/tests', label: 'web/Tests', kind: 'other' });
+    expect(classifyPath('apps/api/db/client.ts')).toEqual({ groupId: 'apps/api/db', label: 'api/DB', kind: 'database' });
+  });
+
+  it('shows Next.js route handlers inside a package as an API area of that package', () => {
+    expect(classifyPath('apps/web/app/api/users/route.ts')).toEqual({ groupId: 'apps/web/api', label: 'web/API', kind: 'api' });
+    expect(classifyPath('apps/web/src/pages/api/hello.ts')).toEqual({ groupId: 'apps/web/api', label: 'web/API', kind: 'api' });
+  });
+
+  it('sends the manifests and config files of a package to Config, and its loose files to the package itself', () => {
+    expect(classifyPath('apps/web/package.json').groupId).toBe('config');
+    expect(classifyPath('apps/web/next.config.mjs').groupId).toBe('config');
+    expect(classifyPath('apps/web/tsconfig.json').groupId).toBe('config');
+    expect(classifyPath('apps/web/index.ts')).toEqual({ groupId: 'apps/web', label: 'web', kind: 'frontend' });
+    expect(classifyPath('apps/web/README.md').groupId).toBe('apps/web');
   });
 
   it('does not treat a loose file under a monorepo root as a package', () => {
@@ -132,5 +148,103 @@ describe('groupPaths', () => {
 
   it('does not add Other when nothing needs merging', () => {
     expect(groupPaths(['a/x.ts', 'b/y.ts']).groups.some((g) => g.groupId === OTHER_GROUP.groupId)).toBe(false);
+  });
+});
+
+describe('classifyPath: common project layouts', () => {
+  it.each([
+    ['app/api/users/route.ts', 'api'],
+    ['src/app/api/users/route.ts', 'api'],
+    ['pages/api/hello.ts', 'api'],
+    ['src/pages/api/hello.ts', 'api'],
+  ])('sends the Next.js route handler %s to the API group', (path, kind) => {
+    expect(classifyPath(path)).toEqual({ groupId: 'api', label: 'API', kind });
+  });
+
+  it('keeps the other Next.js app and pages files with the frontend', () => {
+    expect(classifyPath('app/dashboard/page.tsx')).toMatchObject({ groupId: 'app', kind: 'frontend' });
+    expect(classifyPath('pages/index.tsx')).toMatchObject({ groupId: 'pages', kind: 'frontend' });
+    expect(classifyPath('src/app/page.tsx')).toMatchObject({ groupId: 'app', kind: 'frontend' });
+  });
+
+  it('does not treat a file called api.ts as the API folder', () => {
+    expect(classifyPath('app/api.ts')).toMatchObject({ groupId: 'app' });
+  });
+
+  it.each([
+    ['backend/main.py', 'backend', 'api'],
+    ['server/index.ts', 'server', 'api'],
+    ['frontend/src/App.tsx', 'frontend', 'frontend'],
+    ['templates/base.html', 'templates', 'frontend'],
+    ['routers/users.py', 'routers', 'api'],
+    ['controllers/users.ts', 'controllers', 'api'],
+    ['alembic/env.py', 'alembic', 'database'],
+    ['supabase/config.toml', 'supabase', 'database'],
+    ['supabase/migrations/001.sql', 'supabase', 'database'],
+    ['migrations/001_init.sql', 'migrations', 'database'],
+    ['infra/main.tf', 'infra', 'config'],
+    ['deploy/k8s/app.yaml', 'deploy', 'config'],
+    ['terraform/main.tf', 'terraform', 'config'],
+    ['worker/main.py', 'worker', 'jobs'],
+    ['static/css/site.css', 'static', 'frontend'],
+    ['public/logo.svg', 'public', 'frontend'],
+    ['assets/logo.svg', 'assets', 'frontend'],
+  ])('maps %s to group %s of kind %s', (path, groupId, kind) => {
+    expect(classifyPath(path)).toMatchObject({ groupId, kind });
+  });
+
+  it('uses the next segment under app/ for Python packages, but not for TS/JS app folders', () => {
+    expect(classifyPath('app/routers/users.py')).toMatchObject({ groupId: 'routers', kind: 'api' });
+    expect(classifyPath('app/models/user.py')).toMatchObject({ groupId: 'models', kind: 'database' });
+    expect(classifyPath('app/main.py')).toMatchObject({ groupId: 'app' });
+    expect(classifyPath('app/routers/users.ts')).toMatchObject({ groupId: 'app' });
+  });
+
+  it('uses the next segment under internal/ and pkg/ for Go services', () => {
+    expect(classifyPath('internal/handlers/users.go')).toMatchObject({ groupId: 'handlers', kind: 'api' });
+    expect(classifyPath('pkg/logger/logger.go')).toMatchObject({ groupId: 'logger', kind: 'other' });
+  });
+
+  it('keeps every Go entry point in one Cmd area, whatever the binary is called', () => {
+    for (const path of ['cmd/api/main.go', 'cmd/server/main.go', 'cmd/migrate/main.go', 'cmd/worker/main.go']) {
+      expect(classifyPath(path), path).toEqual({ groupId: 'cmd', label: 'Cmd', kind: 'other' });
+    }
+  });
+
+  it('keeps names that only mean something in a backend layout out of the plain classifier', () => {
+    for (const path of ['src/store/index.ts', 'src/entities/user.ts', 'tasks/build.js', 'store/user.go']) {
+      expect(classifyPath(path).kind, path).toBe('other');
+    }
+  });
+
+  it('makes a migrations folder inside an app its own Database area, but leaves database folders alone', () => {
+    expect(classifyPath('shop/migrations/0001_initial.py')).toEqual({ groupId: 'shop/migrations', label: 'shop/migrations', kind: 'database' });
+    expect(classifyPath('shop/models.py').groupId).toBe('shop');
+    expect(classifyPath('prisma/migrations/0001/migration.sql').groupId).toBe('prisma');
+    expect(classifyPath('db/migrations/0001.sql').groupId).toBe('db');
+    expect(classifyPath('supabase/migrations/001.sql').groupId).toBe('supabase');
+  });
+
+  it('puts Docker and compose files at the project root into Config', () => {
+    for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.override.yaml', 'compose.yml']) {
+      expect(classifyPath(path), path).toMatchObject({ groupId: 'config' });
+    }
+  });
+
+  it('keeps one kind per group id, whatever the file inside, so grouping stays order-independent', () => {
+    const a = groupPaths(['app/main.py', 'app/README.md']).groups;
+    const b = groupPaths(['app/README.md', 'app/main.py']).groups;
+    expect(b).toEqual(a);
+  });
+
+  it('uses workspace package roots when given', () => {
+    const context = { packageRoots: ['libs'], packageDirs: ['tools/cli'] };
+    expect(classifyPath('libs/core/index.ts', context)).toEqual({ groupId: 'libs/core', label: 'core', kind: 'other' });
+    expect(classifyPath('libs/core/src/a.ts', context)).toEqual({ groupId: 'libs/core/src', label: 'core/Src', kind: 'other' });
+    expect(classifyPath('libs/README.md', context)).toMatchObject({ groupId: 'libs' });
+    expect(classifyPath('tools/cli/src/a.ts', context)).toEqual({ groupId: 'tools/cli/src', label: 'cli/Src', kind: 'other' });
+    expect(classifyPath('tools/cli/main.ts', context)).toEqual({ groupId: 'tools/cli', label: 'cli', kind: 'other' });
+    expect(classifyPath('tools/other/a.ts', context)).toMatchObject({ groupId: 'tools' });
+    expect(classifyPath('libs/core/index.ts')).toMatchObject({ groupId: 'libs' });
   });
 });

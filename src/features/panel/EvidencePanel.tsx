@@ -58,6 +58,18 @@ export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectIn
     {core?.watcherOverflow && <p className="evidence__warn">The file watcher overflowed; some disk changes may be missing.</p>}
     {core?.historyResetFrom && <p className="evidence__warn">Local history was unreadable and was moved aside; earlier sessions are not shown.</p>}
     {core && !core.hookBinary && <p className="evidence__warn">raio-hook was not found next to Raio; new agent events cannot be recorded.</p>}
+    {evidence.technologies && evidence.technologies.length > 0 && (
+      <ul className="evidence__list" aria-label="Technologies">
+        {evidence.technologies.map((line) => (
+          <li key={line} className="evidence__item">
+            <span className="evidence__path" title={line}>
+              {line}
+            </span>
+            <span className="evidence__meta">named in manifests (names only, heuristic)</span>
+          </li>
+        ))}
+      </ul>
+    )}
     {evidence.parallel && <p className="evidence__note">Activity from {evidence.actors} agents overlapped; Raio does not infer an order between them.</p>}
     <p className="evidence__note">{evidence.note}</p>
   </section>

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { demoGraph } from '../features/architecture/model/demoProject';
 import { deriveImportEdges, drawnLinks, isProjectImports } from '../features/project/importEdges';
+import { groupInventory } from '../features/project/inventoryGroups';
+import { isProjectInventory } from '../features/project/projectInventory';
 import { demoSessionLog } from '../features/session/model/demoSession';
-import { demoGroupOf, demoImportFacts } from './demoImports';
+import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
 import { createFixtureBridge, createSimulatedFeedBridge, demoSnapshot, feedArrivals } from './fixtureBridge';
 
 describe('fixture bridge', () => {
@@ -92,5 +94,31 @@ describe('simulated live feed bridge (dev/test only)', () => {
   it('has a burst pace that delivers most events within a third of a second', () => {
     const arrivals = feedArrivals(demoSessionLog, 'burst');
     expect(arrivals.slice(2).every((a) => a - arrivals[2]! < 500)).toBe(true);
+  });
+});
+
+describe('fixture bridge: project inventory', () => {
+  it('serves a deterministic demo inventory in the contract shape, from both fixture bridges', async () => {
+    const a = await createFixtureBridge().projectInventory();
+    expect(isProjectInventory(a)).toBe(true);
+    expect(a).toEqual(demoInventory);
+    expect(a).toEqual(await createFixtureBridge(null).projectInventory());
+    expect(a).toEqual(await createSimulatedFeedBridge({ fixedNowMs: 0 }).projectInventory());
+  });
+
+  it('lists every file the demo import facts scan, and every folder belongs to a system of the demo graph', () => {
+    const listed = new Set(demoInventory.files);
+    for (const file of demoImportFacts.files) expect(listed.has(file.path), file.path).toBe(true);
+    for (const file of demoInventory.files.filter((f) => f.includes('/'))) expect(demoGroupOf(file), file).not.toBeNull();
+  });
+
+  it('reads as the demo graph: one area per system, of the same kind', () => {
+    const { groups } = groupInventory(demoInventory);
+    expect(groups.map((g) => g.kind).sort()).toEqual(demoGraph.nodes.map((n) => n.kind).sort());
+    expect(new Set(demoInventory.files.filter((f) => f.includes('/')).map(demoGroupOf))).toEqual(new Set(demoGraph.nodes.map((n) => n.id)));
+  });
+
+  it('names technologies from manifests only', () => {
+    expect(groupInventory(demoInventory).technologies).toEqual(['Frontend · React', 'API · Express']);
   });
 });

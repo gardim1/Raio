@@ -32,6 +32,8 @@ export const NodeInspector = ({ node, frame, insight, onClose }: NodeInspectorPr
         </IconButton>
       </header>
       <p className="inspector__state">{state}</p>
+      {node.hint && <p className="inspector__state">{node.hint} · named in manifests (heuristic)</p>}
+      {node.members && node.members.length > 0 && <p className="inspector__state">Includes areas this session touched: {node.members.join(', ')}</p>}
       {warning && detail?.risks.map((r, i) => (
         <div key={i} className="inspector__risk">
           <RiskPill kind={r.kind} />

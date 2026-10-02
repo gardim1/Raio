@@ -195,3 +195,54 @@ describe('layoutGroups: edges on a dense map', () => {
     expect(layoutGroups(groups(13), everyPair(ids)).nodes).toEqual(layoutGroups(groups(13)).nodes);
   });
 });
+
+describe('layoutGroups: technology hints', () => {
+  it('carries a hint to its node and none where the group has none', () => {
+    const graph = layoutGroups([
+      { groupId: 'api', label: 'API', kind: 'api', hint: 'API · Express' },
+      { groupId: 'auth', label: 'Auth', kind: 'auth' },
+    ]);
+    expect(graph.nodeById.get('api')?.hint).toBe('API · Express');
+    expect(graph.nodeById.get('auth')).not.toHaveProperty('hint');
+  });
+
+  it('does not reuse a memoised graph across different hints', () => {
+    const base = { groupId: 'api', label: 'API', kind: 'api' as const };
+    expect(layoutGroups([{ ...base, hint: 'API · Express' }]).nodeById.get('api')?.hint).toBe('API · Express');
+    expect(layoutGroups([{ ...base, hint: 'API · Fastify' }]).nodeById.get('api')?.hint).toBe('API · Fastify');
+    expect(layoutGroups([base]).nodeById.get('api')).not.toHaveProperty('hint');
+  });
+
+  it('places nodes the same way whatever the hints say', () => {
+    const plain = groups(6);
+    const hinted = plain.map((g) => ({ ...g, hint: `Hint ${g.groupId}` }));
+    expect(layoutGroups(hinted).nodes.map((n) => n.position)).toEqual(layoutGroups(plain).nodes.map((n) => n.position));
+  });
+});
+
+describe('layoutGroups: reserved places', () => {
+  it('lays the groups out as if the reserved ones were there, without drawing them', () => {
+    const all = groups(6);
+    const reserved = all[5]!;
+    const full = layoutGroups(all);
+    const partial = layoutGroups(all.slice(0, 5), [], [reserved]);
+    expect(partial.nodes.map((n) => n.id)).toEqual(all.slice(0, 5).map((g) => g.groupId));
+    for (const node of partial.nodes) expect(node.position).toEqual(full.nodeById.get(node.id)!.position);
+    expect(partial.nodeById.has(reserved.groupId)).toBe(false);
+  });
+
+  it('draws the same nodes in the same places when a reserved group is later present', () => {
+    const all = groups(4);
+    const before = layoutGroups(all.slice(0, 3), [], [all[3]!]);
+    const after = layoutGroups(all);
+    for (const node of before.nodes) expect(after.nodeById.get(node.id)!.position).toEqual(node.position);
+    expect(after.nodes).toHaveLength(4);
+  });
+
+  it('does not reuse a memoised graph across different reservations', () => {
+    const all = groups(4);
+    const reserved = layoutGroups(all.slice(0, 3), [], [all[3]!]).nodes.map((n) => n.position);
+    const plain = layoutGroups(all.slice(0, 3)).nodes.map((n) => n.position);
+    expect(reserved).not.toEqual(plain);
+  });
+});

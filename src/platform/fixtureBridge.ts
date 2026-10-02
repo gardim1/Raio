@@ -4,7 +4,7 @@ import { deriveImportEdges, drawnLinks } from '../features/project/importEdges';
 import type { SessionLog } from '../features/session/model/events';
 import { demoSessionLog } from '../features/session/model/demoSession';
 import { useSessionUi } from '../features/session/store/sessionStore';
-import { demoGroupOf, demoImportFacts } from './demoImports';
+import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
 import type { DesktopBridge, SessionSnapshot } from './desktopBridge';
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
@@ -35,6 +35,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     setPinned: () => {},
     setIslandHitRect: () => {},
     projectImports: () => Promise.resolve(demoImportFacts),
+    projectInventory: () => Promise.resolve(demoInventory),
     connector: null,
   };
 };
@@ -130,6 +131,7 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     setPinned: () => {},
     setIslandHitRect: () => {},
     projectImports: () => Promise.resolve(demoImportFacts),
+    projectInventory: () => Promise.resolve(demoInventory),
     connector: null,
   };
 };

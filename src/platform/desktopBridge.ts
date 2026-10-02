@@ -1,5 +1,6 @@
 import type { ArchitectureGraph } from '../features/architecture/model/types';
 import type { ProjectImports } from '../features/project/importEdges';
+import type { ProjectInventory } from '../features/project/projectInventory';
 import type { ProjectInsights } from '../features/project/projectInsights';
 import type { SessionLog } from '../features/session/model/events';
 
@@ -93,6 +94,12 @@ export interface DesktopBridge {
    * starts a scan; the map has edges only from a scan the bridge itself accepted.
    */
   projectImports(): Promise<ProjectImports | null>;
+  /**
+   * The latest project inventory (file paths and manifest names only) that this bridge holds, or null when there is none:
+   * no project, no listing yet, or the listing failed, timed out or was malformed (the map then shows only the areas a
+   * session touched). It never starts a listing.
+   */
+  projectInventory(): Promise<ProjectInventory | null>;
   /** Project connection; null where it is not available (browser, fixtures). */
   readonly connector: Connector | null;
 }

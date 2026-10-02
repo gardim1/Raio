@@ -2,12 +2,14 @@ import type { SessionSnapshot } from '../../platform/desktopBridge';
 import type { RaioEvent } from '../ingest/raioEvent';
 import type { AgentEvent, SessionLog } from '../session/model/events';
 import type { AgentId, ValidationKind, ValidationStatus } from '../session/model/script';
-import { classifyPath, groupPaths, type PathGroup } from './classifyPath';
+import { classifyPath, groupPaths, OTHER_GROUP, type PathGroup } from './classifyPath';
 import { assessReportedEdits, DISK_WINDOW_MS, findUnassignedChanges, firstChangeAfter, type PathMoment } from './diskEvidence';
 import { deriveMapImportEdges, drawnLinks, type ProjectImports, relationshipsFrom, relationshipsNote } from './importEdges';
+import { groupInventory, inventoryNotes } from './inventoryGroups';
 import { noticeKindForPath } from './pathKinds';
 import type { ProjectedSession, ProjectInsights, ReportedEditInsight, UnassignedChangeInsight, ValidationInsight } from './projectInsights';
 import { layoutGroups } from './layoutGroups';
+import type { ProjectInventory } from './projectInventory';
 
 export interface ProjectRef {
   readonly id: string;
@@ -72,11 +74,27 @@ const detectParallel = (events: readonly RaioEvent[]): { parallel: boolean; acto
  * never creates one, and without a scan (or without TS/JS files) relationships stay unknown. `importsStale`: a later
  * rescan failed, so the relationships are as of the last scan that worked.
  *
+ * With an `inventory` (the project's file listing and the names its manifests state) the areas come from the whole
+ * project: the 12 largest by file count (ties by name), however the session went, so nodes never move between sessions
+ * of the same listing. Areas the session did not touch are on the map too and show dimmed (they have no cues in the
+ * replay). Whatever the session touched outside those 12 (a smaller area, a file the listing does not hold, a loose root
+ * file) is inside `Other`, which then has cues and lists it; `Other` is laid out even while empty, for the same reason.
+ * `inventoryStale`: a later relisting failed, so the areas are as of the last listing. Without an inventory, the areas
+ * are the paths the session touched, as before.
+ *
  * `events` are all events of the project (any session, plus filesystem changes): staleness and
  * attribution need the whole project. Returns null when there are no agent events ("no telemetry").
  * Everything about groups, consistency and staleness is a heuristic; see HEURISTIC_NOTE and diskEvidence.ts.
  */
-export const projectSessionDetailed = (project: ProjectRef, events: readonly RaioEvent[], sessionId?: string, imports?: ProjectImports | null, importsStale = false): ProjectedSession | null => {
+export const projectSessionDetailed = (
+  project: ProjectRef,
+  events: readonly RaioEvent[],
+  sessionId?: string,
+  imports?: ProjectImports | null,
+  importsStale = false,
+  inventory?: ProjectInventory | null,
+  inventoryStale = false,
+): ProjectedSession | null => {
   const projectEvents = events.filter((e) => e.projectId === project.id);
   const selected = pickSession(projectEvents.filter(isAgentEvent), sessionId);
   if (!selected) return null;
@@ -88,8 +106,11 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
   const lastAtMs = Math.max(0, lastAt - startAt);
 
   const groupedPaths = sessionEvents.filter((e) => e.kind === 'file.inspected' || e.kind === 'file.edit.reported').flatMap((e) => e.paths);
-  const { groups, groupOf } = groupPaths(groupedPaths);
-  const nodeOf = (path: string): string => (groupOf.get(path) ?? classifyPath(path)).groupId;
+  const mapOfProject = inventory ? groupInventory(inventory, groupedPaths) : null;
+  const sessionGroups = mapOfProject ? null : groupPaths(groupedPaths);
+  const groups = mapOfProject ? mapOfProject.groups : sessionGroups!.groups;
+  const areaOf = (path: string): PathGroup => (mapOfProject ? mapOfProject.classify(path) : (sessionGroups!.groupOf.get(path) ?? classifyPath(path)));
+  const nodeOf = (path: string): string => areaOf(path).groupId;
 
   // Disk evidence is project-wide: another session's edit can explain a change, and any change makes a result stale.
   const changes: PathMoment[] = projectEvents.filter((e) => e.kind === 'file.changed').flatMap((e) => e.paths.map((path) => ({ path, at: timeOf(e) })));
@@ -180,12 +201,17 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
     .filter((c) => c.at >= startAt && c.at <= lastAt + DISK_WINDOW_MS)
     .sort((a, b) => a.at - b.at)
     .map((c) => {
-      const group: PathGroup = classifyPath(c.path);
+      const group: PathGroup = areaOf(c.path);
       return { path: c.path, groupId: group.groupId, groupLabel: group.label, atMs: c.at - startAt, notice: noticeKindForPath(c.path) };
     });
 
   // Edges come from the import scan only, between groups that are on the map; a path in a group that was merged into Other counts as Other.
-  const derived = imports ? deriveMapImportEdges(imports, new Set(groups.map((g) => g.groupId)), new Set(groupedPaths.map((path) => classifyPath(path).groupId))) : null;
+  const mapped = new Set(groups.map((g) => g.groupId));
+  const derived = imports
+    ? mapOfProject
+      ? deriveMapImportEdges(imports, mapped, new Set(), mapOfProject.classify)
+      : deriveMapImportEdges(imports, mapped, new Set(groupedPaths.map((path) => classifyPath(path).groupId)))
+    : null;
   const relationships = derived ? relationshipsFrom(derived, { stale: importsStale }) : 'unknown';
   const agent: AgentId = first.agent;
   const sessionLog: SessionLog = {
@@ -200,12 +226,14 @@ export const projectSessionDetailed = (project: ProjectRef, events: readonly Rai
   const snapshot: SessionSnapshot = {
     provenance: sessionEvents.some((e) => e.provenance === 'fixture' || e.source === 'fixture') ? 'fixture' : 'live',
     project: project.name,
-    graph: layoutGroups(groups, derived ? drawnLinks(derived.edges) : []),
+    // Other is laid out even while it is empty, so the areas never move when a session first touches something outside the listing.
+    graph: layoutGroups(groups, derived ? drawnLinks(derived.edges) : [], mapOfProject && !groups.some((g) => g.groupId === OTHER_GROUP.groupId) ? [OTHER_GROUP] : []),
     log: sessionLog,
   };
   const insights: ProjectInsights = {
-    note: relationshipsNote(relationships),
+    note: [relationshipsNote(relationships, inventory ? 'inventory' : 'sessions'), ...(inventory ? inventoryNotes(inventory, { stale: inventoryStale }) : [])].join(' '),
     relationships,
+    ...(mapOfProject && mapOfProject.technologies.length > 0 ? { technologies: mapOfProject.technologies } : {}),
     ...detectParallel(sessionEvents),
     reportedEdits,
     unassigned,
