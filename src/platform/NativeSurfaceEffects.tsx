@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { setNativeSurfaceVisible } from '../shared/motion/surfaceVisibility';
 import { useBridge } from './BridgeContext';
+import { trackSurfaceVisibility } from './surfaceVisibilityTracker';
 
 /** Extra pixels around the capsule that still count as "on the Island". */
 const HIT_PADDING = 2;
@@ -71,14 +72,28 @@ export const NativeSurfaceEffects = () => {
   }, [surface]);
 
   useEffect(() => {
-    // Floating surfaces start hidden; the core reports every later show/hide.
-    void getCurrentWindow()
-      .isVisible()
-      .then(setNativeSurfaceVisible)
-      .catch(() => {});
-    // Window-scoped: the core targets each surface with emit_to; a global listen() would receive them all.
-    const unlisten = getCurrentWebviewWindow().listen<boolean>('surface-visible', (event) => setNativeSurfaceVisible(event.payload));
-    return () => void unlisten.then((stop) => stop());
+    // Floating surfaces start hidden; the core reports every later show/hide. A minimized or occluded
+    // window is treated like a hidden one so its animations stop (see surfaceVisibilityTracker.ts).
+    const win = getCurrentWindow();
+    return trackSurfaceVisibility(
+      {
+        isShown: () => win.isVisible(),
+        isMinimized: () => win.isMinimized(),
+        // Window-scoped: the core targets each surface with emit_to; a global listen() would receive them all.
+        onShownChanged: (handler) => getCurrentWebviewWindow().listen<boolean>('surface-visible', (event) => handler(event.payload)),
+        // There is no minimize event; a minimize/restore resizes, moves and defocuses the window.
+        onWindowChanged: async (handler) => {
+          const stops = await Promise.all([win.onResized(handler), win.onMoved(handler), win.onFocusChanged(handler)]);
+          return () => stops.forEach((stop) => stop());
+        },
+        isPageHidden: () => document.visibilityState === 'hidden',
+        onPageVisibilityChanged: (handler) => {
+          document.addEventListener('visibilitychange', handler);
+          return () => document.removeEventListener('visibilitychange', handler);
+        },
+      },
+      setNativeSurfaceVisible,
+    );
   }, []);
 
   useEffect(() => {
