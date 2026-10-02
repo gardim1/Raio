@@ -1,6 +1,20 @@
 # Raio status
 
-Last updated: 2026-10-02 (round 2). The M0 -> M1 -> E2E-1 evidence below dates from 2026-10-01. Platform for every check below: Windows 11 Pro 10.0.26200, one 1920x1080 display at 100% scaling (96 DPI), Node 22.19.0, Rust 1.98.1 (per-user rustup, `stable-msvc`, PATH not modified), WebView2 154.0.4258.48, Claude Code 2.1.286. Nothing was run on macOS or Linux.
+Last updated: 2026-10-02 (round 3). Earlier sections keep their own dates.
+
+## Round 3 (2026-10-02): real interactive session, import edges, whole-project map
+
+Windows 11, release builds of the commits below. Display during these checks: 175% scaling, two monitors. Nothing run on macOS or Linux.
+
+- **Real interactive Claude Code session, verified end to end** (release `7fd6950`, throwaway `.local/e2e-project` connected by the owner): the session read Auth, added `src/api/profile.ts` (imports `../auth/session`), a migration, a test, and edited `health.ts`. Window captures show the orb following events while they happened (12 s of movement), then a static frame (no idle frames). Final map: API (2 files), DB with "Migration file added", Tests, Auth dimmed (read only); timeline 00:00-01:16; edits "reported, consistent on disk". After an app restart the window content was **0 px different** (excluding the OS title bar, whose colour follows focus), and the replay's end frame was 0 px different before/after another restart. "Tests result unknown" is correct: the command was `node --test ... | tail`, so the exit code was tail's. Evidence: `.local/e2e-live/` (local).
+- **Import edges** (`4cd5790` Rust facts, `7fd6950` TS): static TS/JS imports between areas, reference geometry, labelled heuristic; owner approved the updated live screenshots. Observed natively: the API->Auth edge (dashed, dormant until travelled).
+- **Whole-project map** (`531db7c` Rust `project_inventory`, `ec558b8` TS): areas from the full listing, untouched areas dimmed (observed natively: Config); technology hints only from manifest names; engines only from compose images or the Prisma provider; stable 12 by file count. Five realistic fixture projects (`.local/map-fixtures`) are acceptance tests using the real Rust listing; not yet connected natively except e2e-project.
+- **Hook**: every dropped event leaves a marker (`0313aa5`); runtime bounded to ~2.4 s even on a stuck filesystem (`ea1b2fa`).
+- **Windows**: Expanded's X minimizes it (`5cc6ed0`, owner decision); closing the last window keeps Raio in the tray (Windows only); tray Quit exits. Expanded is created lazily for island/mini launches (`c128703`, median time to a visible Island 625 -> 499 ms).
+- **Idle float**: the idle mini-orb floats ~30 s after a state change, then rests (`16e4e38`, owner option a). Native CPU after this change not re-measured.
+- Tests on main at `ec558b8`: vitest 621, tsc 0, build 0, Playwright 27/27, cargo 150 unit + 9 integration (+3 ignored fixture/timing tests passing).
+
+Open: "window inside a window" look (native title bar above the app's own; owner will describe), tray/Island click paths for the minimized Expanded not exercised, native CPU re-measure after the bounded float, showing why a test result is unknown (e.g. piped output), sparse 20k-file trees near the 2 s listing budget, optional GitHub integration (proposal only), macOS/Linux never run.
 
 ## Round 2 (2026-10-01/02): live director, idle cost, robustness
 
