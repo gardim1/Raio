@@ -1,12 +1,15 @@
 //! The three product surfaces are separate native windows. Exactly one is shown at a time. The Expanded
 //! window comes from the app config; the Island and the Mini Player are usually hidden, so each is
-//! created the first time it is shown instead of at startup (a webview costs real memory).
+//! created the first time it is shown instead of at startup (a webview costs real memory). When Raio is
+//! launched straight into the Island or the Mini Player the Expanded window is held back the same way:
+//! creating it first would put a whole hidden webview ahead of the surface the user asked for.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard, OnceLock, mpsc};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
+use tauri::utils::config::WindowConfig;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -68,9 +71,15 @@ pub struct SurfaceState {
     show: Mutex<()>,
     intents: Mutex<Intents>,
     main_thread: OnceLock<ThreadId>,
+    /// The config of an Expanded window that was not created at startup; consumed by its first `show`.
+    deferred_expanded: Mutex<Option<WindowConfig>>,
 }
 
 impl SurfaceState {
+    pub fn with_deferred_expanded(config: Option<WindowConfig>) -> Self {
+        Self { deferred_expanded: Mutex::new(config), ..Self::default() }
+    }
+
     /// Called once from the main thread (setup) so that creating a webview there can be caught in debug builds.
     pub fn mark_main_thread(&self) {
         let _ = self.main_thread.set(thread::current().id());
@@ -95,13 +104,14 @@ pub fn launch_surface(args: impl IntoIterator<Item = String>) -> Option<Result<&
     Some(SURFACES.iter().copied().find(|s| *s == name).ok_or(name))
 }
 
-/// The Expanded window comes from the app config and would be created visible. When Raio is launched straight
-/// into the Island or the Mini Player, create it hidden instead: hiding it later (even in `setup`) still
-/// leaves it on screen, blank, for the half second the webview takes to come up.
-pub fn start_expanded_hidden(config: &mut tauri::Config) {
-    for window in config.app.windows.iter_mut().filter(|w| w.label == EXPANDED) {
-        window.visible = false;
-    }
+/// The Expanded window comes from the app config and would be created, with its webview, before anything
+/// else. When Raio is launched straight into the Island or the Mini Player, take it out of the config so it
+/// is created on first use instead: it would otherwise sit hidden, blank, ahead of the requested surface in
+/// the startup queue (hiding it later, even in `setup`, still leaves it on screen for the half second the
+/// webview takes to come up). Returns its config so `show` can create it later.
+pub fn defer_expanded(config: &mut tauri::Config) -> Option<WindowConfig> {
+    let at = config.app.windows.iter().position(|w| w.label == EXPANDED)?;
+    Some(config.app.windows.remove(at))
 }
 
 fn floating(app: &AppHandle, label: &str, size: (f64, f64), loaded: mpsc::Sender<()>) -> tauri::Result<WebviewWindow> {
@@ -159,22 +169,49 @@ fn configure(window: &WebviewWindow, label: &str) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Creates the Island or the Mini Player on first use, hidden and placed. `Ok(None)` when it already exists;
-/// otherwise a receiver that fires when its page finished loading. A window that cannot be configured is
-/// destroyed and reported, never left half set up. The caller holds the `show` lock and is off the main
-/// thread (building a webview there deadlocks on Windows).
-fn ensure_floating(app: &AppHandle, state: &SurfaceState, label: &str) -> tauri::Result<Option<mpsc::Receiver<()>>> {
+/// The deferred Expanded window, built from its original config but hidden: `show` reveals it once its
+/// page has loaded.
+fn deferred_expanded(app: &AppHandle, config: &WindowConfig, loaded: mpsc::Sender<()>) -> tauri::Result<WebviewWindow> {
+    WebviewWindowBuilder::from_config(app, config)?
+        .visible(false)
+        .on_page_load(move |_, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let _ = loaded.send(());
+            }
+        })
+        .build()
+}
+
+/// Creates a surface's window on first use, hidden: the Island or the Mini Player (placed), or the Expanded
+/// window when it was deferred at launch. `Ok(None)` when it already exists (or Expanded was never
+/// deferred); otherwise a receiver that fires when its page finished loading. A window that cannot be
+/// configured is destroyed and reported, never left half set up. The caller holds the `show` lock and is off
+/// the main thread (building a webview there deadlocks on Windows).
+fn ensure_window(app: &AppHandle, state: &SurfaceState, label: &str) -> tauri::Result<Option<mpsc::Receiver<()>>> {
     if app.get_webview_window(label).is_some() {
         return Ok(None);
     }
+    let deferred = if label == EXPANDED {
+        match state.deferred_expanded.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            Some(config) => Some(config),
+            None => return Ok(None),
+        }
+    } else {
+        None
+    };
     debug_assert!(
         state.main_thread.get() != Some(&thread::current().id()),
         "surfaces::show must not create a webview on the main thread"
     );
-    let size = if label == ISLAND { ISLAND_SIZE } else { MINI_SIZE };
     let (tx, rx) = mpsc::channel();
-    let window = floating(app, label, size, tx)?;
-    if let Err(e) = configure(&window, label) {
+    let window = match &deferred {
+        Some(config) => deferred_expanded(app, config, tx)?,
+        None => floating(app, label, if label == ISLAND { ISLAND_SIZE } else { MINI_SIZE }, tx)?,
+    };
+    if deferred.is_some() {
+        // Built: later shows find the window itself.
+        *state.deferred_expanded.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    } else if let Err(e) = configure(&window, label) {
         eprintln!("Raio could not set up the {label} window: {e}");
         let _ = window.destroy();
         return Err(e);
@@ -188,9 +225,10 @@ fn ensure_floating(app: &AppHandle, state: &SurfaceState, label: &str) -> tauri:
 const INTENTS: [&str; 1] = ["replay"];
 
 /// Shows one surface and hides the others. Only the Expanded window takes keyboard focus. The Island and
-/// the Mini Player are created the first time they are shown (the page is given up to a second to load
-/// first, so the window does not appear blank). An optional intent (e.g. "replay") is stored for the
-/// surface to pull, or emitted as `surface-intent` when it already pulled.
+/// the Mini Player (and the Expanded window, when Raio was launched into one of them) are created the first
+/// time they are shown (the page is given up to a second to load first, so the window does not appear
+/// blank). An optional intent (e.g. "replay") is stored for the surface to pull, or emitted as
+/// `surface-intent` when it already pulled.
 ///
 /// The whole call is serialised. Call it **off the main thread**: it may have to create a webview, which
 /// deadlocks there on Windows (tray menu events and setup must spawn a thread; async commands are fine).
@@ -205,7 +243,7 @@ pub fn show(app: &AppHandle, surface: &str, intent: Option<&str>) -> Result<(), 
     }
     let state = app.state::<SurfaceState>();
     let _show = state.show.lock().unwrap_or_else(|e| e.into_inner());
-    let fresh = if surface == EXPANDED { None } else { ensure_floating(app, &state, surface).map_err(|e| e.to_string())? };
+    let fresh = ensure_window(app, &state, surface).map_err(|e| e.to_string())?;
     if let Some(loaded) = fresh {
         // The surface on screen stays up meanwhile.
         let _ = loaded.recv_timeout(LOAD_WAIT);
@@ -295,14 +333,15 @@ mod tests {
     }
 
     #[test]
-    fn only_the_expanded_window_of_the_config_is_created_hidden() {
+    fn deferring_expanded_takes_only_that_window_out_of_the_config_and_hands_it_back() {
         let window = |label: &str| tauri::utils::config::WindowConfig { label: label.into(), ..Default::default() };
         let mut config = tauri::Config::default();
-        config.app.windows = vec![window(EXPANDED), window("other")];
-        assert!(config.app.windows.iter().all(|w| w.visible), "windows are visible by default");
-        start_expanded_hidden(&mut config);
-        let visible: Vec<(&str, bool)> = config.app.windows.iter().map(|w| (w.label.as_str(), w.visible)).collect();
-        assert_eq!(visible, [(EXPANDED, false), ("other", true)]);
+        config.app.windows = vec![window("other"), window(EXPANDED)];
+        let held = defer_expanded(&mut config).expect("the Expanded window was in the config");
+        assert_eq!(held.label, EXPANDED);
+        let left: Vec<&str> = config.app.windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(left, ["other"], "nothing else is touched, and Expanded is no longer created at startup");
+        assert!(defer_expanded(&mut config).is_none(), "a config without an Expanded window has nothing to defer");
     }
 
     #[test]

@@ -43,14 +43,16 @@ pub fn run() {
         }
     };
     let mut context = tauri::generate_context!();
-    // Launched straight into the Island or the Mini Player: the Expanded window must not flash up first.
-    if matches!(surfaces::launch_surface(std::env::args()), Some(Ok(surface)) if surface != surfaces::EXPANDED) {
-        surfaces::start_expanded_hidden(context.config_mut());
-    }
+    // Launched straight into the Island or the Mini Player: the Expanded window is created when first shown,
+    // so neither a hidden webview nor a flash of it comes before the surface that was asked for.
+    let deferred_expanded = match surfaces::launch_surface(std::env::args()) {
+        Some(Ok(surface)) if surface != surfaces::EXPANDED => surfaces::defer_expanded(context.config_mut()),
+        _ => None,
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(island::IslandState::default())
-        .manage(surfaces::SurfaceState::default())
+        .manage(surfaces::SurfaceState::with_deferred_expanded(deferred_expanded))
         .manage(core)
         .invoke_handler(tauri::generate_handler![
             surfaces::show_surface,
