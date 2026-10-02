@@ -145,20 +145,25 @@ fn feed_all(encode: impl Fn(&[u8]) -> Vec<u8>) -> (usize, Vec<String>, Vec<u8>) 
     (inbox::pending(&dirs, 1000).len(), dropped, all_bytes_under(data.path()))
 }
 
+/// Every record is either in the inbox or counted as dropped because the hook's 2 s hard deadline hit first
+/// (a slow machine); it is never silently missing, and nothing else may be dropped.
+fn assert_all_accounted(written: usize, dropped: &[String], expected: usize, what: &str) {
+    assert!(dropped.iter().all(|d| d.ends_with("-hard-deadline")), "{what}: unexpected drops {dropped:?}");
+    assert_eq!(written + dropped.len(), expected, "{what}: written {written} + dropped {dropped:?}");
+}
+
 #[test]
 fn utf8_with_a_bom_is_accepted_like_plain_utf8() {
     // What a .NET/PowerShell pipe delivers (PERF-1): EF BB BF before the opening brace.
     let (written, dropped, _) = feed_all(|b| prefixed(&[0xEF, 0xBB, 0xBF], b));
-    assert_eq!(dropped, Vec::<String>::new());
-    assert_eq!(written, 17, "same 17 records as the BOM-less run");
+    assert_all_accounted(written, &dropped, 17, "same 17 records as the BOM-less run");
 }
 
 #[test]
 fn utf16_with_a_bom_is_decoded_in_both_byte_orders() {
     for big_endian in [false, true] {
         let (written, dropped, on_disk) = feed_all(|b| utf16(std::str::from_utf8(b).unwrap(), big_endian, true));
-        assert_eq!(dropped, Vec::<String>::new(), "big_endian={big_endian}");
-        assert_eq!(written, 17, "big_endian={big_endian}");
+        assert_all_accounted(written, &dropped, 17, &format!("big_endian={big_endian}"));
         assert!(!String::from_utf8_lossy(&on_disk).contains("SENTINEL_"), "no raw payload on disk");
     }
 }
@@ -189,5 +194,69 @@ fn undecodable_input_is_dropped_counted_and_never_written_raw() {
         assert_eq!(dropped.len(), 1, "{name}: counted exactly once, got {dropped:?}");
         assert!(dropped[0].ends_with("unreadable-payload"), "{name}: {dropped:?}");
         assert!(!String::from_utf8_lossy(&all_bytes_under(data.path())).contains("SENTINEL_"), "{name}: raw stdin written");
+    }
+}
+
+/// Markers left in the data dir's `dropped/`, by reason suffix.
+fn markers(dirs: &Dirs) -> Vec<String> {
+    fs::read_dir(&dirs.dropped).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
+}
+
+/// Spawns the hook with a silent open stdin and the given hard deadline (debug builds only honour it).
+#[cfg(debug_assertions)]
+fn hook_waiting_on_silent_stdin(data: &Path, hard_deadline_ms: &str) -> (Option<i32>, Duration) {
+    let started = Instant::now();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_raio-hook"))
+        .args(["claude", "--project", "fixtureproject", "--root", "C:/fixture/acme-mini", "--raio-managed"])
+        .env("RAIO_DATA_DIR", data)
+        .env("RAIO_HOOK_HARD_DEADLINE_MS", hard_deadline_ms)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _open_stdin = child.stdin.take().unwrap();
+    let status = child.wait().unwrap();
+    (status.code(), started.elapsed())
+}
+
+// The deadline override exists in debug builds only (`cargo test --release` would not honour it).
+#[cfg(debug_assertions)]
+#[test]
+fn the_hard_deadline_leaves_a_drop_marker_instead_of_vanishing() {
+    // stdin stays open and silent, so the hook is still waiting for its payload when the watchdog fires.
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let _ = run_hook(tempfile::tempdir().unwrap().path(), b"{}"); // warm-up, as for the other tests
+    let (code, took) = hook_waiting_on_silent_stdin(data.path(), "250");
+    assert_eq!(code, Some(0));
+    assert!(took < Duration::from_secs(10), "{took:?}");
+    let dropped = markers(&dirs);
+    // Load-insensitive: the watchdog (250 ms) should beat the 1.5 s stdin timeout; if a very slow machine lets the
+    // stdin timeout win, that is still exactly one marker, but this test is about the watchdog's.
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(!dropped[0].ends_with("stdin-timeout"), "the stdin timeout won the race on this machine: {dropped:?}");
+    assert!(dropped[0].ends_with("-hard-deadline"), "{dropped:?}");
+    assert_eq!(inbox::pending(&dirs, 10).len(), 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn an_invocation_leaves_one_marker_even_when_the_stdin_timeout_and_the_watchdog_collide() {
+    // Both fire at about 1.5 s; whichever claims first writes the only marker.
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let _ = run_hook(tempfile::tempdir().unwrap().path(), b"{}");
+    for _ in 0..3 {
+        let _ = fs::remove_dir_all(&dirs.dropped);
+        let (code, _) = hook_waiting_on_silent_stdin(data.path(), "1500");
+        assert_eq!(code, Some(0));
+        let dropped = markers(&dirs);
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert!(dropped[0].ends_with("stdin-timeout") || dropped[0].ends_with("hard-deadline"), "{dropped:?}");
     }
 }

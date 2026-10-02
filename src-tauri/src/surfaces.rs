@@ -121,7 +121,13 @@ pub fn hides_on_close(label: &str) -> bool {
 
 /// Whether an exit request is to be refused: `None` is the runtime asking because no window is left.
 pub fn prevents_exit(code: Option<i32>) -> bool {
-    code.is_none()
+    prevents_exit_on(cfg!(windows), code)
+}
+
+/// Only the Windows behaviour was observed: on macOS Cmd+Q or the Dock's Quit may arrive as `None` and must
+/// still quit, so other platforms never refuse.
+fn prevents_exit_on(windows: bool, code: Option<i32>) -> bool {
+    windows && code.is_none()
 }
 
 /// Closing Expanded (its X button, Alt+F4) hides it and keeps Raio running in the tray: a destroyed window
@@ -399,9 +405,17 @@ mod tests {
 
     #[test]
     fn closing_the_last_window_keeps_raio_in_the_tray_but_an_explicit_exit_quits() {
-        assert!(prevents_exit(None), "no window left: stay in the tray");
-        assert!(!prevents_exit(Some(0)), "tray Quit Raio calls app.exit(0)");
-        assert!(!prevents_exit(Some(1)));
+        assert!(prevents_exit_on(true, None), "Windows: no window left, stay in the tray");
+        assert!(!prevents_exit_on(true, Some(0)), "tray Quit Raio calls app.exit(0)");
+        assert!(!prevents_exit_on(true, Some(1)));
+        assert_eq!(prevents_exit(None), cfg!(windows));
+    }
+
+    #[test]
+    fn other_platforms_always_quit_when_asked() {
+        // macOS Cmd+Q / Dock Quit may arrive as `None` and must still quit (macOS is not verified).
+        assert!(!prevents_exit_on(false, None));
+        assert!(!prevents_exit_on(false, Some(0)));
     }
 
     #[test]

@@ -462,7 +462,7 @@ impl Walk<'_> {
     }
 
     fn dir(&mut self, abs: &Path, rel: &str, depth: usize) {
-        for Entry { name, kind, attributes, len } in self.entries(abs) {
+        for entry in self.entries(abs) {
             if self.truncated {
                 return;
             }
@@ -470,31 +470,38 @@ impl Walk<'_> {
                 self.truncated = true;
                 return;
             }
-            if kind.is_symlink() {
-                continue;
+            self.visit(abs, rel, depth, entry);
+        }
+    }
+
+    fn visit(&mut self, abs: &Path, rel: &str, depth: usize, entry: Entry) {
+        let Entry { name, kind, attributes, len } = entry;
+        if kind.is_symlink() {
+            return;
+        }
+        let is_dir = kind.is_dir();
+        if !is_dir && !(kind.is_file() && is_scannable(&name)) {
+            return; // cheap check first: most files are not source files
+        }
+        // An online-only OneDrive placeholder would be downloaded by reading it (or listing the folder). Decided
+        // from the entry's own attributes, before the filter, which reads `.gitignore` files and stats paths.
+        // (An ignored placeholder is still counted: "not read" is true, and the count is only informational.)
+        if is_cloud_placeholder(attributes) {
+            self.skipped += 1;
+            return;
+        }
+        let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+        if self.filter.ignored(&child) {
+            return;
+        }
+        if is_dir {
+            if depth >= MAX_DEPTH {
+                self.truncated = true;
+                return;
             }
-            let is_dir = kind.is_dir();
-            if !is_dir && !(kind.is_file() && is_scannable(&name)) {
-                continue; // cheap check first: most files are not source files
-            }
-            let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-            if self.filter.ignored(&child) {
-                continue;
-            }
-            // An online-only OneDrive placeholder would be downloaded by reading it (or listing the folder).
-            if is_cloud_placeholder(attributes) {
-                self.skipped += 1;
-                continue;
-            }
-            if is_dir {
-                if depth >= MAX_DEPTH {
-                    self.truncated = true;
-                    return;
-                }
-                self.dir(&abs.join(&name), &child, depth + 1);
-            } else {
-                self.file(&abs.join(&name), child, len);
-            }
+            self.dir(&abs.join(&name), &child, depth + 1);
+        } else {
+            self.file(&abs.join(&name), child, len);
         }
     }
 
@@ -900,5 +907,25 @@ import b from './b';")), strs(&["./b"]));
         assert_eq!(got.len(), 1_000);
         assert_eq!(got[0], "./m0");
         assert_eq!(got[999], "./m999");
+    }
+
+    #[test]
+    fn a_cloud_placeholder_is_counted_before_any_ignore_rule_is_consulted() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), ".gitignore", "ignored.ts\n");
+        write(dir.path(), "ignored.ts", "export {};\n");
+        let kind = fs::metadata(dir.path().join("ignored.ts")).unwrap().file_type();
+        let limits = Limits::default();
+        let walk = || Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() + Duration::from_secs(60), files: vec![], skipped: 0, truncated: false };
+        let entry = |attributes| Entry { name: "ignored.ts".into(), kind, attributes, len: 10 };
+
+        let mut placeholder = walk();
+        placeholder.visit(dir.path(), "", 0, entry(0x0040_0000));
+        assert_eq!(placeholder.skipped, 1, "cloud-only is decided from the entry's own attributes, before the filter reads any .gitignore");
+        assert!(placeholder.files.is_empty());
+
+        let mut ordinary = walk();
+        ordinary.visit(dir.path(), "", 0, entry(0));
+        assert_eq!((ordinary.skipped, ordinary.files.len()), (0, 0), "an ordinary ignored file is neither listed nor counted");
     }
 }

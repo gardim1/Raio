@@ -5,6 +5,7 @@ pub mod claude;
 pub mod connect;
 mod core;
 pub mod event;
+pub mod hook_guard;
 pub mod imports;
 pub mod inbox;
 pub mod instance;
