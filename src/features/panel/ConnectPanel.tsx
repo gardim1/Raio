@@ -47,7 +47,7 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
   if (project && step.kind !== 'review') {
     return (
       <div className="connect">
-        <MiniOrb size={22} glow={0.35} bob />
+        <MiniOrb size={22} glow={0.35} bob restartKey="connected" />
         <p className="connect__title">Connected to {project.name}</p>
         <p className="connect__body">Start a new Claude Code session in this folder. Hooks apply to sessions started after connecting.</p>
         <Button onClick={() => void run(() => connector.disconnect())} disabled={busy}>
@@ -99,7 +99,7 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
 
   return (
     <div className="connect">
-      <MiniOrb size={22} glow={0.35} bob />
+      <MiniOrb size={22} glow={0.35} bob restartKey="no-project" />
       <p className="connect__title">No project yet</p>
       <p className="connect__body">Choose a repository and connect Claude Code to it. Raio shows the exact change before writing anything.</p>
       {step.kind === 'error' && <p className="connect__warn">{step.message}</p>}

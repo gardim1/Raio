@@ -9,6 +9,7 @@ import { MiniOrb } from '../raio/MiniOrb';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
 import { useSessionUi } from '../session/store/sessionStore';
+import { islandOrbBobs, islandOrbState } from './islandOrbState';
 import { CROSSFADE, ISLAND_TRANSITION, type Presence } from './presence';
 import { useSessionMeta } from './sessionMeta';
 
@@ -44,6 +45,7 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
         : finished
           ? 'Idle'
           : 'Ready';
+  const orbState = islandOrbState({ working, replaying, recentlyFinished: presence.recentlyFinished, finished });
   const dotClass = working || replaying ? 'cool' : presence.recentlyFinished ? 'success' : 'idle';
 
   return (
@@ -106,7 +108,7 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
             </motion.div>
           ) : (
             <motion.div key="closed" className="island__closed" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { ...CROSSFADE, delay: 0.06 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
-              <MiniOrb size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={!working && !replaying} />
+              <MiniOrb size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={islandOrbBobs(orbState)} restartKey={orbState} />
               <span className="island__label">{collapsedLabel}</span>
               {ui.activeRisk && working && !replaying ? <i className="island__dot island__dot--warning" /> : <i className={`island__dot island__dot--${dotClass}`} />}
             </motion.div>

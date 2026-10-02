@@ -52,7 +52,7 @@ svg text { font-family: var(--raio-font-ui); }
   background: radial-gradient(circle at 38% 32%, #fff, #d6e6ff 50%, #86aefc);
   transition: box-shadow 0.4s ease;
 }
-.mini-orb--bob { animation: raio-bob 3s ease-in-out infinite; }
+.mini-orb--bob { animation: raio-bob 3s ease-in-out 10; }
 @keyframes raio-bob { 50% { transform: translateY(-3px); } }
 
 /* ---------- Panel (canonical) ---------- */
