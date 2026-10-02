@@ -5,7 +5,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 
 import type { RaioEvent } from '../features/ingest/raioEvent';
-import { createNativeBridge, type NativeIpc, surfaceFromUrl } from './nativeBridge';
+import { createNativeBridge, type NativeIpc, surfaceFromUrl, takeSurfaceIntent } from './nativeBridge';
 
 const project = { id: 'p1', name: 'acme-mini', root: 'C:/work/acme-mini' };
 
@@ -107,5 +107,38 @@ describe('native bridge refresh', () => {
     await settle();
     await settle();
     expect(bridge.currentSession()?.log.events.map((e) => e.kind)).toContain('session.end');
+  });
+});
+
+describe('take_surface_intent', () => {
+  const ipcReturning = (value: unknown) => {
+    const calls: [string, unknown][] = [];
+    const ipc: Pick<NativeIpc, 'invoke'> = {
+      invoke: <T,>(command: string, args?: Record<string, unknown>) => {
+        calls.push([command, args]);
+        return Promise.resolve(value as T);
+      },
+    };
+    return { ipc, calls };
+  };
+
+  it('pulls the pending intent with no arguments (the core uses the calling window)', async () => {
+    const { ipc, calls } = ipcReturning('replay');
+    await expect(takeSurfaceIntent(ipc)).resolves.toBe('replay');
+    expect(calls).toEqual([['take_surface_intent', undefined]]);
+  });
+
+  it('reports no intent as null', async () => {
+    await expect(takeSurfaceIntent(ipcReturning(null).ipc)).resolves.toBeNull();
+    await expect(takeSurfaceIntent(ipcReturning(undefined).ipc)).resolves.toBeNull();
+  });
+
+  it('ignores a payload that is not a string', async () => {
+    await expect(takeSurfaceIntent(ipcReturning({ intent: 'replay' }).ipc)).resolves.toBeNull();
+  });
+
+  it('lets an IPC failure reach the caller, which decides how to report it', async () => {
+    const ipc: Pick<NativeIpc, 'invoke'> = { invoke: () => Promise.reject(new Error('no such command')) };
+    await expect(takeSurfaceIntent(ipc)).rejects.toThrow('no such command');
   });
 });

@@ -30,6 +30,15 @@ const tauriIpc: NativeIpc = {
 };
 
 /**
+ * Pulls (and clears) the intent the core holds for the calling window, e.g. "replay". The core uses
+ * the calling window, so there are no arguments. Anything but a string is treated as "no intent".
+ */
+export const takeSurfaceIntent = async (ipc: Pick<NativeIpc, 'invoke'> = tauriIpc): Promise<string | null> => {
+  const intent = await ipc.invoke<unknown>('take_surface_intent');
+  return typeof intent === 'string' ? intent : null;
+};
+
+/**
  * Bridge to the Tauri core: reads the persisted events of the connected project and projects the
  * latest session (provenance 'live'). With no connected project or no agent events it reports null,
  * so the surfaces show the empty state instead of demo data.

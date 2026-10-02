@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { setNativeSurfaceVisible } from '../shared/motion/surfaceVisibility';
 import { useBridge } from './BridgeContext';
+import { takeSurfaceIntent } from './nativeBridge';
+import { followSurfaceIntent } from './surfaceIntentFollower';
 import { trackSurfaceVisibility } from './surfaceVisibilityTracker';
 
 /** Extra pixels around the capsule that still count as "on the Island". */
@@ -97,10 +99,17 @@ export const NativeSurfaceEffects = () => {
   }, []);
 
   useEffect(() => {
-    const unlisten = getCurrentWebviewWindow().listen<string>('surface-intent', (event) => {
-      if (event.payload === 'replay') startReplay();
-    });
-    return () => void unlisten.then((stop) => stop());
+    // The core keeps the intent pending until this window pulls it (a push could land before the listener
+    // exists), then emits later ones. Listen first, pull once, apply both the same way.
+    return followSurfaceIntent(
+      {
+        listen: (handler) => getCurrentWebviewWindow().listen<string>('surface-intent', (event) => handler(event.payload)),
+        take: () => takeSurfaceIntent(),
+      },
+      (intent) => {
+        if (intent === 'replay') startReplay();
+      },
+    );
   }, [startReplay]);
 
   return null;
