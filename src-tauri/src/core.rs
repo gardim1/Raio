@@ -137,6 +137,13 @@ impl Core {
         stored
     }
 
+    /// Root folder of a connected project; an unknown or disconnected id is an error.
+    pub fn connected_root(&self, project_id: &str) -> Result<PathBuf, String> {
+        let store = self.store.lock().map_err(|e| e.to_string())?;
+        let projects = store.connected_projects().map_err(|e| e.to_string())?;
+        projects.into_iter().find(|p| p.id == project_id).map(|p| PathBuf::from(p.root)).ok_or_else(|| "unknown project".to_string())
+    }
+
     fn store_events(&self, events: Vec<RaioEvent>) -> usize {
         let Ok(store) = self.store.lock() else { return 0 };
         events.iter().filter(|e| matches!(store.insert(e, now_ms()), Ok(Insert::Inserted(_)))).count()
@@ -340,6 +347,17 @@ mod tests {
         assert_eq!(second.retention_removed, 1);
         assert!(!second.more);
         assert_eq!(core.store.lock().unwrap().count_events().unwrap(), 1);
+    }
+
+    #[test]
+    fn the_root_of_a_connected_project_is_found_and_an_unknown_or_disconnected_id_is_an_error() {
+        let (_d, core) = open();
+        let project = Project { id: "p1".into(), root: "C:/work/demo".into(), name: "demo".into(), connected_at: 1 };
+        core.store.lock().unwrap().upsert_project(&project).unwrap();
+        assert_eq!(core.connected_root("p1").unwrap(), PathBuf::from("C:/work/demo"));
+        assert!(core.connected_root("nope").is_err());
+        core.store.lock().unwrap().disconnect_project("p1", 2).unwrap();
+        assert!(core.connected_root("p1").is_err(), "a disconnected project is not scanned");
     }
 
     #[test]

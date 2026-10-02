@@ -5,6 +5,7 @@ pub mod claude;
 pub mod connect;
 mod core;
 pub mod event;
+pub mod imports;
 pub mod inbox;
 pub mod instance;
 mod island;
@@ -15,6 +16,13 @@ mod tray;
 pub mod watch;
 
 use tauri::Manager;
+
+/// True when Raio starts straight into the Island or the Mini Player, so the Expanded window is created on
+/// first use instead of at startup. An absent or invalid `--surface` (and `expanded` itself) keeps the
+/// normal startup: the Expanded window is created and shown.
+fn defers_expanded(launch: &Option<Result<&'static str, String>>) -> bool {
+    matches!(launch, Some(Ok(surface)) if *surface != surfaces::EXPANDED)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,10 +53,8 @@ pub fn run() {
     let mut context = tauri::generate_context!();
     // Launched straight into the Island or the Mini Player: the Expanded window is created when first shown,
     // so neither a hidden webview nor a flash of it comes before the surface that was asked for.
-    let deferred_expanded = match surfaces::launch_surface(std::env::args()) {
-        Some(Ok(surface)) if surface != surfaces::EXPANDED => surfaces::defer_expanded(context.config_mut()),
-        _ => None,
-    };
+    let launch = surfaces::launch_surface(std::env::args());
+    let deferred_expanded = if defers_expanded(&launch) { surfaces::defer_expanded(context.config_mut()) } else { None };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(island::IslandState::default())
@@ -65,13 +71,14 @@ pub fn run() {
             core::preview_connect,
             core::connect_project,
             core::disconnect_project,
+            imports::project_imports,
         ])
         .setup(|app| {
             tray::install(app.handle())?;
             core::start(app.handle());
             app.state::<surfaces::SurfaceState>().mark_main_thread();
             // `--surface=island|mini|expanded` chooses the surface shown at launch (default: expanded).
-            match surfaces::launch_surface(std::env::args()) {
+            match launch {
                 None => {}
                 Some(Err(name)) => eprintln!("Raio ignores --surface={name}: expected expanded, island or mini"),
                 Some(Ok(surface)) => {
@@ -89,6 +96,21 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(context)
-        .expect("error while running Raio");
+        .build(context)
+        .expect("error while building Raio")
+        .run(|app, event| surfaces::on_run_event(app, &event));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_launch_into_the_island_or_the_mini_player_defers_the_expanded_window() {
+        assert!(!defers_expanded(&None), "no --surface: Expanded opens as usual");
+        assert!(!defers_expanded(&Some(Ok(surfaces::EXPANDED))), "asked for Expanded: create it now");
+        assert!(defers_expanded(&Some(Ok(surfaces::ISLAND))));
+        assert!(defers_expanded(&Some(Ok(surfaces::MINI))));
+        assert!(!defers_expanded(&Some(Err("bogus".into()))), "an invalid surface falls back to the normal startup");
+    }
 }

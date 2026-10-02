@@ -114,6 +114,41 @@ pub fn defer_expanded(config: &mut tauri::Config) -> Option<WindowConfig> {
     Some(config.app.windows.remove(at))
 }
 
+/// Whether closing this window (its X button, Alt+F4) hides it instead of destroying it.
+pub fn hides_on_close(label: &str) -> bool {
+    label == EXPANDED
+}
+
+/// Whether an exit request is to be refused: `None` is the runtime asking because no window is left.
+pub fn prevents_exit(code: Option<i32>) -> bool {
+    code.is_none()
+}
+
+/// Closing Expanded (its X button, Alt+F4) hides it and keeps Raio running in the tray: a destroyed window
+/// would leave the tray's "Open Raio", a second launch and the Island's "Open" with nothing to show (and,
+/// with no other window, would end the app). Hooked to `RunEvent::WindowEvent` because that is where the
+/// close request of every window was observed to arrive: in this build (tauri 2.12.1, Windows) neither
+/// `Builder::on_window_event` nor a per-window listener was ever called for the window created from the
+/// startup config, only for windows built later. No `show` lock on purpose: this runs on the main thread,
+/// which `show` may be waiting on to build a webview.
+///
+/// Also keeps Raio alive when the last window goes (e.g. the Mini Player of a `--surface=mini` launch
+/// closed with Alt+F4): only an explicit exit, the tray's "Quit Raio" (`app.exit(0)`), ends the app.
+pub fn on_run_event(app: &AppHandle, event: &tauri::RunEvent) {
+    match event {
+        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if hides_on_close(label) => {
+            api.prevent_close();
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.hide();
+            }
+            // Hidden webviews may keep animating; tell the surface it is off screen.
+            let _ = app.emit_to(label.as_str(), "surface-visible", false);
+        }
+        tauri::RunEvent::ExitRequested { code, api, .. } if prevents_exit(*code) => api.prevent_exit(),
+        _ => {}
+    }
+}
+
 fn floating(app: &AppHandle, label: &str, size: (f64, f64), loaded: mpsc::Sender<()>) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, label, WebviewUrl::App(format!("index.html?surface={label}").into()))
         // The Island must never take focus from the user's editor, even when clicked.
@@ -352,6 +387,21 @@ mod tests {
         assert_eq!(launch_surface(args(&["raio.exe", "--surface=bogus"])), Some(Err("bogus".into())));
         assert_eq!(launch_surface(args(&["raio.exe", "--surface="])), Some(Err(String::new())));
         assert_eq!(launch_surface(args(&["raio.exe", "--surface=mini", "--surface=island"])), Some(Ok(MINI)), "first one wins");
+    }
+
+    #[test]
+    fn closing_expanded_hides_it_so_it_can_be_shown_again() {
+        assert!(hides_on_close(EXPANDED));
+        assert!(!hides_on_close(ISLAND), "recreated by ensure_window on its next show");
+        assert!(!hides_on_close(MINI));
+        assert!(!hides_on_close("other"));
+    }
+
+    #[test]
+    fn closing_the_last_window_keeps_raio_in_the_tray_but_an_explicit_exit_quits() {
+        assert!(prevents_exit(None), "no window left: stay in the tray");
+        assert!(!prevents_exit(Some(0)), "tray Quit Raio calls app.exit(0)");
+        assert!(!prevents_exit(Some(1)));
     }
 
     #[test]
