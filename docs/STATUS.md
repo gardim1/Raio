@@ -1,6 +1,22 @@
 # Raio status
 
-Last updated: 2026-10-01 (end of the M0 -> M1 -> E2E-1 session). Platform for every check below: Windows 11 Pro 10.0.26200, one 1920x1080 display at 100% scaling (96 DPI), Node 22.19.0, Rust 1.98.1 (per-user rustup, `stable-msvc`, PATH not modified), WebView2 154.0.4258.48, Claude Code 2.1.286. Nothing was run on macOS or Linux.
+Last updated: 2026-10-02 (round 2). The M0 -> M1 -> E2E-1 evidence below dates from 2026-10-01. Platform for every check below: Windows 11 Pro 10.0.26200, one 1920x1080 display at 100% scaling (96 DPI), Node 22.19.0, Rust 1.98.1 (per-user rustup, `stable-msvc`, PATH not modified), WebView2 154.0.4258.48, Claude Code 2.1.286. Nothing was run on macOS or Linux.
+
+## Round 2 (2026-10-01/02): live director, idle cost, robustness
+
+Same machine and OS. Claude Code 2.1.287. Display during the PERF-3 checks: 175% scaling with two monitors (changed by the owner between measurements, so PERF-1 and PERF-3 are not like-for-like). Nothing run on macOS or Linux.
+
+- **Validation history** (`fc63269`): results keep the status they had when they happened; a pass later outlived by a change gets a later `stale` entry; a failure stays `failed`, annotated "code changed since". Map rows keep clear of the resting orb (1-13 groups, tested).
+- **Live director** (`8dd1098`): the orb follows live sessions as events arrive (same beats and frame model as the replay), within ~2 s of the latest event except while back-to-back protected moments play; never skips failures/warnings/notices; no edges are invented; the loop stops once parked. Two independent read-only reviews; findings fixed. Unit and visual tests only: **not exercised with a real interactive session yet** (see below).
+- **One instance per user, inbox hygiene, retention, nested .gitignore, stricter path validation, settings key order** (`fb4b9ad`). Inbox TTL is 8 days (longer than the hook's 7-day inertness).
+- **Idle cost** (release, `.local/perf/REPORT-PERF-1.md` and `REPORT-PERF-3.md`, 3 runs per state, median % of one core): before (8dd1098, 100%, 1 monitor) Expanded 14.1, Island 16.7, Mini 0.62, minimized 12.8; after (2ce809f, 175%, 2 monitors) Expanded 12.2, Island 14.8, Mini 0.25, **minimized 0.13** (`525147e`). Private working set ~140 -> 88-116 MB; processes 9 -> 7-8 (Island/Mini created on first use, `d5d48da`). **Still over the < 1% budget while Expanded or Island is visible**: the cause is the infinite `raio-bob` CSS animation of the idle mini-orb (injecting `animation: none` gave 0.06% / 1.7%) plus the Island's 33 ms cursor poll. Changing `raio-bob` is a visible change awaiting the owner's decision.
+- **Surface intent** (`2ce809f`): "View changes" opened the Mini Player in replay 9/9 natively (3 cold). `--surface=island` showed no Expanded flash in 18 launches; **one of those launches showed no Island within 6 s (not diagnosed)**.
+- **raio-hook** accepts UTF-8 with/without BOM and UTF-16 with BOM (PowerShell pipes add a BOM; 17/17 fixture events stored natively).
+- **Opening the app**: `npm run app` (product), `npm run dev:harness` (labelled fixture harness; no longer opens a browser tab) (`63e35c0`).
+- **Dev server watcher** (`a0163e9`): ignoring `src-tauri/target`, `.local` and `.worktrees` fixed the first-test-per-worker Playwright timeouts (3 consecutive 26/26 runs); likely the earlier "cold scene" flake.
+- Tests on main at `2ce809f`: vitest 311 passed, tsc 0, build 0, Playwright 26/26, cargo 72 unit + 5 integration.
+
+Not done this round: a real **interactive** Claude Code session with replay after an app restart (blocked: the native folder picker cannot be driven through UI Automation; needs the owner to connect the throwaway project once); TS/JS import edges (authorisation unclear); morph and installer (backlog); tray clicks, occlusion, 100%/150% DPI comparisons.
 
 ## What works (verified)
 
