@@ -44,7 +44,7 @@ fn run() {
         inbox::mark_dropped(&dirs, "stdin-too-large");
         return;
     }
-    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+    let Some(payload) = claude::parse_payload(&bytes) else {
         inbox::mark_dropped(&dirs, "unreadable-payload");
         return;
     };

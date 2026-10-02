@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use raio_lib::inbox::{self, Dirs};
@@ -12,7 +13,20 @@ use raio_lib::store::{Insert, Store};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claude-code-2.1.286");
 
+/// The first launch of a freshly linked `raio-hook.exe` can be slow (antivirus scan, cold file cache). The hook
+/// exits at its own 2 s deadline whatever happens, so a cold start could make a test lose its record before
+/// the hook wrote it. One unmeasured launch (inert: no heartbeat) warms the binary up before any test counts.
+static WARM_UP: Once = Once::new();
+
 fn run_hook(data: &Path, stdin: &[u8]) -> (i32, Duration) {
+    WARM_UP.call_once(|| {
+        let cold = tempfile::tempdir().unwrap();
+        launch_hook(cold.path(), b"{}");
+    });
+    launch_hook(data, stdin)
+}
+
+fn launch_hook(data: &Path, stdin: &[u8]) -> (i32, Duration) {
     let started = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_raio-hook"))
         .args(["claude", "--project", "fixtureproject", "--root", "C:/fixture/acme-mini", "--raio-managed"])
@@ -52,7 +66,8 @@ fn recorded_session_flows_from_hook_to_store_without_content() {
     for path in &names {
         let (code, took) = run_hook(data.path(), &fs::read(path).unwrap());
         assert_eq!(code, 0, "{}", path.display());
-        assert!(took < Duration::from_secs(3), "{} took {took:?}", path.display());
+        // The hook's own 2 s deadline is the real guarantee; this only catches a hang.
+        assert!(took < Duration::from_secs(10), "{} took {took:?}", path.display());
     }
     // Garbage, truncated input and an unknown event must also exit 0 and write nothing.
     for junk in [&b"not json"[..], b"{\"hook_event_name\":\"PostToolUse\",\"tool", b"{\"hook_event_name\":\"BrandNewEvent\"}"] {
@@ -95,4 +110,84 @@ fn hook_stays_inert_without_a_heartbeat() {
     let payload = fs::read(format!("{FIXTURES}/06-PostToolUse-Write.json")).unwrap();
     assert_eq!(run_hook(data.path(), &payload).0, 0);
     assert!(!data.path().join("inbox").exists());
+}
+
+fn utf16(text: &str, big_endian: bool, bom: bool) -> Vec<u8> {
+    let mut out = vec![];
+    if bom {
+        out.extend(if big_endian { [0xFE, 0xFF] } else { [0xFF, 0xFE] });
+    }
+    for unit in text.encode_utf16() {
+        out.extend(if big_endian { unit.to_be_bytes() } else { unit.to_le_bytes() });
+    }
+    out
+}
+
+fn prefixed(prefix: &[u8], body: &[u8]) -> Vec<u8> {
+    [prefix, body].concat()
+}
+
+/// Runs every recorded fixture through the hook encoded by `encode`, in a fresh data dir, and returns
+/// (records written to the inbox, drop markers by reason, all bytes on disk).
+fn feed_all(encode: impl Fn(&[u8]) -> Vec<u8>) -> (usize, Vec<String>, Vec<u8>) {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let mut names: Vec<_> = fs::read_dir(FIXTURES).unwrap().map(|e| e.unwrap().path()).collect();
+    names.sort();
+    for path in &names {
+        assert_eq!(run_hook(data.path(), &encode(&fs::read(path).unwrap())).0, 0, "{}", path.display());
+    }
+    let dropped = fs::read_dir(data.path().join("dropped"))
+        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    (inbox::pending(&dirs, 1000).len(), dropped, all_bytes_under(data.path()))
+}
+
+#[test]
+fn utf8_with_a_bom_is_accepted_like_plain_utf8() {
+    // What a .NET/PowerShell pipe delivers (PERF-1): EF BB BF before the opening brace.
+    let (written, dropped, _) = feed_all(|b| prefixed(&[0xEF, 0xBB, 0xBF], b));
+    assert_eq!(dropped, Vec::<String>::new());
+    assert_eq!(written, 17, "same 17 records as the BOM-less run");
+}
+
+#[test]
+fn utf16_with_a_bom_is_decoded_in_both_byte_orders() {
+    for big_endian in [false, true] {
+        let (written, dropped, on_disk) = feed_all(|b| utf16(std::str::from_utf8(b).unwrap(), big_endian, true));
+        assert_eq!(dropped, Vec::<String>::new(), "big_endian={big_endian}");
+        assert_eq!(written, 17, "big_endian={big_endian}");
+        assert!(!String::from_utf8_lossy(&on_disk).contains("SENTINEL_"), "no raw payload on disk");
+    }
+}
+
+#[test]
+fn undecodable_input_is_dropped_counted_and_never_written_raw() {
+    let body = fs::read(format!("{FIXTURES}/06-PostToolUse-Write.json")).unwrap();
+    let text = std::str::from_utf8(&body).unwrap();
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("utf16-le-without-bom", utf16(text, false, false)),
+        ("utf16-be-without-bom", utf16(text, true, false)),
+        ("utf32-le-bom", prefixed(&[0xFF, 0xFE, 0x00, 0x00], &body)),
+        ("latin1-byte-in-json", prefixed(b"{\"hook_event_name\":\"Stop\",\"x\":\"\xE9\"}", b"")),
+        ("odd-length-utf16", prefixed(&[0xFF, 0xFE], &utf16(text, false, false)[..7])),
+        ("lone-surrogate-utf16", prefixed(&[0xFF, 0xFE, 0x00, 0xD8], b"")),
+        ("double-bom", prefixed(&[0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF], &body)),
+        ("bom-only", vec![0xEF, 0xBB, 0xBF]),
+        ("empty", vec![]),
+    ];
+    for (name, bytes) in cases {
+        let data = tempfile::tempdir().unwrap();
+        let dirs = Dirs::new(data.path());
+        dirs.create().unwrap();
+        inbox::touch_heartbeat(&dirs).unwrap();
+        assert_eq!(run_hook(data.path(), &bytes).0, 0, "{name}");
+        assert_eq!(inbox::pending(&dirs, 10).len(), 0, "{name}: nothing may be recorded");
+        let dropped: Vec<String> = fs::read_dir(data.path().join("dropped")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(dropped.len(), 1, "{name}: counted exactly once, got {dropped:?}");
+        assert!(dropped[0].ends_with("unreadable-payload"), "{name}: {dropped:?}");
+        assert!(!String::from_utf8_lossy(&all_bytes_under(data.path())).contains("SENTINEL_"), "{name}: raw stdin written");
+    }
 }

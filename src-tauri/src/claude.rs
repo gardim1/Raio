@@ -13,6 +13,27 @@ const EDIT_TOOLS: [&str; 4] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 const INSPECT_TOOLS: [&str; 3] = ["Read", "Grep", "Glob"];
 const MAX_REASON_CHARS: usize = 64;
 
+/// Parses a hook payload from raw stdin bytes. Accepts UTF-8 with or without a BOM and UTF-16LE/BE that
+/// starts with a BOM (what a Windows PowerShell/.NET pipe may deliver); anything else is `None`.
+/// Nothing is ever written from here: the caller drops and counts what this rejects.
+pub fn parse_payload(bytes: &[u8]) -> Option<Value> {
+    match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => serde_json::from_slice(rest).ok(),
+        [0xFF, 0xFE, rest @ ..] => parse_utf16(rest, u16::from_le_bytes),
+        [0xFE, 0xFF, rest @ ..] => parse_utf16(rest, u16::from_be_bytes),
+        _ => serde_json::from_slice(bytes).ok(),
+    }
+}
+
+fn parse_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> Option<Value> {
+    let (pairs, odd) = bytes.as_chunks::<2>();
+    if !odd.is_empty() {
+        return None;
+    }
+    let units: Vec<u16> = pairs.iter().map(|p| unit(*p)).collect();
+    serde_json::from_str(&String::from_utf16(&units).ok()?).ok()
+}
+
 pub struct Context<'a> {
     pub project_id: &'a str,
     pub root: &'a Path,
@@ -239,6 +260,23 @@ mod tests {
         let mut names: Vec<String> = fs::read_dir(FIXTURES).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         names.sort();
         names.into_iter().map(|n| (n.clone(), normalize(&fixture(&n), &ctx()))).collect()
+    }
+
+    #[test]
+    fn parse_payload_accepts_the_supported_encodings_and_nothing_else() {
+        let json = r#"{"hook_event_name":"Stop","reason":"é"}"#;
+        let expected: Value = serde_json::from_str(json).unwrap();
+        let le: Vec<u8> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let be: Vec<u8> = json.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert_eq!(parse_payload(json.as_bytes()), Some(expected.clone()));
+        assert_eq!(parse_payload(&[&[0xEF, 0xBB, 0xBF][..], json.as_bytes()].concat()), Some(expected.clone()));
+        assert_eq!(parse_payload(&[&[0xFF, 0xFE][..], &le].concat()), Some(expected.clone()));
+        assert_eq!(parse_payload(&[&[0xFE, 0xFF][..], &be].concat()), Some(expected));
+        assert_eq!(parse_payload(&le), None, "UTF-16 without a BOM is not guessed");
+        assert_eq!(parse_payload(&[&[0xFF, 0xFE][..], &le[..le.len() - 1]].concat()), None, "odd byte count");
+        assert_eq!(parse_payload(&[0xFF, 0xFE, 0x00, 0xD8]), None, "lone surrogate");
+        assert_eq!(parse_payload(&[&[0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF][..], json.as_bytes()].concat()), None);
+        assert_eq!(parse_payload(&[]), None);
     }
 
     #[test]

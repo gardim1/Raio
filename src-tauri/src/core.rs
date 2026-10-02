@@ -174,7 +174,7 @@ pub fn start(app: &AppHandle) {
             }
             // A second `raio.exe` asked this instance to come forward.
             if instance::take_show_request(&core.data) {
-                let _ = surfaces::show_surface(handle.clone(), surfaces::EXPANDED.into(), None);
+                let _ = surfaces::show(&handle, surfaces::EXPANDED, None);
             }
             since_heartbeat += INGEST_EVERY;
             if since_heartbeat >= HEARTBEAT_EVERY {

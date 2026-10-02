@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 
-use crate::surfaces::{EXPANDED, ISLAND, MINI, show_surface};
+use crate::surfaces::{EXPANDED, ISLAND, MINI, show};
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let island = MenuItem::with_id(app, ISLAND, "Show Island", true, None::<&str>)?;
@@ -21,7 +21,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quit" => app.exit(0),
             surface => {
-                let _ = show_surface(app.clone(), surface.to_string(), None);
+                // Menu events arrive on the main thread; creating a webview there would deadlock.
+                let (app, surface) = (app.clone(), surface.to_string());
+                std::thread::spawn(move || {
+                    let _ = show(&app, &surface, None);
+                });
             }
         })
         .build(app)?;
