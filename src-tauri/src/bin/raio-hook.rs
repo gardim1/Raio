@@ -1,12 +1,13 @@
 //! `raio-hook`: the command Claude Code runs (asynchronously) for each configured hook.
 //! Reads the payload from stdin, keeps only minimised fields, writes one inbox record and exits 0.
-//! It never blocks or fails the agent: bounded input, a hard deadline, and exit code 0 on every path.
+//! It never blocks or fails the agent: bounded input, a hard deadline, and exit code 0 on every path. The whole
+//! run is bounded by the deadline (2 s) plus a short grace (300 ms) even when the filesystem is stuck.
 
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use raio_lib::hook_guard::{Expiry, Guard};
 use raio_lib::{claude, inbox, paths};
@@ -14,8 +15,10 @@ use raio_lib::{claude, inbox, paths};
 const MAX_STDIN: u64 = 4 * 1024 * 1024;
 const READ_DEADLINE: Duration = Duration::from_millis(1500);
 const HARD_DEADLINE: Duration = Duration::from_secs(2);
-/// How long a write that is already in flight may finish after the hard deadline.
+/// How long a write that is already in flight, or the watchdog's own marker, may take after the hard deadline.
 const WRITE_GRACE: Duration = Duration::from_millis(300);
+/// What the main thread adds to the grace before it exits on its own if the watchdog never ends the process.
+const EXIT_MARGIN: Duration = Duration::from_millis(100);
 
 /// The hard deadline. Debug builds (the integration tests) may shorten it with `RAIO_HOOK_HARD_DEADLINE_MS`;
 /// release builds ignore the variable.
@@ -25,6 +28,17 @@ fn hard_deadline() -> Duration {
         return Duration::from_millis(ms);
     }
     HARD_DEADLINE
+}
+
+/// Test seam, debug builds only: pretend a filesystem call is stuck for `$var` milliseconds. Release builds
+/// compile it to nothing.
+fn stall(var: &str) {
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var(var).ok().and_then(|v| v.parse::<u64>().ok()) {
+        thread::sleep(Duration::from_millis(ms));
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = var;
 }
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -44,10 +58,14 @@ fn run(dirs: &inbox::Dirs, guard: &Guard) {
         return;
     }
     let (Some(project_id), Some(root)) = (arg(&args, "--project"), arg(&args, "--root")) else { return };
+    // From here on, losing the event is a drop that must leave a marker: even a heartbeat check that hangs on a
+    // stuck filesystem is covered. Only argument parsing, above, is not.
+    guard.arm();
+    stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
     if !inbox::heartbeat_fresh(dirs, SystemTime::now()) {
-        return; // Raio has not run recently: stay inert instead of filling the inbox.
+        guard.finish(); // Raio has not run recently: stay inert instead of filling the inbox; nothing was lost
+        return;
     }
-    guard.arm(); // from here on, losing the event is a drop that must leave a marker
 
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -94,9 +112,18 @@ fn main() {
             thread::sleep(deadline);
             match guard.expire() {
                 Expiry::Drop => {
-                    if let Some(dirs) = dirs.as_ref() {
-                        inbox::mark_dropped(dirs, "hard-deadline");
-                    }
+                    // On a helper thread, so a stuck filesystem cannot keep the hook alive: the marker gets the
+                    // same short grace as any write, then the process exits regardless (marker lost, by design).
+                    let (written, done) = mpsc::channel();
+                    let dirs = dirs.clone();
+                    thread::spawn(move || {
+                        stall("RAIO_HOOK_STALL_MARKER_MS");
+                        if let Some(dirs) = dirs.as_ref() {
+                            inbox::mark_dropped(dirs, "hard-deadline");
+                        }
+                        let _ = written.send(());
+                    });
+                    let _ = done.recv_timeout(WRITE_GRACE);
                 }
                 Expiry::Grace => thread::sleep(WRITE_GRACE),
                 Expiry::Finished => {}
@@ -110,9 +137,11 @@ fn main() {
         drop_event(dirs, &guard, "panic");
     }
     if guard.finish() {
-        // The watchdog took the event and is writing its marker: it ends the process when it is done.
-        loop {
-            thread::park();
+        // The watchdog took the event and is writing its marker: it ends the process when it is done (within
+        // the grace). Wait for that, but never longer than grace + margin: this thread exits by itself then.
+        let give_up = Instant::now() + WRITE_GRACE + EXIT_MARGIN;
+        while let Some(left) = give_up.checked_duration_since(Instant::now()) {
+            thread::park_timeout(left);
         }
     }
     std::process::exit(0);

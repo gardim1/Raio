@@ -110,6 +110,7 @@ fn hook_stays_inert_without_a_heartbeat() {
     let payload = fs::read(format!("{FIXTURES}/06-PostToolUse-Write.json")).unwrap();
     assert_eq!(run_hook(data.path(), &payload).0, 0);
     assert!(!data.path().join("inbox").exists());
+    assert!(!data.path().join("dropped").exists(), "an inert hook is not a lost event: no marker");
 }
 
 fn utf16(text: &str, big_endian: bool, bom: bool) -> Vec<u8> {
@@ -202,22 +203,29 @@ fn markers(dirs: &Dirs) -> Vec<String> {
     fs::read_dir(&dirs.dropped).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
 }
 
-/// Spawns the hook with a silent open stdin and the given hard deadline (debug builds only honour it).
+/// Spawns the hook with a silent open stdin and the given environment (debug builds only honour the seams).
 #[cfg(debug_assertions)]
-fn hook_waiting_on_silent_stdin(data: &Path, hard_deadline_ms: &str) -> (Option<i32>, Duration) {
+fn hook_waiting_on_silent_stdin_with(data: &Path, envs: &[(&str, &str)]) -> (Option<i32>, Duration) {
     let started = Instant::now();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_raio-hook"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_raio-hook"));
+    command
         .args(["claude", "--project", "fixtureproject", "--root", "C:/fixture/acme-mini", "--raio-managed"])
         .env("RAIO_DATA_DIR", data)
-        .env("RAIO_HOOK_HARD_DEADLINE_MS", hard_deadline_ms)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().unwrap();
     let _open_stdin = child.stdin.take().unwrap();
     let status = child.wait().unwrap();
     (status.code(), started.elapsed())
+}
+
+#[cfg(debug_assertions)]
+fn hook_waiting_on_silent_stdin(data: &Path, hard_deadline_ms: &str) -> (Option<i32>, Duration) {
+    hook_waiting_on_silent_stdin_with(data, &[("RAIO_HOOK_HARD_DEADLINE_MS", hard_deadline_ms)])
 }
 
 // The deadline override exists in debug builds only (`cargo test --release` would not honour it).
@@ -259,4 +267,39 @@ fn an_invocation_leaves_one_marker_even_when_the_stdin_timeout_and_the_watchdog_
         assert_eq!(dropped.len(), 1, "{dropped:?}");
         assert!(dropped[0].ends_with("stdin-timeout") || dropped[0].ends_with("hard-deadline"), "{dropped:?}");
     }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_stuck_marker_write_cannot_keep_the_hook_alive_past_deadline_plus_grace() {
+    // The watchdog's marker write is stalled for 10 s (a stuck filesystem). The hook must still exit by itself:
+    // deadline 250 ms + 300 ms grace + margin. Generous bound (5 s) so machine load cannot make it flaky, yet far
+    // below the stall.
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let _ = run_hook(tempfile::tempdir().unwrap().path(), b"{}");
+    let (code, took) = hook_waiting_on_silent_stdin_with(data.path(), &[("RAIO_HOOK_HARD_DEADLINE_MS", "250"), ("RAIO_HOOK_STALL_MARKER_MS", "10000")]);
+    assert_eq!(code, Some(0));
+    assert!(took < Duration::from_secs(5), "the hook hung on a stuck marker write: {took:?}");
+    assert!(markers(&dirs).is_empty(), "the stalled marker could not have been written: {:?}", markers(&dirs));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_hook_stuck_before_the_heartbeat_check_is_accounted_for_when_the_deadline_hits() {
+    // The heartbeat stat hangs for 3 s; the deadline (250 ms) arrives while the hook is already past its argument
+    // check, so the lost event leaves a marker. Only argument parsing is uncovered.
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let _ = run_hook(tempfile::tempdir().unwrap().path(), b"{}");
+    let (code, took) = hook_waiting_on_silent_stdin_with(data.path(), &[("RAIO_HOOK_HARD_DEADLINE_MS", "250"), ("RAIO_HOOK_STALL_HEARTBEAT_MS", "3000")]);
+    assert_eq!(code, Some(0));
+    assert!(took < Duration::from_secs(5), "{took:?}");
+    let dropped = markers(&dirs);
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(dropped[0].ends_with("-hard-deadline"), "{dropped:?}");
 }
