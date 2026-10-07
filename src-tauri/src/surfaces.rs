@@ -228,6 +228,7 @@ fn configure(window: &WebviewWindow, label: &str) -> tauri::Result<()> {
     if label == ISLAND {
         // Until the renderer publishes the capsule rectangle, the transparent Island lets clicks through.
         window.set_ignore_cursor_events(true)?;
+        window.app_handle().state::<island::IslandState>().on_window_created(label);
     }
     if let Some(monitor) = window.primary_monitor()? {
         let (origin, extent) = (monitor.position(), monitor.size());

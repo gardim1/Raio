@@ -41,18 +41,18 @@ fn poll_delay(rect: Option<HitRect>, local_cursor: Option<(f64, f64)>) -> Durati
     }
 }
 
-/// Last successfully submitted click-through state. Failed dispatches must retry on the next tick.
+/// Last successfully submitted click-through state for a window generation. Failed dispatches retry.
 #[derive(Default)]
 struct HoverState {
-    inside: Option<bool>,
+    applied: Option<(u64, bool)>,
 }
 
 impl HoverState {
-    fn update<E>(&mut self, inside: bool, set_ignore: impl FnOnce(bool) -> Result<(), E>) -> bool {
-        if self.inside == Some(inside) || set_ignore(!inside).is_err() {
+    fn update<E>(&mut self, window_epoch: u64, inside: bool, set_ignore: impl FnOnce(bool) -> Result<(), E>) -> bool {
+        if self.applied == Some((window_epoch, inside)) || set_ignore(!inside).is_err() {
             return false;
         }
-        self.inside = Some(inside);
+        self.applied = Some((window_epoch, inside));
         true
     }
 }
@@ -83,9 +83,7 @@ fn invalidates_geometry(label: &str, event: &tauri::WindowEvent) -> bool {
 
 /// Reuse the core's RunEvent hook, including destruction/recreation, without adding per-show listeners.
 pub fn on_window_event(app: &AppHandle, label: &str, event: &tauri::WindowEvent) {
-    if invalidates_geometry(label, event) {
-        app.state::<IslandState>().geometry_epoch.fetch_add(1, Ordering::Release);
-    }
+    app.state::<IslandState>().on_window_event(label, event);
 }
 
 /// Whether a cursor-poll thread is running. At most one runs, and only while the Island is visible.
@@ -113,6 +111,26 @@ pub struct IslandState {
     hit: Mutex<Option<HitRect>>,
     gate: PollGate,
     geometry_epoch: AtomicU64,
+    window_epoch: AtomicU64,
+}
+
+impl IslandState {
+    fn on_window_event(&self, label: &str, event: &tauri::WindowEvent) {
+        if invalidates_geometry(label, event) {
+            self.geometry_epoch.fetch_add(1, Ordering::Release);
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                self.window_epoch.fetch_add(1, Ordering::Release);
+            }
+        }
+    }
+
+    /// A replacement starts with click-through enabled; both poll caches belonged to the old window.
+    pub fn on_window_created(&self, label: &str) {
+        if label == ISLAND {
+            self.geometry_epoch.fetch_add(1, Ordering::Release);
+            self.window_epoch.fetch_add(1, Ordering::Release);
+        }
+    }
 }
 
 #[tauri::command]
@@ -145,21 +163,25 @@ pub fn ensure_cursor_watch(app: &AppHandle) {
     }
     let app = app.clone();
     thread::spawn(move || {
+        let state = app.state::<IslandState>();
         let mut hover = HoverState::default();
         let mut geometry = GeometryCache::default();
         loop {
+            // Snapshot before obtaining the window: a racing replacement must refresh next tick,
+            // even if this sample still dispatches successfully to the old window.
+            let window_epoch = state.window_epoch.load(Ordering::Acquire);
+            let geometry_epoch = state.geometry_epoch.load(Ordering::Acquire);
             let Some(window) = app.get_webview_window(ISLAND).filter(|w| should_poll(true, w.is_visible())) else {
                 hover = HoverState::default();
                 geometry = GeometryCache::default();
-                if app.state::<IslandState>().gate.release_or_continue(|| island_visible(&app)) {
+                if state.gate.release_or_continue(|| island_visible(&app)) {
                     continue;
                 }
                 return;
             };
-            let rect = app.state::<IslandState>().hit.lock().ok().and_then(|h| *h);
+            let rect = state.hit.lock().ok().and_then(|h| *h);
             let local_cursor = rect.and_then(|_| {
-                let epoch = app.state::<IslandState>().geometry_epoch.load(Ordering::Acquire);
-                let geometry = geometry.get(epoch, || {
+                let geometry = geometry.get(geometry_epoch, || {
                     let origin = window.outer_position()?;
                     let scale = window.scale_factor()?;
                     Ok::<_, tauri::Error>(WindowGeometry { origin: (origin.x, origin.y), scale })
@@ -168,7 +190,7 @@ pub fn ensure_cursor_watch(app: &AppHandle) {
                 Some(to_local((cursor.x, cursor.y), geometry.origin, geometry.scale))
             });
             let inside = rect.zip(local_cursor).is_some_and(|(rect, (x, y))| rect.contains(x, y));
-            if hover.update(inside, |ignore| window.set_ignore_cursor_events(ignore)) {
+            if hover.update(window_epoch, inside, |ignore| window.set_ignore_cursor_events(ignore)) {
                 let _ = window.emit("island-pointer", inside);
             }
             thread::sleep(poll_delay(rect, local_cursor));
@@ -185,7 +207,7 @@ mod tests {
         let mut hover = HoverState::default();
         let mut flags = Vec::new();
         for inside in [false, false, true, true, false, false] {
-            hover.update(inside, |ignore| { flags.push(ignore); Ok::<_, ()>(()) });
+            hover.update(0, inside, |ignore| { flags.push(ignore); Ok::<_, ()>(()) });
         }
         assert_eq!(flags, [true, false, true]);
     }
@@ -193,9 +215,81 @@ mod tests {
     #[test]
     fn a_failed_click_through_dispatch_is_retried_without_publishing_the_change() {
         let mut hover = HoverState::default();
-        assert!(!hover.update(true, |_| Err(())));
-        assert!(hover.update(true, |ignore| { assert!(!ignore); Ok::<_, ()>(()) }));
-        assert!(!hover.update::<()>(true, |_| panic!("unchanged state must not dispatch")));
+        assert!(!hover.update(0, true, |_| Err(())));
+        assert!(hover.update(0, true, |ignore| { assert!(!ignore); Ok::<_, ()>(()) }));
+        assert!(!hover.update::<()>(0, true, |_| panic!("unchanged state must not dispatch")));
+    }
+
+    #[test]
+    fn replacement_between_samples_reapplies_click_through_without_a_boundary_crossing() {
+        let state = IslandState::default();
+        let mut hover = HoverState::default();
+        let mut geometry = GeometryCache::default();
+        let old = WindowGeometry { origin: (0, 0), scale: 1.0 };
+        let new = WindowGeometry { origin: (-1000, 35), scale: 1.75 };
+        let mut ignores_cursor = true;
+        assert_eq!(geometry.get(0, || Ok::<_, ()>(old)), Some(old));
+        assert!(hover.update(state.window_epoch.load(Ordering::Acquire), true, |ignore| {
+            ignores_cursor = ignore;
+            Ok::<_, ()>(())
+        }));
+        assert!(!ignores_cursor);
+
+        // Destroy/recreate wholly between samples: no hidden/missing tick or cursor movement.
+        state.on_window_event(ISLAND, &tauri::WindowEvent::Destroyed);
+        state.on_window_created(ISLAND);
+        ignores_cursor = true; // configure initializes the replacement to click-through.
+        assert_eq!(geometry.get(state.geometry_epoch.load(Ordering::Acquire), || Ok::<_, ()>(new)), Some(new));
+        assert!(hover.update(state.window_epoch.load(Ordering::Acquire), true, |ignore| {
+            ignores_cursor = ignore;
+            Ok::<_, ()>(())
+        }));
+        assert!(!ignores_cursor, "the replacement must accept clicks on the capsule");
+        assert!(!hover.update::<()>(state.window_epoch.load(Ordering::Acquire), true, |_| panic!("unchanged replacement must not dispatch")));
+    }
+
+    #[test]
+    fn either_destruction_or_creation_invalidates_the_hover_decision() {
+        for destroyed in [true, false] {
+            let state = IslandState::default();
+            let mut hover = HoverState::default();
+            assert!(hover.update(0, true, |_| Ok::<_, ()>(())));
+            if destroyed {
+                state.on_window_event(ISLAND, &tauri::WindowEvent::Destroyed);
+            } else {
+                state.on_window_created(ISLAND);
+            }
+            let epoch = state.window_epoch.load(Ordering::Acquire);
+            assert!(!hover.update(epoch, true, |_| Err(())), "failed replacement dispatch must retry");
+            assert!(hover.update(epoch, true, |ignore| { assert!(!ignore); Ok::<_, ()>(()) }));
+        }
+    }
+
+    #[test]
+    fn destruction_during_a_dispatch_cannot_cache_the_replacement_as_applied() {
+        let state = IslandState::default();
+        let mut hover = HoverState::default();
+        let sampled_epoch = state.window_epoch.load(Ordering::Acquire);
+        assert!(hover.update(sampled_epoch, true, |_| {
+            state.on_window_event(ISLAND, &tauri::WindowEvent::Destroyed);
+            state.on_window_created(ISLAND);
+            Ok::<_, ()>(())
+        }));
+        assert!(hover.update(state.window_epoch.load(Ordering::Acquire), true, |ignore| { assert!(!ignore); Ok::<_, ()>(()) }));
+    }
+
+    #[test]
+    fn movement_and_other_windows_do_not_invalidate_island_hover() {
+        let state = IslandState::default();
+        let mut hover = HoverState::default();
+        assert!(hover.update(0, true, |_| Ok::<_, ()>(())));
+        state.on_window_event(ISLAND, &tauri::WindowEvent::Moved(tauri::PhysicalPosition::new(-1000, 35)));
+        for label in ["mini", "expanded"] {
+            state.on_window_event(label, &tauri::WindowEvent::Destroyed);
+            state.on_window_created(label);
+        }
+        assert_eq!(state.geometry_epoch.load(Ordering::Acquire), 1);
+        assert!(!hover.update::<()>(state.window_epoch.load(Ordering::Acquire), true, |_| panic!("same Island must not dispatch")));
     }
 
     #[test]
