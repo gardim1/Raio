@@ -26,3 +26,10 @@ describe('latest recorded session label', () => {
     expect(lastRecordedSession({ ...log, startedAt: 'invalid' }, 'UTC')).toContain('time unknown');
   });
 });
+
+it('labels a live session in progress, never Partial, while recorded/interrupted cases keep their labels', () => {
+  expect(lastRecordedSession(log, 'UTC', { live: true })).toContain('Session in progress');
+  expect(lastRecordedSession(log, 'UTC', { live: true })).not.toContain('Partial');
+  expect(lastRecordedSession(log, 'UTC')).toContain('Partial (no end recorded)');
+  expect(lastRecordedSession({ ...log, events: [...log.events, { kind: 'session.end', atMs: 1000, outcome: 'completed' }] }, 'UTC', { live: true })).toContain('Complete (end recorded)');
+});

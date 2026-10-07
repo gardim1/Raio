@@ -128,7 +128,8 @@ describe('connected project before its first session', () => {
     await settle();
     await settle();
     const markup = renderApp(bridge);
-    expect(markup).toContain(surface === 'mini' ? 'Project architecture map' : 'Raio · no session');
+    expect(markup).toContain(surface === 'mini' ? 'Project architecture map' : 'Connected · quiet');
+    expect(markup).toContain('data-presence="connected"');
     if (surface === 'mini') {
       expect(markup).toContain('class="mini__resize"');
       expect(markup).toMatch(/class="mini" style="left:[^;]+;top:/);

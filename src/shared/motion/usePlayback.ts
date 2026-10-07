@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { frozenClock } from './frozenClock';
-import { useSurfaceVisible } from './surfaceVisibility';
+import { isSurfaceVisible, useSurfaceVisible } from './surfaceVisibility';
 
 export interface PlaybackOptions {
   /** Seconds at which playback restarts from 0 (film). Omit to keep running. */
@@ -29,6 +29,14 @@ export interface Playback {
   setSpeed(speed: number): void;
 }
 
+/** Reconcile live time before the first visible paint; replay time stays paused. */
+export const resumePlaybackTime = (t: number, lastFrame: number | null, now: number, options: Pick<PlaybackOptions, 'wallClock' | 'loopAt' | 'stopAt'> & { readonly speed: number }): number => {
+  if (!options.wallClock || lastFrame === null) return t;
+  let next = t + Math.max(0, now - lastFrame) / 1000 * options.speed;
+  if (options.loopAt !== undefined && next > options.loopAt) next = 0;
+  return options.stopAt === undefined ? next : Math.min(next, options.stopAt);
+};
+
 const prefersReducedMotion = (): boolean =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
@@ -45,6 +53,19 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt, 
   const timeRef = useRef(t);
   const lastFrame = useRef<number | null>(null);
   const visible = useSurfaceVisible();
+  const wasHidden = useRef(!visible);
+  if (!visible) wasHidden.current = true;
+  if (visible && wasHidden.current) {
+    wasHidden.current = false;
+    if (playing && wallClock) {
+      const now = performance.now();
+      const next = resumePlaybackTime(timeRef.current, lastFrame.current, now, { wallClock, speed, loopAt, stopAt });
+      timeRef.current = next;
+      lastFrame.current = now;
+      if (next !== t) setT(next);
+      if (stopAt !== undefined && next >= stopAt) setPlaying(false);
+    }
+  }
 
   useEffect(() => {
     if (!playing) {
@@ -57,8 +78,10 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt, 
       if (!wallClock) lastFrame.current = null;
       return;
     }
+    let disposed = false;
     let raf = 0;
     const tick = (now: number) => {
+      if (disposed || !isSurfaceVisible()) return;
       const last = lastFrame.current ?? now;
       lastFrame.current = now;
       let next = timeRef.current + ((now - last) / 1000) * speed;
@@ -75,7 +98,14 @@ export const usePlayback = ({ loopAt, stopAt, autoplay = true, reducedMotionAt, 
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      if (!isSurfaceVisible()) {
+        wasHidden.current = true;
+        if (!wallClock) lastFrame.current = null;
+      }
+    };
   }, [playing, speed, loopAt, stopAt, visible, wallClock]);
 
   const seek = useCallback((seconds: number) => {

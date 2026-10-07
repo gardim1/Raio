@@ -12,6 +12,8 @@ import { formatOffset } from '../session/model/events';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { SessionInsights } from '../session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../session/model/script';
+import type { CompanionPresence } from './companionPresence';
+import { PresenceHistory } from './PresenceHistory';
 import { EventTimeline } from './EventTimeline';
 import { NodeInspector } from './NodeInspector';
 import { MORPH_TRANSITION, type Presence } from './presence';
@@ -31,6 +33,7 @@ export const expandedWindowChrome = (
   bridge.kind === 'native' && bridge.fixedSurface === 'expanded' && /Windows/.test(userAgent) ? getWindow() : undefined;
 
 export interface ExpandedWindowProps {
+  readonly companion?: CompanionPresence;
   readonly script: ChoreographyScript;
   readonly frame: FrameState;
   readonly graph: ArchitectureGraph;
@@ -64,6 +67,7 @@ export const ExpandedWindow = ({
   project,
   insights,
   presence,
+  companion,
   selectedNodeId,
   replay,
   isReplay,
@@ -98,6 +102,7 @@ export const ExpandedWindow = ({
     <div className="expanded-dock">
       <motion.div layoutId="raio-surface" layoutDependency="expanded" transition={MORPH_TRANSITION} className="panel expanded" style={{ borderRadius: 28 }}>
         <TitleBar
+          companion={companion}
           nativeWindow={nativeWindow}
           project={project}
           agent={script.agent}
@@ -139,7 +144,8 @@ export const ExpandedWindow = ({
               <div className="sidebar__task">{overview.title}</div>
               <div className="sidebar__meta">{overview.meta}</div>
             </div>
-            <p className="evidence__note">{lastRecordedSession(snapshotNow?.log ?? null)}</p>
+            <p className="evidence__note">{lastRecordedSession(snapshotNow?.log ?? null, undefined, { live: !isReplay && script.live?.open === true })}</p>
+            {companion && <PresenceHistory presence={companion} />}
             {selected ? (
               <NodeInspector node={selected} frame={frame.nodes.get(selected.id)} insight={insights.byNode.get(selected.id)} onClose={() => onSelectNode(null)} />
             ) : (

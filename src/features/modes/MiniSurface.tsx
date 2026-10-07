@@ -1,5 +1,6 @@
 import { motion } from 'motion/react';
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { isSurfaceVisible, useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { clamp } from '../../shared/motion/easing';
 import { IconButton } from '../../shared/ui/Button';
 import { CollapseIcon, ExpandIcon, PinIcon } from '../../shared/ui/icons';
@@ -32,18 +33,20 @@ export interface MiniSurfaceProps {
 
 /** Shared Mini chrome and gestures, whether it displays a session or a project before telemetry. */
 export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned, onTogglePin, onExpand, onCollapse, children, footer, companion }: MiniSurfaceProps) => {
+  const visible = useSurfaceVisible();
   const [rect, setRect] = useState<Rect>(initialRect);
   const gesture = useRef<{ kind: 'move' | 'resize'; startX: number; startY: number; origin: Rect } | null>(null);
+  useEffect(() => () => { gesture.current = null; }, []);
   const begin = useCallback(
     (kind: 'move' | 'resize') => (e: ReactPointerEvent) => {
-      if ((e.target as HTMLElement).closest('button')) return;
+      if (!visible || !isSurfaceVisible() || (e.target as HTMLElement).closest('button')) return;
       gesture.current = { kind, startX: e.clientX, startY: e.clientY, origin: rect };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    }, [rect],
+    }, [rect, visible],
   );
   const move = (e: ReactPointerEvent) => {
     const g = gesture.current;
-    if (!g) return;
+    if (!visible || !isSurfaceVisible() || !g) return;
     const dx = e.clientX - g.startX;
     const dy = e.clientY - g.startY;
     if (g.kind === 'move') {

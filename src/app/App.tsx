@@ -1,5 +1,9 @@
 import { LayoutGroup } from 'motion/react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { useCompanionPresence } from '../features/modes/presenceClock';
+import type { CompanionPresence } from '../features/modes/companionPresence';
+import { useSurfaceVisible } from '../shared/motion/surfaceVisibility';
+import { useSurfaceStore } from '../shared/motion/visibleStore';
 import { ExpandedWindow } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
@@ -40,7 +44,9 @@ export const App = ({ underlay }: AppProps) => {
   const snapshot = useSessionSnapshot();
   const projectSnapshot = useProjectMapSnapshot();
   const bridge = useBridge();
-  const storeMode = useSessionUi((s) => s.mode);
+  const storeMode = useSurfaceStore(useSessionUi.subscribe, useSessionUi.getState).mode;
+  const visible = useSurfaceVisible();
+  const companion = useCompanionPresence(snapshot, projectSnapshot);
   const mode = bridge.fixedSurface ?? storeMode;
   const [intent, setIntent] = useState<{ root: string; revision: number } | null>(null);
   const intentRevision = useRef(0);
@@ -60,23 +66,24 @@ export const App = ({ underlay }: AppProps) => {
     return () => { intentRevision.current++; stop(); };
   }, [bridge]);
   return (
-    <div className={`app app--${mode}`}>
+    <div className={`app app--${mode}`} data-companion-state={companion.state}>
       {bridge.kind === 'native' && <NativeSurfaceEffects />}
+      <Activity mode={visible ? 'visible' : 'hidden'}>
       {underlay}
       {intent && bridge.connector ? (
         <div className="app__empty"><ConnectPanel key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} /></div>
       ) : snapshot ? (
-        <Surfaces snapshot={snapshot} />
+        <Surfaces snapshot={snapshot} companion={companion} />
       ) : projectSnapshot ? (
-        <ProjectOnlyView snapshot={projectSnapshot} mode={mode} />
+        <ProjectOnlyView snapshot={projectSnapshot} mode={mode} companion={companion} />
       ) : (
         <div className="app__empty">
           {bridge.connector && mode === 'expanded' ? (
             <ConnectPanel connector={bridge.connector} />
           ) : bridge.connector && mode === 'island' ? (
-            <IdleIsland onOpen={() => bridge.showSurface('expanded')} />
+            <IdleIsland companion={companion} onOpen={() => bridge.showSurface('expanded')} />
           ) : bridge.connector ? (
-            <p className="app__empty-note">No session yet</p>
+            <p className="app__empty-note" title={companion.description}>{companion.state === 'unknown' ? '?' : '−'} {companion.label}</p>
           ) : (
             <NoProjectState />
           )}
@@ -87,14 +94,15 @@ export const App = ({ underlay }: AppProps) => {
           {snapshot?.simulatedFeed ? 'Simulated live feed · demo fixture, not real agent activity' : 'Demo fixture · not real agent activity'}
         </div>
       )}
+      </Activity>
     </div>
   );
 };
 
-const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
+const Surfaces = ({ snapshot, companion }: { readonly snapshot: SessionSnapshot; readonly companion: CompanionPresence }) => {
   const { graph, log, project } = snapshot;
   const bridge = useBridge();
-  const { mode: storeMode, source, selectedNodeId, pinned, liveRun, replayRun, startReplay, exitReplay, selectNode, togglePin } = useSessionUi();
+  const { mode: storeMode, source, selectedNodeId, pinned, liveRun, replayRun, startReplay, exitReplay, selectNode, togglePin } = useSurfaceStore(useSessionUi.subscribe, useSessionUi.getState);
   const mode = bridge.fixedSurface ?? storeMode;
   const connected = bridge.connector?.project();
   const projectKey = connected ? JSON.stringify([connected.id, connected.root]) : project;
@@ -179,10 +187,11 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   return (
     <LayoutGroup>
       {mode === 'island' && (
-        <IslandMode script={script} frame={frame} presence={presence} onPinMini={() => go('mini')} onExpand={() => go('expanded')} onViewChanges={viewChanges} />
+        <IslandMode companion={companion} script={script} frame={frame} presence={presence} onPinMini={() => go('mini')} onExpand={() => go('expanded')} onViewChanges={viewChanges} />
       )}
       {mode === 'mini' && (
         <MiniPlayer
+          companion={companion}
           script={script}
           frame={frame}
           graph={shownGraph}
@@ -199,6 +208,7 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
       )}
       {mode === 'expanded' && (
         <ExpandedWindow
+          companion={companion}
           script={script}
           frame={frame}
           graph={shownGraph}

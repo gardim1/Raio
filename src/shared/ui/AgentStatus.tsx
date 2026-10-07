@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import { useSurfaceVisible } from '../motion/surfaceVisibility';
 import { AGENT_LABEL } from '../../features/session/model/events';
 import type { AgentId, AgentStatusState } from '../../features/session/model/script';
 import type { CompanionPresence } from '../../features/modes/companionPresence';
@@ -33,10 +34,12 @@ export interface AgentStatusProps {
  * the label swaps with a 6px rise + 3px blur (450ms).
  */
 export const AgentStatus = ({ state, agent, label, companion }: AgentStatusProps) => {
+  const visible = useSurfaceVisible();
   const text = label ?? companion?.label ?? statusLabel(state, agent);
   const measure = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number>();
   useLayoutEffect(() => {
+    if (!visible) return;
     const update = () => setWidth(measure.current?.offsetWidth);
     update();
     // Re-measure once web fonts are ready; measuring with the fallback font clips the label.
@@ -45,7 +48,7 @@ export const AgentStatus = ({ state, agent, label, companion }: AgentStatusProps
     return () => {
       alive = false;
     };
-  }, [text]);
+  }, [text, visible]);
   return (
     <div className={`status status--${state}`} data-presence={companion?.state} title={companion?.description} aria-label={companion?.description} role="status" aria-live="polite">
       <span className="status__dot" aria-hidden>{companion?.state === 'unknown' ? '?' : companion?.state === 'disconnected' ? '−' : null}</span>
