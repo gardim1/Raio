@@ -27,6 +27,13 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(3600);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(3600);
 const HOUSEKEEPING_CATCH_UP: Duration = Duration::from_secs(60);
 pub const INGESTED_EVENT: &str = "events-ingested";
+const CONNECTIONS_FILE: &str = "connections.json";
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: makes the next `connections.json` rewrites on this thread fail.
+    static FAIL_CONNECTIONS_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 pub struct Core {
     pub dirs: Dirs,
@@ -166,26 +173,46 @@ impl Core {
                 connections.push(serde_json::json!({ "root": root, "settingsPath": connect::settings_path(&root) }));
             }
             let bytes = serde_json::to_vec(&connections).map_err(|e| e.to_string())?;
-            paths::write_atomic(&self.data.join("connections.json"), &bytes).map_err(|e| e.to_string())
+            #[cfg(test)]
+            if FAIL_CONNECTIONS_WRITE.with(|fail| fail.get()) { return Err("simulated write failure".into()); }
+            paths::write_atomic(&self.data.join(CONNECTIONS_FILE), &bytes).map_err(|e| e.to_string())
         };
         if let Err(error) = refresh() { eprintln!("Raio could not update connections.json: {error}"); }
     }
 
+    /// Before a connection change: withdraw the published list, so a reader (the uninstaller) never trusts a list
+    /// the change could make stale. If the rewrite afterwards fails, the list stays absent, which readers must treat
+    /// as unknown. Best effort, like the rewrite.
+    fn withdraw_connections(&self) {
+        match fs::remove_file(self.data.join(CONNECTIONS_FILE)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => eprintln!("Raio could not withdraw connections.json: {e}"),
+            _ => {}
+        }
+    }
+
     fn connect_at(&self, root: PathBuf, id: String, command: String, previewed: &connect::Preview) -> Result<Project, String> {
-        connect::connect(&root, &command, previewed, &self.backups, now_ms())?;
-        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
-        let project = Project { id, root: root.to_string_lossy().into_owned(), name, connected_at: now_ms() };
-        self.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
+        self.withdraw_connections();
+        let result = (|| {
+            connect::connect(&root, &command, previewed, &self.backups, now_ms())?;
+            let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
+            let project = Project { id, root: root.to_string_lossy().into_owned(), name, connected_at: now_ms() };
+            self.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
+            Ok(project)
+        })();
         self.refresh_connections();
-        let _ = inbox::touch_heartbeat(&self.dirs);
-        Ok(project)
+        if result.is_ok() { let _ = inbox::touch_heartbeat(&self.dirs); }
+        result
     }
 
     fn disconnect_id(&self, project_id: &str) -> Result<(), String> {
         let root = self.connected_root(project_id)?;
-        connect::disconnect(&root, &self.backups, now_ms())?;
-        self.store.lock().map_err(|e| e.to_string())?.disconnect_project(project_id, now_ms()).map_err(|e| e.to_string())?;
+        self.withdraw_connections();
+        let result = (|| {
+            connect::disconnect(&root, &self.backups, now_ms())?;
+            self.store.lock().map_err(|e| e.to_string())?.disconnect_project(project_id, now_ms()).map_err(|e| e.to_string())
+        })();
         self.refresh_connections();
+        result?;
         if let Ok(mut watches) = self.watches.lock() { watches.remove(project_id); }
         Ok(())
     }
@@ -487,6 +514,24 @@ mod tests {
         assert_eq!(manifest(), serde_json::json!([]));
         assert!(core.store.lock().unwrap().connected_projects().unwrap().is_empty());
         assert!(!fs::read_dir(data.path()).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    fn a_failed_connections_rewrite_leaves_no_stale_list_behind() {
+        let (data, core) = open();
+        let path = data.path().join(CONNECTIONS_FILE);
+        assert_eq!(fs::read(&path).unwrap(), b"[]", "startup publishes the empty list");
+        let root = tempfile::tempdir().unwrap();
+        let root = paths::project_root(root.path()).unwrap();
+        let id = project_id(&root);
+        let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), &id, &root);
+        let preview = connect::preview(&root, &command).unwrap();
+        FAIL_CONNECTIONS_WRITE.with(|fail| fail.set(true));
+        core.connect_at(root, id.clone(), command, &preview).unwrap();
+        assert!(!path.exists(), "the old empty list must not survive a connect whose rewrite failed");
+        FAIL_CONNECTIONS_WRITE.with(|fail| fail.set(false));
+        core.disconnect_id(&id).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"[]");
     }
 
     #[test]

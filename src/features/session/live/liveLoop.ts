@@ -25,9 +25,12 @@ const IDLE_FRAME_MS = 33;
  * Returns a function that cancels the pending frame.
  */
 export const runLiveLoop = ({ read, write, ctx, schedule, paint, idleFrameMs = IDLE_FRAME_MS }: LiveLoopOptions): (() => void) => {
+  if (!ctx.visible) return () => {};
+  let disposed = false;
   let handle = 0;
   let lastPaint = -Infinity;
   const tick = (now: number): void => {
+    if (disposed || !ctx.visible) return;
     const next = stepLive(read(), now, ctx);
     write(next);
     const settled = isSettled(next, ctx.reducedMotion);
@@ -39,5 +42,5 @@ export const runLiveLoop = ({ read, write, ctx, schedule, paint, idleFrameMs = I
     if (!settled) handle = schedule.request(tick);
   };
   handle = schedule.request(tick);
-  return () => schedule.cancel(handle);
+  return () => { disposed = true; schedule.cancel(handle); };
 };

@@ -7,11 +7,13 @@ import { statusLabel } from '../../shared/ui/AgentStatus';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
 import { type Presence } from './presence';
+import type { CompanionPresence } from './companionPresence';
 import { MiniSurface } from './MiniSurface';
 import { useSessionSnapshot } from '../../platform/BridgeContext';
 import { lastRecordedSession } from '../session/model/lastRecordedSession';
 
 export interface MiniPlayerProps {
+  readonly companion?: CompanionPresence;
   readonly script: ChoreographyScript;
   readonly frame: FrameState;
   readonly graph: ArchitectureGraph;
@@ -31,11 +33,11 @@ export interface MiniPlayerProps {
  * Mini Player — a calm picture-in-picture window (380×250 default; 300–560 × 200–380).
  * Drag by the header, resize from the corner; optionally always-on-top (pin).
  */
-export const MiniPlayer = ({ script, frame, graph, project, presence, pinned, replay, stateLabel, onTogglePin, onExpand, onCollapse, onViewChanges }: MiniPlayerProps) => {
+export const MiniPlayer = ({ script, frame, graph, project, presence, companion, pinned, replay, stateLabel, onTogglePin, onExpand, onCollapse, onViewChanges }: MiniPlayerProps) => {
   const { ui } = frame;
   const recorded = useSessionSnapshot();
   return (
-    <MiniSurface project={project} projectTitle={lastRecordedSession(recorded?.log ?? null)} status={ui.status} stateLabel={stateLabel ?? statusLabel(ui.status, script.agent)} pinned={pinned}
+    <MiniSurface companion={companion} project={project} projectTitle={lastRecordedSession(recorded?.log ?? null, undefined, { live: !replay && script.live?.open === true })} status={ui.status} stateLabel={stateLabel ?? statusLabel(ui.status, script.agent)} pinned={pinned}
       onTogglePin={onTogglePin} onExpand={onExpand} onCollapse={onCollapse} footer={replay ? (
         <div className="mini__foot mini__foot--replay">{replay}</div>
       ) : presence.cta !== 'hidden' ? (

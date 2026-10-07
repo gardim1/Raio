@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useSurfaceStore } from '../../shared/motion/visibleStore';
+import { useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { useBridge } from '../../platform/BridgeContext';
 import type { ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { Button } from '../../shared/ui/Button';
@@ -33,8 +35,9 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
   readonly map?: PreviewMapState;
 }) => {
   const review = useRef<HTMLDivElement>(null);
+  const visible = useSurfaceVisible();
   useLayoutEffect(() => {
-    if (!sidebar) return;
+    if (!sidebar || !visible) return;
     const element = review.current;
     const scroller = element?.closest<HTMLElement>('.sidebar__scroll');
     if (!element || !scroller) return;
@@ -48,7 +51,7 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
     observer?.observe(scroller);
     return () => observer?.disconnect();
-  }, [sidebar, preview]);
+  }, [sidebar, preview, visible]);
   return (
   <div ref={review} className={`connect connect--review${sidebar ? ' connect--sidebar-review' : ''}`}>
     <div className="connect__review-content">
@@ -78,7 +81,7 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
  */
 export const ConnectPanel = ({ connector, initialRoot, onClose }: { readonly connector: Connector; readonly initialRoot?: string; readonly onClose?: () => void }) => {
   const bridge = useBridge();
-  const project = useSyncExternalStore(bridge.subscribe, connector.project, connector.project);
+  const project = useSurfaceStore(bridge.subscribe, connector.project);
   const [step, setStep] = useState<Step>(initialRoot ? { kind: 'loading', root: initialRoot, map: { kind: 'loading' } } : { kind: 'idle' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

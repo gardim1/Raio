@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useState } from 'react';
+import { useSurfaceStore } from '../../shared/motion/visibleStore';
 import { useBridge } from '../../platform/BridgeContext';
 import type { ConnectedProject, ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { ConnectReview } from './ConnectPanel';
@@ -6,7 +7,7 @@ import { ConnectReview } from './ConnectPanel';
 /** "Connected to <project> · Disconnect" at the end of the sidebar (native only). */
 export const ConnectionFooter = ({ connector }: { readonly connector: Connector }) => {
   const bridge = useBridge();
-  const project = useSyncExternalStore(bridge.subscribe, connector.project, connector.project);
+  const project = useSurfaceStore(bridge.subscribe, connector.project);
   // A new connection identity owns new local state, so returning to a project cannot revive an old preview.
   return project ? <ConnectedFooter key={JSON.stringify([project.id, project.root])} project={project} connector={connector} /> : null;
 };
@@ -14,7 +15,7 @@ export const ConnectionFooter = ({ connector }: { readonly connector: Connector 
 const ConnectedFooter = ({ project, connector }: { readonly project: ConnectedProject; readonly connector: Connector }) => {
   const bridge = useBridge();
   const readHooks = () => bridge.projectHooksState?.() ?? 'unknown';
-  const hooks = useSyncExternalStore(bridge.subscribe, readHooks, readHooks);
+  const hooks = useSurfaceStore(bridge.subscribe, readHooks);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<ConnectPreview | null>(null);

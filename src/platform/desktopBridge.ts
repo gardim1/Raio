@@ -4,6 +4,7 @@ import type { ProjectInventory } from '../features/project/projectInventory';
 import type { ProjectInsights } from '../features/project/projectInsights';
 import type { SessionLog } from '../features/session/model/events';
 import type { ProjectMapSnapshot } from '../features/project/projectMap';
+import type { PresenceInput } from '../features/modes/companionPresence';
 
 /** Where the data on screen comes from. Fixture data must never be presented as real agent telemetry. */
 export type DataProvenance = 'fixture' | 'live';
@@ -89,6 +90,8 @@ export interface DesktopBridge {
   previewProjectMap?(root: string): Promise<ProjectMapSnapshot | null>;
   /** Cached read-only state of the connected project's Raio handlers; absent on older adapters. */
   projectHooksState?(): ProjectHooksState;
+  /** Project-wide recorded facts, including failed edits and earlier-session history. */
+  projectPresence?(): PresenceInput;
   /** Notifies when `currentSession()` may return something new. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /**

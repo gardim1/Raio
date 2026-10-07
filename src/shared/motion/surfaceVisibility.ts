@@ -7,13 +7,15 @@ import { useSyncExternalStore } from 'react';
  */
 let nativeVisible = true;
 const listeners = new Set<() => void>();
-const notify = () => listeners.forEach((l) => l());
+const notify = () => {
+  if (typeof document !== 'undefined') document.documentElement.classList.toggle('surface-hidden', !isSurfaceVisible());
+  listeners.forEach((l) => l());
+};
 
 export const setNativeSurfaceVisible = (visible: boolean): void => {
   if (nativeVisible === visible) return;
   nativeVisible = visible;
   // CSS animations (breathing, shimmer, spinners) keep compositing in a hidden webview; pause them too.
-  if (typeof document !== 'undefined') document.documentElement.classList.toggle('surface-hidden', !visible);
   notify();
 };
 
@@ -21,7 +23,8 @@ const pageVisible = (): boolean => typeof document === 'undefined' || document.v
 
 export const isSurfaceVisible = (): boolean => nativeVisible && pageVisible();
 
-const subscribe = (listener: () => void): (() => void) => {
+export const subscribeSurfaceVisibility = (listener: () => void): (() => void) => {
+  if (typeof document !== 'undefined') document.documentElement.classList.toggle('surface-hidden', !isSurfaceVisible());
   listeners.add(listener);
   if (listeners.size === 1 && typeof document !== 'undefined') document.addEventListener('visibilitychange', notify);
   return () => {
@@ -30,4 +33,4 @@ const subscribe = (listener: () => void): (() => void) => {
   };
 };
 
-export const useSurfaceVisible = (): boolean => useSyncExternalStore(subscribe, isSurfaceVisible, () => true);
+export const useSurfaceVisible = (): boolean => useSyncExternalStore(subscribeSurfaceVisibility, isSurfaceVisible, () => true);

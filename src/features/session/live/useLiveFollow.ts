@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { frozenClock } from '../../../shared/motion/frozenClock';
-import { useSurfaceVisible } from '../../../shared/motion/surfaceVisibility';
+import { isSurfaceVisible, useSurfaceVisible } from '../../../shared/motion/surfaceVisibility';
 import type { ArchitectureGraph } from '../../architecture/model/types';
 import { compileReplay } from '../model/compileReplay';
 import type { SessionLog } from '../model/events';
@@ -52,6 +52,7 @@ export const useLiveFollow = (source: LiveFollowSource | null): LiveFollow | nul
     const now = performance.now();
     if (!state.current) state.current = startLive(script, now);
     else if (state.current.script !== script) state.current = retargetLive(state.current, script, now);
+    if (state.current.stale && visible) state.current = stepLive(state.current, now, { visible: true, reducedMotion: prefersReducedMotion() });
   }
 
   useEffect(() => {
@@ -63,13 +64,18 @@ export const useLiveFollow = (source: LiveFollowSource | null): LiveFollow | nul
       state.current = stepLive(state.current, performance.now(), ctx);
       return;
     }
-    return runLiveLoop({
+    const stop = runLiveLoop({
       read: () => state.current!,
       write: (next) => (state.current = next),
       ctx,
       schedule: { request: (cb) => requestAnimationFrame(cb), cancel: (h) => cancelAnimationFrame(h) },
       paint: () => repaint((n) => n + 1),
     });
+    return () => {
+      stop();
+      // Activity preserves refs while cleaning effects: mark the director stale before it is revealed.
+      if (!isSurfaceVisible()) state.current = stepLive(state.current!, performance.now(), { visible: false, reducedMotion: reduced });
+    };
   }, [script, visible, staticMode]);
 
   if (!script) return null;

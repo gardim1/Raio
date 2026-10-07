@@ -85,6 +85,17 @@ describe('detectTechnologies: engines come only from compose images or the prism
 describe('describeArea', () => {
   const t = (kind: InventoryManifest['kind'], facts: Record<string, string[]>) => detectTechnologies([m(kind, facts)]);
 
+  it('keeps integration clients literal and can show database drivers alongside tools in the project summary', () => {
+    const found = t('python', { packages: ['fastapi', 'sqlalchemy', 'alembic', 'psycopg', 'google-auth', 'openai'] });
+    expect(describeArea('Integrations', found)).toBe('Integrations · google-auth, openai');
+    expect(describeArea('Database', found, { includeDrivers: true })).toBe('Database · Alembic, SQLAlchemy, psycopg');
+    expect(found.filter((tech) => ['google-auth', 'openai'].includes(tech.name))).toEqual([
+      { area: 'Integrations', name: 'google-auth', role: 'driver', via: 'manifest', manifestPath: 'manifest' },
+      { area: 'Integrations', name: 'openai', role: 'driver', via: 'manifest', manifestPath: 'manifest' },
+    ]);
+    expect(found.some((tech) => tech.role === 'engine')).toBe(false);
+  });
+
   it('puts the engine of the datasource provider in parentheses after the tool', () => {
     expect(describeArea('Database', t('prisma', { provider: ['postgresql'], models: ['User'] }))).toBe('Database · Prisma (PostgreSQL)');
   });

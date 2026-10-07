@@ -11,9 +11,11 @@ import type { ChoreographyScript } from '../session/model/script';
 import { useSessionUi } from '../session/store/sessionStore';
 import { islandOrbBobs, islandOrbState } from './islandOrbState';
 import { CROSSFADE, ISLAND_TRANSITION, type Presence } from './presence';
+import type { CompanionPresence } from './companionPresence';
 import { useSessionMeta } from './sessionMeta';
 
 export interface IslandModeProps {
+  readonly companion?: CompanionPresence;
   readonly script: ChoreographyScript;
   readonly frame: FrameState;
   readonly presence: Presence;
@@ -26,7 +28,7 @@ export interface IslandModeProps {
  * Island Mode — a 34px capsule docked to the top edge. Hover springs it open to 384×156
  * (stiffness 420, damping 34) to reveal agent, task, area, status and any warning.
  */
-export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onViewChanges }: IslandModeProps) => {
+export const IslandMode = ({ script, frame, presence, companion, onPinMini, onExpand, onViewChanges }: IslandModeProps) => {
   const [open, setOpen] = useState(false);
   const { ui, orb } = frame;
   const { project } = useSessionMeta();
@@ -36,7 +38,7 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
   const working = ui.status === 'working';
   const finished = ui.finished;
   const ready = ui.status === 'ready' && !replaying;
-  const collapsedLabel = replaying
+  const collapsedLabel = !replaying && companion ? companion.label : replaying
     ? 'Replaying'
     : working
       ? `${agent} · ${presence.activeNodeLabel ?? 'starting'}`
@@ -61,17 +63,18 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
         onFocus={() => setOpen(true)}
         onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOpen(false)}
         tabIndex={0}
-        aria-label={`Raio: ${collapsedLabel}`}
+        aria-label={`Raio: ${companion?.description ?? collapsedLabel}`}
+        title={companion?.description}
         aria-expanded={open}
       >
         <AnimatePresence mode="popLayout" initial={false}>
           {open ? (
             <motion.div key="open" className="island__open" initial={{ opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)', transition: { ...CROSSFADE, delay: 0.08 } }} exit={{ opacity: 0, transition: { duration: 0.12 } }}>
               <div className="island__row">
-                <MiniOrb size={16} glow={0.3 + orb.glowCool * 0.6} warm={orb.glowWarm} />
+                <MiniOrb companion={companion} size={16} glow={0.3 + orb.glowCool * 0.6} warm={orb.glowWarm} />
                 <span className="island__title">{ready ? 'Raio' : agentFull}</span>
                 <span className="island__spacer" />
-                <AgentStatus state={ui.status} agent={script.agent} />
+                <AgentStatus state={ui.status} agent={script.agent} companion={companion} />
               </div>
               <div className={`island__task${ready ? ' island__task--muted' : ''}`}>{ready ? `No agent running in ${project}` : script.task}</div>
               <div className="island__row island__row--meta">
@@ -108,9 +111,9 @@ export const IslandMode = ({ script, frame, presence, onPinMini, onExpand, onVie
             </motion.div>
           ) : (
             <motion.div key="closed" className="island__closed" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { ...CROSSFADE, delay: 0.06 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
-              <MiniOrb size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={islandOrbBobs(orbState)} restartKey={orbState} />
-              <span className="island__label">{collapsedLabel}</span>
-              {ui.activeRisk && working && !replaying ? <i className="island__dot island__dot--warning" /> : <i className={`island__dot island__dot--${dotClass}`} />}
+              <MiniOrb companion={companion} size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={islandOrbBobs(orbState)} restartKey={orbState} />
+              <span className="island__label">{companion?.state === 'unknown' ? '? ' : companion?.state === 'disconnected' ? '− ' : ''}{collapsedLabel}</span>
+              {ui.activeRisk && working && !replaying ? <i data-presence={companion?.state} className="island__dot island__dot--warning" /> : <i data-presence={companion?.state} className={`island__dot island__dot--${dotClass}`} />}
             </motion.div>
           )}
         </AnimatePresence>

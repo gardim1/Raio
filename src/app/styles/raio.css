@@ -495,3 +495,21 @@ svg text { font-family: var(--raio-font-ui); }
 .link-btn:disabled { opacity: 0.5; cursor: default; }
 .evidence__warn { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: #ffd9a3; }
 .island--idle { padding: 0; color: inherit; font: inherit; cursor: pointer; }
+
+/* Existing tokens express recorded companion state, independently of animation/replay status. */
+[data-presence] { --presence-color: var(--raio-color-text-primary); --presence-fill: var(--raio-color-pill-neutral-fill); --presence-border: var(--raio-color-border-control); }
+[data-presence="working"] { --presence-color: var(--raio-color-accent-cool); --presence-fill: var(--raio-color-pill-cool-fill); --presence-border: var(--raio-color-pill-cool-stroke); }
+[data-presence="attention"] { --presence-color: var(--raio-color-accent-warning); --presence-fill: var(--raio-color-pill-warning-fill); --presence-border: var(--raio-color-pill-warning-stroke); }
+[data-presence="failure"] { --presence-color: var(--raio-color-accent-danger); --presence-fill: var(--raio-color-pill-danger-fill); --presence-border: var(--raio-color-pill-danger-stroke); }
+.status[data-presence] { color: var(--raio-color-text-primary); background: var(--presence-fill); border-color: var(--presence-border); }
+.status[data-presence] .status__dot, .mini__status[data-presence], .island__dot[data-presence] { background: var(--presence-color); }
+.status[data-presence]:not([data-presence="working"]) .status__dot::after { animation: none; content: none; }
+.status[data-presence]:not([data-presence="working"]) .status__label { animation: none; background: none; color: inherit; }
+.status[data-presence="unknown"] .status__dot, .status[data-presence="disconnected"] .status__dot, .mini__status[data-presence="unknown"], .mini__status[data-presence="disconnected"] { width: 12px; height: 12px; line-height: 12px; font-size: 12px; text-align: center; color: var(--presence-color); background: transparent; }
+.mini-orb[data-presence] { background: radial-gradient(circle at 38% 32%, #fff, var(--raio-color-text-primary) 30%, var(--presence-color)); box-shadow: 0 0 9px var(--presence-color) !important; }
+.presence-record--historical { opacity: 0.6; }
+/* Page visibility and native visibility share this pause boundary, including the browser harness. */
+html.surface-hidden *, html.surface-hidden *::before, html.surface-hidden *::after { animation-play-state: paused !important; transition: none !important; }
+
+/* Recorded running checks do not keep spinning once companion activity expires. */
+[data-companion-state]:not([data-companion-state="working"]) .icon-spin { animation: none; }
