@@ -63,7 +63,7 @@ export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned,
       <header className="mini__head" onPointerDown={begin('move')}>
         <span className={`mini__status mini__status--${status}`} data-presence={companion?.state} role="img" aria-label={companion?.description ?? stateLabel} title={companion?.description} aria-hidden={companion ? undefined : true}>{companion?.state === 'unknown' ? '?' : companion?.state === 'disconnected' ? '−' : null}</span>
         <span className="mini__project" title={projectTitle}>{project}</span>
-        <span className="mini__state" title={companion?.description}>{companion && status !== 'working' && !/Replay/.test(stateLabel) ? companion.label : stateLabel}</span>
+        <span className="mini__state" title={companion?.description}>{companion && companion.activeUntil === null && !/Replay/.test(stateLabel) ? companion.label : stateLabel}</span>
         <span className="mini__spacer" />
         <IconButton label={pinned ? 'Unpin (stop floating on top)' : 'Keep on top'} active={pinned} onClick={onTogglePin}><PinIcon filled={pinned} /></IconButton>
         <IconButton label="Tuck into Island" onClick={onCollapse}><CollapseIcon /></IconButton>
