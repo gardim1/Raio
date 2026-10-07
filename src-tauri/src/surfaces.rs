@@ -163,6 +163,9 @@ fn prevents_exit_on(windows: bool, code: Option<i32>) -> bool {
 /// Also keeps Raio alive when the last window goes (e.g. the Mini Player of a `--surface=mini` launch
 /// closed with Alt+F4): only an explicit exit, the tray's "Quit Raio" (`app.exit(0)`), ends the app.
 pub fn on_run_event(app: &AppHandle, event: &tauri::RunEvent) {
+    if let tauri::RunEvent::WindowEvent { label, event, .. } = event {
+        island::on_window_event(app, label, event);
+    }
     match event {
         tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if minimizes_on_close(label) => {
             api.prevent_close();

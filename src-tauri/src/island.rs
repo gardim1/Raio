@@ -3,7 +3,7 @@
 //! so clicks reach the window beneath. A low-rate cursor poll toggles that, and runs only while the Island is visible.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -12,7 +12,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::surfaces::ISLAND;
 
-const POLL: Duration = Duration::from_millis(33);
+const NEAR_POLL: Duration = Duration::from_millis(33);
+// An arrival from far away waits at most this sleep before the next sample, excluding OS/IPC delays.
+const FAR_POLL: Duration = Duration::from_millis(80);
+const NEAR_PADDING: f64 = 48.0;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct HitRect {
@@ -25,6 +28,63 @@ pub struct HitRect {
 impl HitRect {
     pub fn contains(&self, x: f64, y: f64) -> bool {
         x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
+    }
+}
+
+fn poll_delay(rect: Option<HitRect>, local_cursor: Option<(f64, f64)>) -> Duration {
+    if let (Some(rect), Some((x, y))) = (rect, local_cursor)
+        && (HitRect { x: rect.x - NEAR_PADDING, y: rect.y - NEAR_PADDING, width: rect.width + 2.0 * NEAR_PADDING, height: rect.height + 2.0 * NEAR_PADDING }).contains(x, y)
+    {
+        NEAR_POLL
+    } else {
+        FAR_POLL
+    }
+}
+
+/// Last successfully submitted click-through state. Failed dispatches must retry on the next tick.
+#[derive(Default)]
+struct HoverState {
+    inside: Option<bool>,
+}
+
+impl HoverState {
+    fn update<E>(&mut self, inside: bool, set_ignore: impl FnOnce(bool) -> Result<(), E>) -> bool {
+        if self.inside == Some(inside) || set_ignore(!inside).is_err() {
+            return false;
+        }
+        self.inside = Some(inside);
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WindowGeometry {
+    origin: (i32, i32),
+    scale: f64,
+}
+
+/// A cache local to the single poll thread. An event racing with sampling changes the epoch and forces
+/// another read next tick. Errors are never cached, and an invalidated generation never uses old geometry.
+#[derive(Default)]
+struct GeometryCache(Option<(u64, WindowGeometry)>);
+
+impl GeometryCache {
+    fn get<E>(&mut self, epoch: u64, sample: impl FnOnce() -> Result<WindowGeometry, E>) -> Option<WindowGeometry> {
+        if self.0.is_none_or(|(cached_epoch, _)| cached_epoch != epoch) {
+            self.0 = sample().ok().map(|geometry| (epoch, geometry));
+        }
+        self.0.map(|(_, geometry)| geometry)
+    }
+}
+
+fn invalidates_geometry(label: &str, event: &tauri::WindowEvent) -> bool {
+    label == ISLAND && matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. } | tauri::WindowEvent::Destroyed)
+}
+
+/// Reuse the core's RunEvent hook, including destruction/recreation, without adding per-show listeners.
+pub fn on_window_event(app: &AppHandle, label: &str, event: &tauri::WindowEvent) {
+    if invalidates_geometry(label, event) {
+        app.state::<IslandState>().geometry_epoch.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -52,6 +112,7 @@ impl PollGate {
 pub struct IslandState {
     hit: Mutex<Option<HitRect>>,
     gate: PollGate,
+    geometry_epoch: AtomicU64,
 }
 
 #[tauri::command]
@@ -84,29 +145,33 @@ pub fn ensure_cursor_watch(app: &AppHandle) {
     }
     let app = app.clone();
     thread::spawn(move || {
-        let mut inside_before: Option<bool> = None;
+        let mut hover = HoverState::default();
+        let mut geometry = GeometryCache::default();
         loop {
             let Some(window) = app.get_webview_window(ISLAND).filter(|w| should_poll(true, w.is_visible())) else {
-                inside_before = None;
+                hover = HoverState::default();
+                geometry = GeometryCache::default();
                 if app.state::<IslandState>().gate.release_or_continue(|| island_visible(&app)) {
                     continue;
                 }
                 return;
             };
             let rect = app.state::<IslandState>().hit.lock().ok().and_then(|h| *h);
-            let inside = match (rect, window.cursor_position(), window.outer_position(), window.scale_factor()) {
-                (Some(rect), Ok(cursor), Ok(origin), Ok(scale)) => {
-                    let (x, y) = to_local((cursor.x, cursor.y), (origin.x, origin.y), scale);
-                    rect.contains(x, y)
-                }
-                _ => false,
-            };
-            if inside_before != Some(inside) {
-                let _ = window.set_ignore_cursor_events(!inside);
+            let local_cursor = rect.and_then(|_| {
+                let epoch = app.state::<IslandState>().geometry_epoch.load(Ordering::Acquire);
+                let geometry = geometry.get(epoch, || {
+                    let origin = window.outer_position()?;
+                    let scale = window.scale_factor()?;
+                    Ok::<_, tauri::Error>(WindowGeometry { origin: (origin.x, origin.y), scale })
+                })?;
+                let cursor = window.cursor_position().ok()?;
+                Some(to_local((cursor.x, cursor.y), geometry.origin, geometry.scale))
+            });
+            let inside = rect.zip(local_cursor).is_some_and(|(rect, (x, y))| rect.contains(x, y));
+            if hover.update(inside, |ignore| window.set_ignore_cursor_events(ignore)) {
                 let _ = window.emit("island-pointer", inside);
-                inside_before = Some(inside);
             }
-            thread::sleep(POLL);
+            thread::sleep(poll_delay(rect, local_cursor));
         }
     });
 }
@@ -114,6 +179,83 @@ pub fn ensure_cursor_watch(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_through_changes_only_when_inside_changes() {
+        let mut hover = HoverState::default();
+        let mut flags = Vec::new();
+        for inside in [false, false, true, true, false, false] {
+            hover.update(inside, |ignore| { flags.push(ignore); Ok::<_, ()>(()) });
+        }
+        assert_eq!(flags, [true, false, true]);
+    }
+
+    #[test]
+    fn a_failed_click_through_dispatch_is_retried_without_publishing_the_change() {
+        let mut hover = HoverState::default();
+        assert!(!hover.update(true, |_| Err(())));
+        assert!(hover.update(true, |ignore| { assert!(!ignore); Ok::<_, ()>(()) }));
+        assert!(!hover.update::<()>(true, |_| panic!("unchanged state must not dispatch")));
+    }
+
+    #[test]
+    fn adaptive_poll_stays_fast_in_and_near_the_capsule_and_bounds_far_away_waits() {
+        let rect = Some(HitRect { x: 18.0, y: 0.0, width: 384.0, height: 156.0 });
+        for point in [(20.0, 20.0), (402.0, 156.0), (450.0, 204.0), (-30.0, -48.0)] {
+            assert_eq!(poll_delay(rect, Some(point)), Duration::from_millis(33));
+        }
+        for point in [(450.1, 204.0), (-30.1, 10.0), (20.0, 204.1), (5000.0, 5000.0)] {
+            assert_eq!(poll_delay(rect, Some(point)), Duration::from_millis(80));
+        }
+        assert_eq!(poll_delay(None, Some((20.0, 20.0))), Duration::from_millis(80));
+        assert_eq!(poll_delay(rect, None), Duration::from_millis(80));
+    }
+
+    #[test]
+    fn geometry_is_read_once_until_a_move_or_scale_epoch_changes() {
+        let mut cache = GeometryCache::default();
+        let first = WindowGeometry { origin: (-1000, 35), scale: 1.0 };
+        let moved = WindowGeometry { origin: (1000, 0), scale: 1.75 };
+        assert_eq!(cache.get(0, || Ok::<_, ()>(first)), Some(first));
+        assert_eq!(cache.get::<()>(0, || panic!("idle ticks must not re-read geometry")), Some(first));
+        assert_eq!(cache.get(1, || Ok::<_, ()>(moved)), Some(moved));
+        // An event during sampling advances the epoch; the next tick refreshes again.
+        assert_eq!(cache.get(2, || Ok::<_, ()>(first)), Some(first));
+    }
+
+    #[test]
+    fn failed_geometry_reads_are_retried_and_do_not_reuse_stale_geometry() {
+        let mut cache = GeometryCache::default();
+        let geo = WindowGeometry { origin: (0, 0), scale: 1.0 };
+        assert_eq!(cache.get(0, || Ok::<_, ()>(geo)), Some(geo));
+        assert_eq!(cache.get(1, || Err(())), None);
+        assert_eq!(cache.get(1, || Ok::<_, ()>(geo)), Some(geo));
+    }
+
+    #[test]
+    fn only_island_geometry_events_invalidate_the_cache() {
+        use tauri::{PhysicalPosition, PhysicalSize, WindowEvent};
+        let events = [
+            WindowEvent::Moved(PhysicalPosition::new(-1000, 35)),
+            WindowEvent::Destroyed,
+        ];
+        // The upstream DPI variant is non-exhaustive and cannot be constructed here.
+        // Scale refresh is exercised by the epoch/cache and coordinate tests above.
+        for event in events {
+            assert!(invalidates_geometry(ISLAND, &event));
+            assert!(!invalidates_geometry("expanded", &event));
+            assert!(!invalidates_geometry("mini", &event));
+        }
+        assert!(!invalidates_geometry(ISLAND, &WindowEvent::Focused(false)));
+        assert!(!invalidates_geometry(ISLAND, &WindowEvent::Resized(PhysicalSize::new(420, 184))));
+    }
+
+    #[test]
+    fn local_coordinates_support_100_150_and_175_percent_with_negative_monitor_origin() {
+        assert_eq!(to_local((-580.0, 245.0), (-1000, 35), 1.0), (420.0, 210.0));
+        assert_eq!(to_local((-580.0, 245.0), (-1000, 35), 1.5), (280.0, 140.0));
+        assert_eq!(to_local((-580.0, 245.0), (-1000, 35), 1.75), (240.0, 120.0));
+    }
 
     #[test]
     fn hit_rect_contains_its_edges_and_nothing_outside() {
