@@ -36,6 +36,8 @@ Start with one architect. After architecture approval, use at most one implement
 - Read the configured local author name and email before committing. Do not invent an email, copy another project's identity, or change global Git identity. Stop and ask if the intended owner identity cannot be established.
 - Preserve other humans' existing authorship and third-party license notices. Do not rewrite history to relabel somebody else's work.
 - Review the staged diff and final commit message. After a commit, inspect `git show -s --format=fuller HEAD` and the complete message. A successful command alone does not establish correct attribution.
+- The owner's identity for new commits is the one set in this repository's local Git config (`git config --local user.name/user.email`); use it as both author and committer. It replaces any earlier email guidance for future commits only; never rewrite older commits to match it.
+- Commit messages: short, natural Portuguese describing the actual change (for example "abrir o Raio direto na pasta do projeto"). Conventional Commits prefixes are not required; vague messages such as "ajustes" are not acceptable.
 - Use small, descriptive commits. No force-push, destructive reset/clean, history rewrite, or `--no-verify` to skip checks. No automatic release, tag, or public artifact upload without owner approval.
 
 ## Engineering process
