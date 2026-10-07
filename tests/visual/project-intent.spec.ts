@@ -58,3 +58,23 @@ test('a late cancelled folder preview cannot overwrite the newer intent', async 
   await expect(fixture.locator('.connect__body code')).toHaveText('C:/fixture/new/.claude/settings.local.json');
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
 });
+
+test('an unconnected folder intent keeps Expanded chrome during review and returns to the selected project on Cancel', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 650 });
+  const fixture = await mount(page, { connected: true });
+  await expect(fixture.locator('.titlebar__project')).toHaveText('Fixture A');
+  await fixture.getByRole('button', { name: 'Intent for new folder', exact: true }).click();
+  await expect(fixture.locator('.expanded .titlebar')).toBeVisible();
+  await expect(fixture.locator('.titlebar__project')).toHaveText('new');
+  await expect(fixture.locator('.titlebar__task')).toContainText('Review connection');
+  await expect(fixture.locator('.connect--review')).toBeVisible();
+  await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
+  const review = fixture.locator('.connect--review');
+  await review.getByRole('button', { name: 'Connect', exact: true }).scrollIntoViewIfNeeded();
+  await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(fixture.locator('.titlebar')).toBeInViewport({ ratio: 1 });
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(fixture.locator('.titlebar__project')).toHaveText('Fixture A');
+  await expect(fixture.locator('.connect--review')).toHaveCount(0);
+  await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
+});

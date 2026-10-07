@@ -4,7 +4,8 @@ import { useCompanionPresence } from '../features/modes/presenceClock';
 import type { CompanionPresence } from '../features/modes/companionPresence';
 import { useSurfaceVisible } from '../shared/motion/surfaceVisibility';
 import { useSurfaceStore } from '../shared/motion/visibleStore';
-import { ExpandedWindow } from '../features/modes/ExpandedWindow';
+import { TitleBar } from '../features/panel/TitleBar';
+import { ExpandedWindow, expandedWindowChrome } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
 import { CTA_PROMINENT_SECONDS, derivePresence } from '../features/modes/presence';
@@ -23,7 +24,7 @@ import { useSessionUi } from '../features/session/store/sessionStore';
 import { useBridge, useProjectMapSnapshot, useSessionSnapshot } from '../platform/BridgeContext';
 import { ProjectOnlyView } from '../features/project/ProjectOnlyView';
 import { NativeSurfaceEffects } from '../platform/NativeSurfaceEffects';
-import type { SessionSnapshot, Surface } from '../platform/desktopBridge';
+import type { Connector, SessionSnapshot, Surface } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
 import { followProjectIntents, isWindowsRoot, sameProjectRoot } from '../platform/projectIntent';
 
@@ -71,7 +72,7 @@ export const App = ({ underlay }: AppProps) => {
       <Activity mode={visible ? 'visible' : 'hidden'}>
       {underlay}
       {intent && bridge.connector ? (
-        <div className="app__empty"><ConnectPanel key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} /></div>
+        <ExpandedConnectView key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} />
       ) : snapshot ? (
         <Surfaces snapshot={snapshot} companion={companion} />
       ) : projectSnapshot ? (
@@ -79,7 +80,7 @@ export const App = ({ underlay }: AppProps) => {
       ) : (
         <div className="app__empty">
           {bridge.connector && mode === 'expanded' ? (
-            <ConnectPanel connector={bridge.connector} />
+            <ExpandedConnectView connector={bridge.connector} />
           ) : bridge.connector && mode === 'island' ? (
             <IdleIsland companion={companion} onOpen={() => bridge.showSurface('expanded')} />
           ) : bridge.connector ? (
@@ -95,6 +96,29 @@ export const App = ({ underlay }: AppProps) => {
         </div>
       )}
       </Activity>
+    </div>
+  );
+};
+
+/** Expanded keeps its native window controls throughout folder choice and mandatory Connect review. */
+export const ExpandedConnectView = ({ connector, initialRoot, onClose }: {
+  readonly connector: Connector;
+  readonly initialRoot?: string;
+  readonly onClose?: () => void;
+}) => {
+  const bridge = useBridge();
+  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const previewPresence: CompanionPresence = { state: 'disconnected', label: 'Connect preview', description: 'Connect preview · confirm the settings review to connect this folder', records: [], activeUntil: null };
+  const project = initialRoot ? initialRoot.replaceAll('\\', '/').replace(/\/+$/, '').split('/').at(-1) || initialRoot : 'No project';
+  return (
+    <div className="expanded-dock">
+      <div className="panel expanded" style={{ borderRadius: 28 }}>
+        <TitleBar companion={previewPresence} nativeWindow={nativeWindow} project={project} agent="unknown" task="Review connection"
+          taskVisible taskIsPlaceholder taskPrefix="Project ·" status="ready" statusLabel="Connect preview" />
+        <div className="expanded__connect">
+          <ConnectPanel connector={connector} {...(initialRoot ? { initialRoot } : {})} {...(onClose ? { onClose } : {})} />
+        </div>
+      </div>
     </div>
   );
 };

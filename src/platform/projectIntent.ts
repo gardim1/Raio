@@ -3,6 +3,9 @@ import type { DesktopBridge } from './desktopBridge';
 const rootKey = (root: string, windows: boolean): string => {
   let key = windows ? root.replaceAll('\\', '/').toLowerCase() : root;
   if (windows) key = key.replace(/^\/\/\?\/unc\//, '//').replace(/^\/\/\?\//, '');
+  // Dot components are lexical aliases; never resolve parent components across a possible symlink.
+  const normalized = key.replace(/\/\.(?=\/|$)/g, '');
+  key = normalized || (key.startsWith('/') ? '/' : '');
   return key.length > 1 ? key.replace(/\/+$/, '') : key;
 };
 export const sameProjectRoot = (a: string, b: string, windows: boolean): boolean => rootKey(a, windows) === rootKey(b, windows);

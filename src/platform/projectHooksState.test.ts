@@ -26,7 +26,7 @@ const feed = (read: () => Promise<unknown>) => {
       if (command === 'project_events') return Promise.resolve([] as T);
       if (command === 'project_hooks_state') return read() as Promise<T>;
       if (command === 'disconnect_project') current = null;
-      if (command === 'connect_project') current = project;
+      if (command === 'connect_project') { current = project; return Promise.resolve(project as T); }
       if (command === 'preview_connect') return Promise.resolve({ settingsPath: 'fixture/settings.local.json', before: '{}', after: '{"hooks":{}}', gitIgnored: true } as T);
       return Promise.resolve(undefined as T);
     },

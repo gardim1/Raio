@@ -513,3 +513,9 @@ html.surface-hidden *, html.surface-hidden *::before, html.surface-hidden *::aft
 
 /* Recorded running checks do not keep spinning once companion activity expires. */
 [data-companion-state]:not([data-companion-state="working"]) .icon-spin { animation: none; }
+
+/* Keep the title bar fixed above a scrollable Connect preview on smaller windows. */
+.expanded__connect { display: grid; justify-items: center; align-items: start; min-height: 0; max-height: calc(100vh - 160px); overflow-y: auto; padding: 20px; }
+.expanded__connect .connect__flow { max-height: none; }
+
+html.native.surface-expanded .expanded__connect { flex: 1; max-height: none; }
