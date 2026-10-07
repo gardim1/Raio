@@ -103,10 +103,18 @@ pub fn mark_dropped(dirs: &Dirs, reason: &'static str) -> WriteOutcome {
     let record = || -> std::io::Result<()> {
         fs::create_dir_all(&dirs.dropped)?;
         let bucket = if DROP_REASONS.contains(&reason) { reason } else { "other" };
-        let mut file = fs::File::options().read(true).write(true).create(true).truncate(false)
-            .open(dirs.dropped.join(format!("count-{bucket}")))?;
+        let path = dirs.dropped.join(format!("count-{bucket}"));
+        let (mut file, created) = match fs::File::options().read(true).write(true).create_new(true).open(&path) {
+            Ok(file) => (file, true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (fs::File::options().read(true).write(true).open(&path)?, false),
+            Err(e) => return Err(e),
+        };
         file.try_lock().map_err(std::io::Error::other)?;
-        let count = if file.metadata()?.len() == 0 { 0 } else { read_drop_counter(&mut file)? };
+        let count = if file.metadata()?.len() == 0 {
+            // Only this producer's newly created bucket is known to have no earlier drops.
+            if !created { mark_at_least(dirs); }
+            0
+        } else { read_drop_counter(&mut file)? };
         let next = count.checked_add(1).ok_or_else(|| std::io::Error::other("drop count saturated"))?;
         write_drop_counter(&mut file, next)
         // Closing the handle releases its OS lock, including after an error/process exit.
@@ -498,9 +506,9 @@ mod tests {
             let outcome = mark_dropped(&Dirs::new(&root), "unreadable-payload");
             done.send(outcome).unwrap();
         });
-        // Waiting for the lock would need us to release it. Require completion while it is still held;
-        // the timeout only bounds a broken test, not filesystem latency under parallel contention.
-        let outcome = completed.recv_timeout(Duration::from_secs(60));
+        // Require completion while the lock is held, with a coarse latency bound that tolerates
+        // filesystem contention without allowing an indefinitely stalled producer.
+        let outcome = completed.recv_timeout(Duration::from_secs(10));
         let marked_while_locked = dirs.dropped.join(DROP_AT_LEAST).exists();
         drop(file);
         worker.join().unwrap();
@@ -510,6 +518,19 @@ mod tests {
         for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
         tidy(&dirs, SystemTime::now(), &Policy::default());
         assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true }, "cleanup must not clear evidence of uncounted losses");
+    }
+
+    #[test]
+    fn drop_accounting_recovering_an_existing_empty_counter_preserves_uncertainty() {
+        let (_d, dirs) = fresh();
+        // Interrupted producer: bucket created, but no count/inverse pair reached disk.
+        fs::write(dirs.dropped.join("count-expired"), []).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        assert_eq!(mark_dropped(&dirs, "expired"), WriteOutcome::Dropped("expired"));
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        assert!(dirs.dropped.join(DROP_AT_LEAST).exists());
+        mark_dropped(&dirs, "expired");
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 2, at_least: true });
     }
 
     #[test]
