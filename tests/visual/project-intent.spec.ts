@@ -15,8 +15,8 @@ const mount = async (page: Page, options: { connected?: boolean; startupRoot?: s
 test('startup folder intent previews the map and diff; Cancel and folder choice keep Connect mandatory', async ({ page }) => {
   const fixture = await mount(page, { startupRoot: 'C:/fixture/new' });
   const review = fixture.locator('.connect--review');
-  await expect(review.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
-  await expect(review.getByText('new · No session yet', { exact: true })).toBeVisible();
+  await expect(fixture.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
+  await expect(fixture.getByText('new · No session yet', { exact: true })).toBeVisible();
   await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeInViewport({ ratio: 1 });
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
@@ -43,8 +43,8 @@ test('missing preview-map command shows unavailability alongside the mandatory s
   await fixture.getByRole('button', { name: 'Make map unavailable', exact: true }).click();
   await fixture.getByRole('button', { name: 'Intent for new folder', exact: true }).click();
   const review = fixture.locator('.connect--review');
-  await expect(review.getByText('Map unavailable for this folder', { exact: true })).toBeVisible();
-  await expect(review.getByRole('img', { name: 'Project architecture map' })).toHaveCount(0);
+  await expect(fixture.getByText('Map unavailable for this folder', { exact: true })).toBeVisible();
+  await expect(fixture.getByRole('img', { name: 'Project architecture map' })).toHaveCount(0);
   await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
 });
@@ -92,7 +92,7 @@ test('a chosen folder pending across Activity hide/show recovers its settings an
   await page.evaluate(async path => { (await import(path)).setVisible(true); }, path);
   const review = fixture.locator('.connect--review');
   await expect(review.locator('.connect__body code')).toHaveText('C:/fixture/new/.claude/settings.local.json');
-  await expect(review.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
+  await expect(fixture.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
   await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
 });

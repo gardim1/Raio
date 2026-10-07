@@ -21,6 +21,9 @@ const failureInput: PresenceInput = { connected: true, available: true, facts: [
 ] };
 const attention = deriveCompanionPresence(attentionInput, 1000, 'UTC');
 const failure = deriveCompanionPresence(failureInput, 1000, 'UTC');
+const activityInput: PresenceInput = { connected: true, available: true, facts: [{ id: 'read', sessionId: 'open', kind: 'activity', at: 0, source: 'Fixture read' }] };
+const recent = deriveCompanionPresence(activityInput, 1000, 'UTC');
+const quiet = deriveCompanionPresence(activityInput, BOB_TOTAL_SECONDS * 1000, 'UTC');
 const expiredAttention = deriveCompanionPresence(attentionInput, BOB_TOTAL_SECONDS * 1000, 'UTC');
 const expiredFailure = deriveCompanionPresence(failureInput, BOB_TOTAL_SECONDS * 1000, 'UTC');
 const noop = () => {};
@@ -42,8 +45,9 @@ for (const surface of ['island', 'mini'] as const) {
       const html = render(4, companion);
       expect(compactText(html, surface)).toBe(surface === 'island' ? 'Claude · API' : 'Claude working');
       expect(html).toContain('data-presence="' + companion.state + '"');
-      expect(html).toContain('aria-label="' + (surface === 'island' ? 'Raio: ' : '') + companion.description + '"');
-      expect(html).toContain('title="' + companion.description + '"');
+      const description = surface === 'island' ? 'Claude · API · ' + companion.description : companion.description;
+      expect(html).toContain('aria-label="' + (surface === 'island' ? 'Raio: ' : '') + description + '"');
+      expect(html).toContain('title="' + description + '"');
     });
 
     it.each([expiredAttention, expiredFailure])('shows $state presence copy after activity expires, even with a working frame', companion => {
@@ -63,3 +67,21 @@ for (const surface of ['island', 'mini'] as const) {
     });
   });
 }
+
+describe('Island activity without a mapped area', () => {
+  const render = (companion: typeof attention) => {
+    const frame = evaluateFrame(canonicalScript, snapshot.graph, 4);
+    const presence = { ...derivePresence(canonicalScript, snapshot.graph, frame, false), activeNodeLabel: null };
+    return renderToStaticMarkup(createElement(BridgeProvider, { bridge, children: createElement(IslandMode, {
+      script: canonicalScript, frame: { ...frame, ui: { ...frame.ui, activeNodeId: null } },
+      presence, companion, onPinMini: noop, onExpand: noop, onViewChanges: noop,
+    }) }));
+  };
+  it.each([recent, quiet, attention, failure, expiredAttention, expiredFailure])('uses current $state evidence instead of an indefinite starting label', companion => {
+    const html = render(companion);
+    expect(compactText(html, 'island')).toBe(companion.label);
+    expect(html).toContain('aria-label="Raio: ' + companion.description + '"');
+    expect(html).toContain('title="' + companion.description + '"');
+    expect(html).not.toContain('Claude · starting');
+  });
+});

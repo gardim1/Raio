@@ -39,15 +39,19 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
   const recentActivity = companion ? companion.activeUntil !== null : working;
   const finished = ui.finished;
   const ready = ui.status === 'ready' && !replaying;
+  const activityLabel = presence.activeNodeLabel ? `${agent} · ${presence.activeNodeLabel}` : companion?.label ?? `${agent} · starting`;
   const collapsedLabel = !replaying && !recentActivity && companion ? companion.label : replaying
     ? 'Replaying'
     : recentActivity
-      ? `${agent} · ${presence.activeNodeLabel ?? 'starting'}`
+      ? activityLabel
       : presence.recentlyFinished
         ? `${agent} finished`
         : finished
           ? 'Idle'
           : 'Ready';
+  const description = companion && collapsedLabel !== companion.label
+    ? `${collapsedLabel} · ${companion.description}`
+    : companion?.description ?? collapsedLabel;
   const orbState = islandOrbState({ working, replaying, recentlyFinished: presence.recentlyFinished, finished });
   const dotClass = working || replaying ? 'cool' : presence.recentlyFinished ? 'success' : 'idle';
 
@@ -64,8 +68,8 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
         onFocus={() => setOpen(true)}
         onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOpen(false)}
         tabIndex={0}
-        aria-label={`Raio: ${companion?.description ?? collapsedLabel}`}
-        title={companion?.description}
+        aria-label={`Raio: ${description}`}
+        title={companion ? description : undefined}
         aria-expanded={open}
       >
         <AnimatePresence mode="popLayout" initial={false}>
