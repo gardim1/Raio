@@ -187,6 +187,30 @@ fn captured_powershell_checks_flow_from_hook_to_store_without_raw_content() {
 }
 
 #[test]
+fn concurrent_hook_processes_keep_drop_accounting_bounded_and_honest() {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let _ = run_hook(data.path(), b"{}");
+    let mut children = vec![];
+    for _ in 0..8 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_raio-hook"))
+            .args(["claude", "--project", "fixtureproject", "--root", "C:/fixture/acme-mini", "--raio-managed"])
+            .env("RAIO_DATA_DIR", data.path()).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().unwrap();
+        child.stdin.take().unwrap().write_all(b"not json").unwrap();
+        children.push(child);
+    }
+    for mut child in children { assert!(child.wait().unwrap().success()); }
+    let dropped = inbox::drop_accounting(&dirs);
+    assert!(dropped.count > 0 && dropped.count <= 8, "{dropped:?}");
+    assert!(dropped.count == 8 || dropped.at_least, "{dropped:?}");
+    assert!(markers(&dirs).len() <= 14);
+    assert!(inbox::pending(&dirs, 1000).is_empty());
+}
+
+#[test]
 fn hook_stays_inert_without_a_heartbeat() {
     let data = tempfile::tempdir().unwrap();
     let payload = fs::read(format!("{FIXTURES}/06-PostToolUse-Write.json")).unwrap();
@@ -211,8 +235,8 @@ fn prefixed(prefix: &[u8], body: &[u8]) -> Vec<u8> {
 }
 
 /// Runs every recorded fixture through the hook encoded by `encode`, in a fresh data dir, and returns
-/// (records written to the inbox, drop markers by reason, all bytes on disk).
-fn feed_all(encode: impl Fn(&[u8]) -> Vec<u8>) -> (usize, Vec<String>, Vec<u8>) {
+/// (records written to the inbox, accounting filenames by reason, drop accounting, all bytes on disk).
+fn feed_all(encode: impl Fn(&[u8]) -> Vec<u8>) -> (usize, Vec<String>, inbox::DropAccounting, Vec<u8>) {
     let data = tempfile::tempdir().unwrap();
     let dirs = Dirs::new(data.path());
     dirs.create().unwrap();
@@ -225,28 +249,32 @@ fn feed_all(encode: impl Fn(&[u8]) -> Vec<u8>) -> (usize, Vec<String>, Vec<u8>) 
     let dropped = fs::read_dir(data.path().join("dropped"))
         .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
         .unwrap_or_default();
-    (inbox::pending(&dirs, 1000).len(), dropped, all_bytes_under(data.path()))
+    (inbox::pending(&dirs, 1000).len(), dropped, inbox::drop_accounting(&dirs), all_bytes_under(data.path()))
 }
 
-/// Every record is either in the inbox or counted as dropped because the hook's 2 s hard deadline hit first
-/// (a slow machine); it is never silently missing, and nothing else may be dropped.
-fn assert_all_accounted(written: usize, dropped: &[String], expected: usize, what: &str) {
-    assert!(dropped.iter().all(|d| d.ends_with("-hard-deadline")), "{what}: unexpected drops {dropped:?}");
-    assert_eq!(written + dropped.len(), expected, "{what}: written {written} + dropped {dropped:?}");
+/// Loss is either counted exactly or explicitly marked as a lower bound; only hard deadlines may account
+/// for missing records in this fixture flow. The marker file count itself is no longer the drop count.
+fn assert_all_accounted(written: usize, dropped: &[String], accounting: &inbox::DropAccounting, expected: usize, what: &str) {
+    assert!(dropped.iter().all(|d| d.ends_with("-hard-deadline") || d == "at-least"), "{what}: unexpected drops {dropped:?}");
+    if accounting.at_least {
+        assert!(accounting.count > 0 && written + accounting.count <= expected, "{what}: {accounting:?}");
+    } else {
+        assert_eq!(written + accounting.count, expected, "{what}: written {written} + dropped {accounting:?}");
+    }
 }
 
 #[test]
 fn utf8_with_a_bom_is_accepted_like_plain_utf8() {
     // What a .NET/PowerShell pipe delivers (PERF-1): EF BB BF before the opening brace.
-    let (written, dropped, _) = feed_all(|b| prefixed(&[0xEF, 0xBB, 0xBF], b));
-    assert_all_accounted(written, &dropped, 17, "same 17 records as the BOM-less run");
+    let (written, dropped, accounting, _) = feed_all(|b| prefixed(&[0xEF, 0xBB, 0xBF], b));
+    assert_all_accounted(written, &dropped, &accounting, 17, "same 17 records as the BOM-less run");
 }
 
 #[test]
 fn utf16_with_a_bom_is_decoded_in_both_byte_orders() {
     for big_endian in [false, true] {
-        let (written, dropped, on_disk) = feed_all(|b| utf16(std::str::from_utf8(b).unwrap(), big_endian, true));
-        assert_all_accounted(written, &dropped, 17, &format!("big_endian={big_endian}"));
+        let (written, dropped, accounting, on_disk) = feed_all(|b| utf16(std::str::from_utf8(b).unwrap(), big_endian, true));
+        assert_all_accounted(written, &dropped, &accounting, 17, &format!("big_endian={big_endian}"));
         assert!(!String::from_utf8_lossy(&on_disk).contains("SENTINEL_"), "no raw payload on disk");
     }
 }
@@ -275,6 +303,7 @@ fn undecodable_input_is_dropped_counted_and_never_written_raw() {
         assert_eq!(inbox::pending(&dirs, 10).len(), 0, "{name}: nothing may be recorded");
         let dropped: Vec<String> = fs::read_dir(data.path().join("dropped")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(dropped.len(), 1, "{name}: counted exactly once, got {dropped:?}");
+        assert_eq!(inbox::drop_accounting(&dirs), inbox::DropAccounting { count: 1, at_least: false });
         assert!(dropped[0].ends_with("unreadable-payload"), "{name}: {dropped:?}");
         assert!(!String::from_utf8_lossy(&all_bytes_under(data.path())).contains("SENTINEL_"), "{name}: raw stdin written");
     }
@@ -327,6 +356,7 @@ fn the_hard_deadline_leaves_a_drop_marker_instead_of_vanishing() {
     // Load-insensitive: the watchdog (250 ms) should beat the 1.5 s stdin timeout; if a very slow machine lets the
     // stdin timeout win, that is still exactly one marker, but this test is about the watchdog's.
     assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert_eq!(inbox::drop_accounting(&dirs), inbox::DropAccounting { count: 1, at_least: false });
     assert!(!dropped[0].ends_with("stdin-timeout"), "the stdin timeout won the race on this machine: {dropped:?}");
     assert!(dropped[0].ends_with("-hard-deadline"), "{dropped:?}");
     assert_eq!(inbox::pending(&dirs, 10).len(), 0);
@@ -347,6 +377,7 @@ fn an_invocation_leaves_one_marker_even_when_the_stdin_timeout_and_the_watchdog_
         assert_eq!(code, Some(0));
         let dropped = markers(&dirs);
         assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(inbox::drop_accounting(&dirs), inbox::DropAccounting { count: 1, at_least: false });
         assert!(dropped[0].ends_with("stdin-timeout") || dropped[0].ends_with("hard-deadline"), "{dropped:?}");
     }
 }

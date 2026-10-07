@@ -74,8 +74,7 @@ impl Core {
     /// for long. Safe to call from any thread; leftover work is reported through `more`.
     pub fn housekeeping(&self, now: SystemTime, limits: &Limits) -> Housekeeping {
         let inbox = inbox::tidy(&self.dirs, now, &limits.inbox);
-        let budget = limits.inbox.budget;
-        let mut more = [inbox.tmp_removed, inbox.expired, inbox.markers_removed].iter().any(|n| *n >= budget);
+        let mut more = inbox.more;
         let now_ms = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
         let mut retention_removed = 0;
         for batch in 1..=limits.retention_batches {
@@ -214,6 +213,7 @@ pub struct CoreStatus {
     schema_version: i64,
     events: i64,
     dropped: usize,
+    dropped_at_least: bool,
     history_reset_from: Option<String>,
     watcher_overflow: bool,
     hook_binary: Option<String>,
@@ -230,10 +230,12 @@ fn hook_binary() -> Option<PathBuf> {
 pub fn core_status(core: State<'_, Core>) -> Result<CoreStatus, String> {
     let store = core.store.lock().map_err(|e| e.to_string())?;
     let overflow = core.watches.lock().map(|w| w.values().any(|p| p.overflowed.load(Ordering::Relaxed))).unwrap_or(false);
+    let dropped = inbox::drop_accounting(&core.dirs);
     Ok(CoreStatus {
         schema_version: store.schema_version(),
         events: store.count_events().map_err(|e| e.to_string())?,
-        dropped: inbox::dropped_count(&core.dirs),
+        dropped: dropped.count,
+        dropped_at_least: dropped.at_least,
         history_reset_from: store.reset_from.as_ref().map(|p| p.to_string_lossy().into_owned()),
         watcher_overflow: overflow,
         hook_binary: hook_binary().map(|p| p.to_string_lossy().into_owned()),
@@ -358,6 +360,24 @@ mod tests {
         assert!(core.connected_root("nope").is_err());
         core.store.lock().unwrap().disconnect_project("p1", 2).unwrap();
         assert!(core.connected_root("p1").is_err(), "a disconnected project is not scanned");
+    }
+
+    #[test]
+    fn drop_accounting_legacy_backlog_keeps_housekeeping_in_catch_up() {
+        let (_d, core) = open();
+        for i in 0..3100 {
+            fs::write(core.dirs.dropped.join(format!("legacy-{i}")), b"").unwrap();
+        }
+        let first = core.housekeeping(SystemTime::now(), &Limits::default());
+        assert_eq!(first.inbox.markers_removed, 1000);
+        assert!(first.more, "a 1000-removal pass hit its 2000-entry scan bound with backlog remaining");
+        let second = core.housekeeping(SystemTime::now(), &Limits::default());
+        assert_eq!(second.inbox.markers_removed, 1000);
+        assert!(second.more);
+        let third = core.housekeeping(SystemTime::now(), &Limits::default());
+        assert_eq!(third.inbox.markers_removed, 100);
+        assert!(!third.more);
+        assert_eq!(inbox::dropped_count(&core.dirs), 1000);
     }
 
     #[test]
