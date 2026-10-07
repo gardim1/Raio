@@ -3,6 +3,10 @@ import type { CommandClass, EventAgent, RaioEvent, RaioEventEvidence, RaioEventK
 import { compileReplay } from '../session/model/compileReplay';
 import { AGENT_LABEL, type AgentEvent } from '../session/model/events';
 import { deriveInsights } from '../session/model/insights';
+import { evaluateFrame } from '../session/model/evaluateFrame';
+import { derivePresence } from '../modes/presence';
+import { islandOrbState } from '../modes/islandOrbState';
+import { retargetLive, settledAt, startLive } from '../session/live/liveDirector';
 import { DISK_WINDOW_MS } from './diskEvidence';
 import { HEURISTIC_NOTE } from './classifyPath';
 import type { ProjectImports } from './importEdges';
@@ -196,6 +200,85 @@ describe('projectSession: agents', () => {
 });
 
 describe('projectSession: session end', () => {
+  const resumedEvents = () => [
+    started(1), edit(2, 'src/api/a.ts'), ended(3),
+    ev('session.started', 10, [], { detail: 'resume' }), edit(11, 'src/auth/b.ts'),
+  ];
+
+  it('retains ended history and reopens a resumed session across live, summary, CTA and orb state', () => {
+    const events = resumedEvents();
+    const before = project(events.slice(0, 3));
+    const beforeScript = compileReplay(before.log, before.graph, { live: true });
+    expect(beforeScript.live?.open).toBe(false);
+    expect(beforeScript.status.at(-1)?.state).toBe('complete');
+
+    const snapshot = project([...events].reverse());
+    const script = compileReplay(snapshot.log, snapshot.graph, { live: true });
+    expect(snapshot.log.events.filter((e) => e.kind === 'session.start' || e.kind === 'session.end')).toEqual([
+      { kind: 'session.start', atMs: 0 },
+      { kind: 'session.end', atMs: 2000, outcome: 'completed' },
+      { kind: 'session.start', atMs: 9000 },
+    ]);
+    expect(script.live?.open).toBe(true);
+    expect(script.status.at(-1)?.state).toBe('working');
+    expect(script.story.some((s) => s.label.includes('finished'))).toBe(false);
+    expect(script.nodes.map((n) => n.nodeId)).toEqual(['api', 'auth']);
+    expect(deriveInsights(snapshot.log).filesChanged).toBe(2);
+    expect(compileReplay(snapshot.log, snapshot.graph).status.at(-1)?.state).toBe('incomplete');
+
+    const state = retargetLive(startLive(beforeScript, 0), script, 1000);
+    const frame = evaluateFrame(script, snapshot.graph, Math.max(state.t, settledAt(script)));
+    const presence = derivePresence(script, snapshot.graph, frame, false);
+    expect(frame.ui.status).toBe('working');
+    expect(frame.ui.finished).toBe(false);
+    expect(frame.ui.summaryVisible).toBe(false);
+    expect(frame.ui.summaryDetailVisible).toBe(false);
+    expect(presence.cta).toBe('hidden');
+    expect(presence.recentlyFinished).toBe(false);
+    expect(islandOrbState({ working: frame.ui.status === 'working', replaying: false, recentlyFinished: presence.recentlyFinished, finished: frame.ui.finished })).toBe('working');
+  });
+
+  it('ends the resumed session again on a later end while retaining both occurrences', () => {
+    const snapshot = project([...resumedEvents(), ended(12)]);
+    expect(snapshot.log.events.filter((e) => e.kind === 'session.end').map((e) => e.atMs)).toEqual([2000, 11000]);
+    const script = compileReplay(snapshot.log, snapshot.graph, { live: true });
+    expect(script.live?.open).toBe(false);
+    expect(script.status.at(-1)?.state).toBe('complete');
+    expect(script.story.find((s) => s.label === 'Claude finished')?.realTime).toBe('00:11');
+    const frame = evaluateFrame(script, snapshot.graph, script.summary.detailAt + 1);
+    expect(frame.ui.summaryVisible).toBe(true);
+    expect(derivePresence(script, snapshot.graph, frame, false).cta).toBe('active');
+  });
+
+  it('does not double-count duplicate delivery of an end or let it close a later resume', () => {
+    const events = resumedEvents();
+    const oldEnd = events[2]!;
+    const snapshot = project([...events, { ...oldEnd }]);
+    expect(snapshot.log.events.filter((e) => e.kind === 'session.end')).toHaveLength(1);
+    expect(compileReplay(snapshot.log, snapshot.graph, { live: true }).live?.open).toBe(true);
+  });
+
+  it('uses lifecycle order even when occurrences reuse an id', () => {
+    const events = resumedEvents().map((e) => e.kind.startsWith('session.') ? { ...e, id: 'same-boundary-id' } : e);
+    const snapshot = project(events);
+    expect(snapshot.log.events.filter((e) => e.kind === 'session.start')).toHaveLength(2);
+    expect(compileReplay(snapshot.log, snapshot.graph, { live: true }).live?.open).toBe(true);
+  });
+
+  it.each([
+    { name: 'seq', endSeq: 20, startSeq: 21, endId: 'z', startId: 'a', open: true },
+    { name: 'seq', endSeq: 21, startSeq: 20, endId: 'a', startId: 'z', open: false },
+    { name: 'id', endSeq: 20, startSeq: 20, endId: 'a', startId: 'z', open: true },
+    { name: 'id', endSeq: 20, startSeq: 20, endId: 'z', startId: 'a', open: false },
+  ])('breaks equal-time lifecycle ties by $name (open=$open)', ({ endSeq, startSeq, endId, startId, open }) => {
+    const snapshot = project([
+      started(1), edit(2, 'src/api/a.ts'),
+      ev('session.started', 10, [], { detail: 'resume' }, { seq: startSeq, id: startId }),
+      ended(10, { seq: endSeq, id: endId }),
+    ]);
+    expect(compileReplay(snapshot.log, snapshot.graph, { live: true }).live?.open).toBe(open);
+  });
+
   it('maps session.ended to a completed end', () => {
     const log = project([started(0), edit(1, 'src/a.ts'), ended(7)]).log;
     expect(log.events.at(-1)).toEqual({ kind: 'session.end', atMs: 7000, outcome: 'completed' });

@@ -121,14 +121,18 @@ export const projectSessionDetailed = (
   const validations: ValidationInsight[] = [];
   const noticed = new Set<string>();
   const kindOfTool = new Map<string, ValidationKind>();
-  let sawStart = false;
+  let lastBoundary: RaioEvent | undefined;
 
   for (const event of sessionEvents) {
+    if (event.kind === 'session.started' || event.kind === 'session.ended') {
+      // Ignore an exact repeat delivery, not another occurrence at a later position in the event order.
+      if (lastBoundary?.kind === event.kind && compareEvents(lastBoundary, event) === 0) continue;
+      lastBoundary = event;
+    }
     const at = atMs(event);
     switch (event.kind) {
       case 'session.started':
-        if (!sawStart) log.push({ kind: 'session.start', atMs: at });
-        sawStart = true;
+        log.push({ kind: 'session.start', atMs: at });
         break;
       case 'file.inspected':
         for (const path of event.paths) log.push({ kind: 'file.read', atMs: at, path, nodeId: nodeOf(path) });

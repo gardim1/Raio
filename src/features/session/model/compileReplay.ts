@@ -115,7 +115,7 @@ interface SessionFacts {
   readonly history: { kind: ValidationKind; status: ValidationStatus; atMs: number }[];
   readonly endMs: number;
   readonly failed: boolean;
-  /** False when the log has no `session.end`: the replay must not claim completion. */
+  /** The latest ordered lifecycle boundary decides completion; a later start reopens the session. */
   readonly ended: boolean;
 }
 
@@ -148,6 +148,10 @@ const collectFacts = (events: readonly AgentEvent[], live = false): SessionFacts
       finalValidations.set(e.validation, { status: e.status, atMs: e.atMs });
       const previous = history.filter((h) => h.kind === e.validation).at(-1);
       if (!previous || previous.status !== e.status) history.push({ kind: e.validation, status: e.status, atMs: e.atMs });
+    }
+    else if (e.kind === 'session.start') {
+      failed = false;
+      ended = false;
     }
     else if (e.kind === 'session.end') {
       failed = e.outcome === 'failed';

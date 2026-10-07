@@ -85,4 +85,22 @@ describe('compileReplay — semantic Session Replay', () => {
 
   // Out-of-scope is no longer inferred from map topology; see semantics.test.ts.
 
+  it('clears an earlier lifecycle failure on resume while retaining earlier replay facts', () => {
+    const log: SessionLog = {
+      ...demoSessionLog,
+      events: [
+        { kind: 'session.start', atMs: 0 },
+        { kind: 'file.write', atMs: 1000, nodeId: 'api', path: 'src/api/a.ts', change: 'modified' },
+        { kind: 'session.end', atMs: 2000, outcome: 'failed' },
+        { kind: 'session.start', atMs: 9000 },
+        { kind: 'file.write', atMs: 10000, nodeId: 'auth', path: 'src/auth/b.ts', change: 'modified' },
+      ],
+    };
+    expect(compileReplay(log, demoGraph, { live: true }).live?.open).toBe(true);
+    expect(compileReplay(log, demoGraph).status.at(-1)?.state).toBe('incomplete');
+    const ended = compileReplay({ ...log, events: [...log.events, { kind: 'session.end', atMs: 11000, outcome: 'completed' }] }, demoGraph);
+    expect(ended.status.at(-1)?.state).toBe('complete');
+    expect(ended.nodes.map((n) => n.nodeId).sort()).toEqual(['api', 'auth']);
+  });
+
 });
