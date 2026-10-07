@@ -1,4 +1,4 @@
-// Local Windows package only: no installer, signing, publishing or settings access.
+// Local Windows package only: no signing, publishing or settings access.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -14,6 +14,16 @@ export const blockingDirtyFiles = (paths) => paths.filter((path) => {
   const normalized = path.replaceAll('\\', '/');
   return !normalized.startsWith('docs/') && !/\.md$/i.test(normalized);
 });
+
+export const packageNames = (version) => {
+  if (typeof version !== 'string' || version.trim() !== version || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(version)) {
+    throw new Error('Invalid package version: expected x.y.z or x.y.z-prerelease.');
+  }
+  const name = `raio-v${version}-windows-x64`;
+  return { name, zipName: `${name}.zip`, manifestName: `SHA256SUMS-v${version}.txt` };
+};
+
+export const sha256Manifest = (entries) => entries.map(({ name, sha256 }) => `${sha256}  ${name}\n`).join('');
 
 export const portableReadme = ({ sha, buildTime, hashes, dirty }) => `Raio - portable local package (Windows x64)
 
@@ -84,10 +94,11 @@ const pack = () => {
   if (stale.length) throw new Error(`Missing or stale release executables: ${stale.join(', ')}. Run npm run app:build before packaging. --allow-dirty does not bypass freshness.`);
 
   const release = join(root, 'release-local');
-  const name = `raio-${sha.slice(0, 12)}-windows-x64`;
+  const { name, zipName, manifestName } = packageNames(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version);
   const folder = join(release, name);
-  const zip = `${folder}.zip`;
-  if (existsSync(folder) || existsSync(zip)) throw new Error(`Package output already exists: ${folder} or its zip. Move it aside before retrying; connected hooks may reference it.`);
+  const zip = join(release, zipName);
+  const manifest = join(release, manifestName);
+  if ([folder, zip, manifest].some(existsSync)) throw new Error(`Package output already exists for version ${name}. Move it aside before retrying; connected hooks may reference it.`);
   mkdirSync(release, { recursive: true });
   mkdirSync(folder);
   const hashes = {};
@@ -109,7 +120,12 @@ const pack = () => {
     return;
   }
   execFileSync(tar, ['-a', '-c', '-f', zip, '-C', release, name], { stdio: 'inherit' });
+  writeFileSync(manifest, sha256Manifest([
+    { name: zipName, sha256: createHash('sha256').update(readFileSync(zip)).digest('hex') },
+    ...binaries.map(({ name: binary }) => ({ name: `${name}/${binary}`, sha256: hashes[binary] })),
+  ]), { encoding: 'utf8', flag: 'wx' });
   console.log(`Created local zip: ${zip}`);
+  console.log(`Created checksum manifest: ${manifest}`);
 };
 
 // Importing pure functions for unit tests must never run Git, tar, or packaging writes.

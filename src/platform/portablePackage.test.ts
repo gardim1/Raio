@@ -2,9 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 // Node-only packaging module, kept outside the renderer and its TypeScript inputs.
 const scriptPath = '../../scripts/pack-portable.mjs';
-const { staleBinaries, blockingDirtyFiles, portableReadme } = await import(scriptPath);
+const { staleBinaries, blockingDirtyFiles, portableReadme, packageNames, sha256Manifest } = await import(scriptPath);
 
 describe('portable package validation', () => {
+  it('names the directory, zip and checksum manifest from the release version', () => {
+    expect(packageNames('0.1.0')).toEqual({ name: 'raio-v0.1.0-windows-x64', zipName: 'raio-v0.1.0-windows-x64.zip', manifestName: 'SHA256SUMS-v0.1.0.txt' });
+    expect(packageNames('1.2.3-alpha.4')).toEqual({ name: 'raio-v1.2.3-alpha.4-windows-x64', zipName: 'raio-v1.2.3-alpha.4-windows-x64.zip', manifestName: 'SHA256SUMS-v1.2.3-alpha.4.txt' });
+    for (const version of ['', '1.2', 'v1.2.3', '../1.2.3', '1.2.3\n', '01.2.3']) {
+      expect(() => packageNames(version)).toThrow('version');
+    }
+  });
+
+  it('writes checksum lines that identify the archive and optional loose executables', () => {
+    expect(sha256Manifest([
+      { name: 'raio-v0.1.0-windows-x64.zip', sha256: 'a'.repeat(64) },
+      { name: 'raio-v0.1.0-windows-x64/raio.exe', sha256: 'b'.repeat(64) },
+    ])).toBe(`${'a'.repeat(64)}  raio-v0.1.0-windows-x64.zip\n${'b'.repeat(64)}  raio-v0.1.0-windows-x64/raio.exe\n`);
+  });
+
   it('requires both executables to be strictly newer than the newest source', () => {
     expect(staleBinaries([{ name: 'raio.exe', mtimeMs: 101 }, { name: 'raio-hook.exe', mtimeMs: 102 }], 100)).toEqual([]);
     expect(staleBinaries([{ name: 'raio.exe', mtimeMs: 100 }, { name: 'raio-hook.exe', mtimeMs: 99 }], 100)).toEqual(['raio.exe', 'raio-hook.exe']);
