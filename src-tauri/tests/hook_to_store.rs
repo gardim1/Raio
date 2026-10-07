@@ -80,19 +80,27 @@ fn recorded_session_flows_from_hook_to_store_without_content() {
     let store = Store::open(&data.path().join("raio.db"), 0).unwrap();
     for p in &pending {
         assert!(matches!(store.insert(p.event.as_ref().unwrap(), 1).unwrap(), Insert::Inserted(_)));
+    }
+    // Retry delivery by rereading the producer's persisted records, without reinvoking the hooks.
+    for p in inbox::pending(&dirs, 1000) {
+        assert_eq!(store.insert(p.event.as_ref().unwrap(), 2).unwrap(), Insert::Duplicate);
         fs::remove_file(&p.path).unwrap();
     }
-    // Replaying the same hook payloads (duplicate delivery) adds nothing.
+    // Reinvoked lifecycle hooks are new occurrences, even when their raw payloads are identical.
+    // Tool-use and prompt-id Stop hooks still identify the same tool call/turn and dedupe.
     for path in &names {
         run_hook(data.path(), &fs::read(path).unwrap());
     }
     for p in inbox::pending(&dirs, 1000) {
         let inserted = store.insert(p.event.as_ref().unwrap(), 2).unwrap();
-        // Session start/end and tool events have stable ids; Stop ids are per prompt and also stable.
-        assert_eq!(inserted, Insert::Duplicate);
+        if matches!(p.event.as_ref().unwrap().kind.as_str(), "session.started" | "session.ended") {
+            assert!(matches!(inserted, Insert::Inserted(_)));
+        } else {
+            assert_eq!(inserted, Insert::Duplicate);
+        }
     }
     let events = store.project_events("fixtureproject").unwrap();
-    assert_eq!(events.len(), 17);
+    assert_eq!(events.len(), 19, "17 original records plus two new lifecycle invocations");
     let kinds: Vec<&str> = events.iter().map(|e| e.kind.as_str()).collect();
     assert_eq!(kinds.first(), Some(&"session.started"));
     assert_eq!(kinds.last(), Some(&"session.ended"));
@@ -103,6 +111,42 @@ fn recorded_session_flows_from_hook_to_store_without_content() {
     for forbidden in ["SENTINEL_", "process.exit", "acme-mini\\", "C:/fixture", "transcripts"] {
         assert!(!text.contains(forbidden), "found {forbidden:?} on disk");
     }
+}
+
+#[test]
+fn session_lifecycle_resume_keeps_four_occurrences_and_inbox_retries_dedupe() {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let start: serde_json::Value = serde_json::from_slice(&fs::read(format!("{FIXTURES}/01-SessionStart.json")).unwrap()).unwrap();
+    let end: serde_json::Value = serde_json::from_slice(&fs::read(format!("{FIXTURES}/19-SessionEnd.json")).unwrap()).unwrap();
+    let mut resume = start.clone();
+    resume["source"] = serde_json::json!("resume");
+    for payload in [start, end.clone(), resume, end] {
+        assert_eq!(run_hook(data.path(), &serde_json::to_vec(&payload).unwrap()).0, 0);
+    }
+    let pending = inbox::pending(&dirs, 1000);
+    assert_eq!(pending.len(), 4);
+    let store = Store::open(&data.path().join("raio.db"), 0).unwrap();
+    for record in &pending {
+        assert!(matches!(store.insert(record.event.as_ref().unwrap(), 1).unwrap(), Insert::Inserted(_)));
+    }
+    // Simulate a restart before acknowledging/deleting inbox files: the exact same records are retried.
+    drop(store);
+    let store = Store::open(&data.path().join("raio.db"), 0).unwrap();
+    let retried = inbox::pending(&dirs, 1000);
+    assert_eq!(retried.len(), 4);
+    for record in &retried {
+        assert_eq!(store.insert(record.event.as_ref().unwrap(), 2).unwrap(), Insert::Duplicate);
+    }
+    let events = store.project_events("fixtureproject").unwrap();
+    assert_eq!(events.len(), 4);
+    assert_eq!(events.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(), ["session.started", "session.ended", "session.started", "session.ended"]);
+    assert_eq!(events.iter().map(|e| e.evidence.detail.as_deref()).collect::<Vec<_>>(), [Some("startup"), Some("other"), Some("resume"), Some("other")]);
+    let ids: std::collections::HashSet<_> = events.iter().map(|e| &e.id).collect();
+    assert_eq!(ids.len(), 4);
+    assert!(events.iter().all(|e| e.session_id == events[0].session_id && e.observed_at == 1));
 }
 
 #[test]

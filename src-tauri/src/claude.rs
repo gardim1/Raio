@@ -231,13 +231,15 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
     let (kind, paths, id_key): (&str, Vec<String>, String) = match (event, tool) {
         ("SessionStart", _) => {
             evidence.detail = text(payload, "source").map(str::to_owned);
-            ("session.started", vec![], format!("start:{}", evidence.detail.as_deref().unwrap_or("")))
+            // Lifecycle payloads have no occurrence id: mint one per producer invocation, not per
+            // session/source. Persisted inbox records retain this id when delivery/ingestion is retried.
+            ("session.started", vec![], format!("start:{}", unique(ctx.now_ms)))
         }
         ("SessionEnd", _) => {
             // Kept as the hook reported it (a short enum such as `clear`, `logout`, `other`); only cut so an
             // unexpected value cannot make the whole record invalid.
             evidence.detail = text(payload, "reason").map(|r| r.chars().take(MAX_REASON_CHARS).collect());
-            ("session.ended", vec![], "end".into())
+            ("session.ended", vec![], format!("end:{}", unique(ctx.now_ms)))
         }
         ("Stop", _) => ("turn.ended", vec![], format!("stop:{}", text(payload, "prompt_id").map(str::to_owned).unwrap_or_else(|| unique(ctx.now_ms)))),
         ("PreToolUse", Some(t)) if EDIT_TOOLS.contains(&t) => ("file.edit.attempted", paths_of(file_path()), String::new()),
@@ -552,6 +554,25 @@ mod tests {
         let post = normalize(&fixture("06-PostToolUse-Write.json"), &ctx()).unwrap();
         assert_ne!(pre.id, post.id);
         assert_eq!(post.id, normalize(&fixture("06-PostToolUse-Write.json"), &ctx()).unwrap().id);
+    }
+
+    #[test]
+    fn lifecycle_occurrences_are_distinct_even_with_identical_payloads_and_clock() {
+        for (name, detail) in [("01-SessionStart.json", "startup"), ("01-SessionStart.json", "resume"), ("19-SessionEnd.json", "other")] {
+            let mut payload = fixture(name);
+            if name == "01-SessionStart.json" {
+                payload["source"] = serde_json::json!(detail);
+            }
+            let first = normalize(&payload, &ctx()).unwrap();
+            let second = normalize(&payload, &ctx()).unwrap();
+            assert_ne!(first.id, second.id, "{name}: {detail}");
+            assert_eq!(first.session_id, second.session_id);
+            assert_eq!(first.source_at, second.source_at, "fixed clock exercises within-process uniqueness");
+            assert_eq!(first.evidence.detail.as_deref(), Some(detail));
+            assert_eq!(second.evidence.detail.as_deref(), Some(detail));
+            assert_eq!(first.validate(), Ok(()));
+            assert_eq!(second.validate(), Ok(()));
+        }
     }
 
     #[test]
