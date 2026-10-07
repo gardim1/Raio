@@ -7,7 +7,7 @@ import { isProjectInventory, type ProjectInventory } from '../features/project/p
 import { projectSessionDetailed } from '../features/project/projectSession';
 import { projectMap, type ProjectMapSnapshot } from '../features/project/projectMap';
 import type { ProjectMapBridge } from './projectMapBridge';
-import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, SessionSnapshot, Surface } from './desktopBridge';
+import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
 
@@ -86,6 +86,8 @@ export const createNativeBridge = (
   let snapshot: SessionSnapshot | null = null;
   let projectSnapshot: ProjectMapSnapshot | null = null;
   let project: ConnectedProject | null = null;
+  let hooksState: ProjectHooksState = 'unknown';
+  let hooksQuery = 0;
   let refreshing: Promise<void> | null = null;
   let dirty = false;
   // The latest accepted import scan, for the connected project it was taken from.
@@ -106,6 +108,22 @@ export const createNativeBridge = (
   let listingFailureReported = false;
   let retryStep = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Optional read-only IPC: a missing/failed/slow command must never block showing the project. */
+  const refreshHooks = (current: ConnectedProject | null): void => {
+    const query = ++hooksQuery;
+    if (!current) {
+      hooksState = 'unknown';
+      return;
+    }
+    void withinTime(ipc.invoke<unknown>('project_hooks_state', { projectId: current.id }).catch(() => null), scanTimeoutMs).then((value) => {
+      if (query !== hooksQuery || project?.id !== current.id || project.root !== current.root) return;
+      const next: ProjectHooksState = value === 'current' || value === 'outdated' ? value : 'unknown';
+      if (next === hooksState) return;
+      hooksState = next;
+      listeners.forEach((l) => l());
+    });
+  };
 
   const scanImports = async (projectId: string): Promise<ProjectImports | null> => {
     try {
@@ -215,6 +233,7 @@ export const createNativeBridge = (
         const key = current ? `${current.id}|${current.root}` : null;
         if (key !== scanKey) {
           scanKey = key;
+          hooksState = 'unknown';
           imports = null;
           importsStale = false;
           scanActivity = -1;
@@ -227,14 +246,20 @@ export const createNativeBridge = (
         }
         const projected = current ? projectSessionDetailed(current, events, undefined, imports, importsStale, inventory, inventoryStale) : null;
         project = current && project?.id === current.id && project.root === current.root ? project : current;
+        refreshHooks(current);
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
         projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null }) : null;
         listeners.forEach((l) => l());
       } catch (error) {
         report('refresh')(error);
+        const hooksChanged = hooksState !== 'unknown';
+        hooksState = 'unknown';
+        hooksQuery++;
         if (projectSnapshot) {
           projectSnapshot = { ...projectSnapshot, core: null };
+        }
+        if (projectSnapshot || hooksChanged) {
           listeners.forEach((l) => l());
         }
       } finally {
@@ -269,6 +294,7 @@ export const createNativeBridge = (
     kind: 'native',
     fixedSurface,
     currentSession: () => snapshot,
+    projectHooksState: () => hooksState,
     currentProjectMap: () => projectSnapshot,
     subscribe: (listener) => {
       listeners.add(listener);

@@ -10,6 +10,7 @@ export type DataProvenance = 'fixture' | 'live';
 /** The three product surfaces. */
 export type Surface = 'island' | 'mini' | 'expanded';
 export type SurfaceIntent = 'replay';
+export type ProjectHooksState = 'current' | 'outdated' | 'unknown';
 
 export interface SessionSnapshot {
   readonly provenance: DataProvenance;
@@ -79,6 +80,8 @@ export interface DesktopBridge {
   readonly fixedSurface: Surface | null;
   /** The session to show, or null when no project/session is available. */
   currentSession(): SessionSnapshot | null;
+  /** Cached read-only state of the connected project's Raio handlers; absent on older adapters. */
+  projectHooksState?(): ProjectHooksState;
   /** Notifies when `currentSession()` may return something new. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /**

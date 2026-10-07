@@ -5,7 +5,7 @@ import type { SessionLog } from '../features/session/model/events';
 import { demoSessionLog } from '../features/session/model/demoSession';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
-import type { DesktopBridge, SessionSnapshot } from './desktopBridge';
+import type { ConnectPreview, DesktopBridge, ProjectHooksState, SessionSnapshot } from './desktopBridge';
 import type { ProjectMapBridge } from './projectMapBridge';
 import { projectMap } from '../features/project/projectMap';
 
@@ -35,6 +35,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     kind: 'fixture',
     fixedSurface: null,
     currentSession: () => current,
+    projectHooksState: () => 'current',
     subscribe: () => () => {},
     showSurface: showSurfaceInPlace,
     setPinned: () => {},
@@ -46,9 +47,34 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
 };
 
 /** Development-only project map before any session; the map is explicitly labelled as fixture data. */
-export const createProjectFixtureBridge = (): ProjectMapBridge => {
+export const createProjectFixtureBridge = (options: { hooksState?: ProjectHooksState } = {}): ProjectMapBridge => {
   const snapshot = projectMap({ id: 'demo-project', name: demoSessionLog.project }, demoInventory, demoImportFacts, { provenance: 'fixture' });
-  return { ...createFixtureBridge(null), currentProjectMap: () => snapshot };
+  if (options.hooksState === undefined) return { ...createFixtureBridge(null), currentProjectMap: () => snapshot };
+  // Opt-in harness connection: entirely in memory, always labelled as a fixture. Never calls native IPC or disk.
+  const project = { ...snapshot.project, root: 'demo-project' };
+  let connected = true;
+  let hooksState = options.hooksState;
+  const listeners = new Set<() => void>();
+  const notify = () => listeners.forEach((l) => l());
+  const preview: ConnectPreview = {
+    settingsPath: 'demo-project/.claude/settings.local.json',
+    before: JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'raio-hook (demo)' }] }] } }),
+    after: JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'raio-hook (demo)' }] }] } }),
+    gitIgnored: true,
+  };
+  return {
+    ...createFixtureBridge(null),
+    currentProjectMap: () => connected ? snapshot : null,
+    projectHooksState: () => connected ? hooksState : 'unknown',
+    subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    connector: {
+      project: () => connected ? project : null,
+      chooseFolder: () => Promise.resolve(null),
+      preview: () => Promise.resolve(preview),
+      connect: () => { connected = true; hooksState = 'current'; notify(); return Promise.resolve(); },
+      disconnect: () => { connected = false; notify(); return Promise.resolve(); },
+    },
+  };
 };
 
 /* Simulated live feed (development and tests only) ---------------------------------------- */
@@ -134,6 +160,7 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     kind: 'fixture',
     fixedSurface: null,
     currentSession: () => (count > 0 ? snapshotFor(count) : null),
+    projectHooksState: () => 'current',
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

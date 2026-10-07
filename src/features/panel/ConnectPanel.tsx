@@ -22,6 +22,30 @@ export const maskedSettings = (text: string | null): string => {
 
 type Step = { readonly kind: 'idle' } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview } | { readonly kind: 'error'; readonly message: string };
 
+/** The same explicit before/after review for initial connection and refreshing an existing connection. */
+export const ConnectReview = ({ preview, busy, onCancel, onConnect }: {
+  readonly preview: ConnectPreview;
+  readonly busy: boolean;
+  readonly onCancel: () => void;
+  readonly onConnect: () => void;
+}) => (
+  <div className="connect connect--review">
+    <p className="connect__title">Connect Claude Code in this project?</p>
+    <p className="connect__body">
+      Raio will add asynchronous hooks to <code>{preview.settingsPath}</code>. Existing settings and hooks are kept, the original is backed up, and
+      Disconnect removes only Raio's entries.
+    </p>
+    {preview.gitIgnored === false && <p className="connect__warn">Git does not ignore this file. It contains a path on this computer; do not commit it.</p>}
+    <div className="connect__diff">
+      <div><span>Before</span><pre>{maskedSettings(preview.before)}</pre></div>
+      <div><span>After</span><pre>{maskedSettings(preview.after)}</pre></div>
+    </div>
+    <div className="connect__actions">
+      <Button onClick={onCancel} disabled={busy}>Cancel</Button>
+      <Button onClick={onConnect} disabled={busy}>Connect</Button>
+    </div>
+  </div>
+);
 
 /**
  * Empty state of the native app: connect a project (opt-in, previewed, reversible) or, once connected,
@@ -60,40 +84,11 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
   if (step.kind === 'review') {
     const { root, preview } = step;
     return (
-      <div className="connect connect--review">
-        <p className="connect__title">Connect Claude Code in this project?</p>
-        <p className="connect__body">
-          Raio will add asynchronous hooks to <code>{preview.settingsPath}</code>. Existing settings and hooks are kept, the original is backed up, and
-          Disconnect removes only Raio's entries.
-        </p>
-        {preview.gitIgnored === false && <p className="connect__warn">Git does not ignore this file. It contains a path on this computer; do not commit it.</p>}
-        <div className="connect__diff">
-          <div>
-            <span>Before</span>
-            <pre>{maskedSettings(preview.before)}</pre>
-          </div>
-          <div>
-            <span>After</span>
-            <pre>{maskedSettings(preview.after)}</pre>
-          </div>
-        </div>
-        <div className="connect__actions">
-          <Button onClick={() => setStep({ kind: 'idle' })} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() =>
-              void run(async () => {
-                await connector.connect(root, preview);
-                setStep({ kind: 'idle' });
-              })
-            }
-            disabled={busy}
-          >
-            Connect
-          </Button>
-        </div>
-      </div>
+      <ConnectReview preview={preview} busy={busy} onCancel={() => setStep({ kind: 'idle' })}
+        onConnect={() => void run(async () => {
+          await connector.connect(root, preview);
+          setStep({ kind: 'idle' });
+        })} />
     );
   }
 
