@@ -46,7 +46,7 @@ export const PanelFooter = ({ script, frame, center, trailing, followingLabel }:
         {kinds.map((kind) => {
           const current = shown.get(kind);
           const cue = current ?? upcoming.get(kind);
-          return cue ? <ValidationPill key={kind} kind={kind} status={cue.status} visible={Boolean(current)} /> : null;
+          return cue ? <ValidationPill key={kind} kind={kind} status={cue.status} detail={cue.detail} visible={Boolean(current)} /> : null;
         })}
         {trailing}
       </div>

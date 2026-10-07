@@ -4,6 +4,7 @@ import { findEdge, findLink, requireEdge, requireNode } from '../../architecture
 import type { ArchitectureEdge, ArchitectureGraph, NodeId } from '../../architecture/model/types';
 import { AGENT_LABEL, type AgentEvent, formatOffset, RISK_LABEL, type SessionLog } from './events';
 import { orbitRadii, parkingSpot } from './parking';
+import { unknownResultText } from './unknownResultText';
 import type {
   CheckVerdict,
   ChoreographyScript,
@@ -110,9 +111,9 @@ interface NodeFacts {
 interface SessionFacts {
   readonly facts: Map<NodeId, NodeFacts>;
   readonly order: NodeId[];
-  readonly finalValidations: Map<ValidationKind, { status: ValidationStatus; atMs: number }>;
-  /** Live: every check result in event order (consecutive repeats of one status dropped), so a pass and a later stale both show. */
-  readonly history: { kind: ValidationKind; status: ValidationStatus; atMs: number }[];
+  readonly finalValidations: Map<ValidationKind, { status: ValidationStatus; atMs: number; detail?: string }>;
+  /** Live: every check result in event order, dropping consecutive repeats of the same status and reason. */
+  readonly history: { kind: ValidationKind; status: ValidationStatus; atMs: number; detail?: string }[];
   readonly endMs: number;
   readonly failed: boolean;
   /** The latest ordered lifecycle boundary decides completion; a later start reopens the session. */
@@ -145,9 +146,11 @@ const collectFacts = (events: readonly AgentEvent[], live = false): SessionFacts
     else if (e.kind === 'file.read') reads.add(e.nodeId);
     else if (e.kind === 'risk') ensure(e.nodeId, e.atMs).risks.push({ kind: e.risk, atMs: e.atMs });
     else if (e.kind === 'validation') {
-      finalValidations.set(e.validation, { status: e.status, atMs: e.atMs });
+      const detail = e.status === 'unknown' && e.detail !== undefined ? { detail: e.detail } : {};
+      finalValidations.set(e.validation, { status: e.status, atMs: e.atMs, ...detail });
       const previous = history.filter((h) => h.kind === e.validation).at(-1);
-      if (!previous || previous.status !== e.status) history.push({ kind: e.validation, status: e.status, atMs: e.atMs });
+      const reasonChanged = e.status === 'unknown' && unknownResultText(previous?.detail) !== unknownResultText(e.detail);
+      if (!previous || previous.status !== e.status || reasonChanged) history.push({ kind: e.validation, status: e.status, atMs: e.atMs, ...detail });
     }
     else if (e.kind === 'session.start') {
       failed = false;
@@ -295,16 +298,16 @@ const VALIDATION_TONE: Record<ValidationStatus, StoryEvent['tone']> = {
   stale: 'neutral',
 };
 
-const validationLabel = (kind: ValidationKind, status: ValidationStatus): string => {
+const validationLabel = (kind: ValidationKind, status: ValidationStatus, detail?: string): string => {
   const name = kind === 'build' ? 'Build' : 'Tests';
-  if (status === 'unknown') return `${name}: result unknown`;
+  if (status === 'unknown') return `${name}: ${unknownResultText(detail)}`;
   if (status === 'stale') return `${name}: stale (code changed after the run)`;
   return `${name} ${status}`;
 };
 
 /** "Everything validated" requires observed passing results for every observed check. */
 export const checkVerdict = (validations: readonly ValidationCue[]): CheckVerdict => {
-  if (validations.length === 0) return 'none-ran';
+  if (validations.length === 0) return 'none-observed';
   if (validations.some((v) => v.status === 'failed')) return 'some-failed';
   if (validations.every((v) => v.status === 'passed')) return 'all-passed';
   return 'unverified';
@@ -567,8 +570,8 @@ const compose = (
   if (live) {
     for (const h of session.history) {
       const at = visits.reduce((latest, v, i) => (v.firstWriteMs <= h.atMs ? Math.max(latest, marks[i]?.readyAt ?? wakeEnd) : latest), wakeEnd);
-      liveValidations.push({ kind: h.kind, status: h.status, at });
-      story.push({ t: at, label: validationLabel(h.kind, h.status), tone: VALIDATION_TONE[h.status], realTime: formatOffset(h.atMs) });
+      liveValidations.push({ kind: h.kind, status: h.status, at, ...(h.detail !== undefined ? { detail: h.detail } : {}) });
+      story.push({ t: at, label: validationLabel(h.kind, h.status, h.detail), tone: VALIDATION_TONE[h.status], realTime: formatOffset(h.atMs) });
     }
   }
   const liveFailedChecks = latestPerKind(liveValidations).filter((v) => v.status === 'failed').length;
@@ -631,9 +634,9 @@ const compose = (
       const result = session.finalValidations.get(kind);
       if (!result) continue;
       const at = E + BEAT.firstValidation + validations.length * BEAT.validationStep;
-      validations.push({ kind, status: result.status, at });
+      validations.push({ kind, status: result.status, at, ...(result.detail !== undefined ? { detail: result.detail } : {}) });
       if (result.status === 'failed') failures++;
-      story.push({ t: at, label: validationLabel(kind, result.status), tone: VALIDATION_TONE[result.status], realTime: formatOffset(result.atMs) });
+      story.push({ t: at, label: validationLabel(kind, result.status, result.detail), tone: VALIDATION_TONE[result.status], realTime: formatOffset(result.atMs) });
     }
   }
 

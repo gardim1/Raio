@@ -1,6 +1,7 @@
 import type { RiskKind, ValidationKind, ValidationStatus } from '../session/model/script';
 import type { SessionSnapshot } from '../../platform/desktopBridge';
 import type { EditConfidence } from './diskEvidence';
+import { unknownResultText } from '../session/model/unknownResultText';
 import type { Relationships } from './importEdges';
 
 /** Shown next to a disk change that no reported edit accounts for. */
@@ -46,6 +47,8 @@ export interface ValidationInsight {
   readonly staleSinceMs?: number;
   /** When the first later project change happened (only on a `failed` entry): "failed · code changed since". */
   readonly codeChangedSinceMs?: number;
+  /** Contract detail explaining an unknown result; only known values are displayed. */
+  readonly detail?: string;
 }
 
 /** Short wording for one validation state; a failure keeps its failed wording even when the code changed. */
@@ -53,6 +56,7 @@ export const describeValidation = (v: ValidationInsight): string => {
   const name = v.kind === 'tests' ? 'Tests' : 'Build';
   if (v.status === 'stale') return `${name}: stale (passed, then code changed)`;
   if (v.status === 'failed') return v.codeChangedSinceMs === undefined ? `${name}: failed` : `${name}: failed · code changed since`;
+  if (v.status === 'unknown') return `${name}: ${unknownResultText(v.detail)}`;
   return `${name}: ${v.status}`;
 };
 

@@ -16,7 +16,7 @@ export type AgentEvent =
       readonly change: 'added' | 'modified' | 'deleted';
     }
   | { readonly kind: 'risk'; readonly atMs: number; readonly nodeId: NodeId; readonly risk: RiskKind; readonly detail: string }
-  | { readonly kind: 'validation'; readonly atMs: number; readonly validation: ValidationKind; readonly status: ValidationStatus }
+  | { readonly kind: 'validation'; readonly atMs: number; readonly validation: ValidationKind; readonly status: ValidationStatus; readonly detail?: string }
   | { readonly kind: 'session.end'; readonly atMs: number; readonly outcome: 'completed' | 'failed' | 'interrupted' };
 
 export interface SessionLog {

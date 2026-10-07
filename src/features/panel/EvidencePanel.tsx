@@ -45,7 +45,7 @@ export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectIn
       <ul className="evidence__list" aria-label="Checks">
         {checks.map((v) => (
           <li key={v.kind} className="evidence__item">
-            <span className="evidence__path">{describeValidation(v)}</span>
+            <span className="evidence__path" title={describeValidation(v)}>{describeValidation(v)}</span>
             <span className="evidence__meta">
               {v.status === 'stale' ? `last result: passed · code changed ${formatOffset(v.staleSinceMs ?? v.atMs)}` : `result at ${formatOffset(v.atMs)}`}
               {v.codeChangedSinceMs !== undefined ? ` · code changed ${formatOffset(v.codeChangedSinceMs)}` : ''}

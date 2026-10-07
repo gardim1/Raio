@@ -161,11 +161,12 @@ export const projectSessionDetailed = (
         if (!kind) break;
         // The result is logged with the status it had when it happened; what the project did afterwards is history.
         const recorded = statusFromExit(event.evidence.exitCode);
+        const detail = recorded === 'unknown' && event.evidence.detail !== undefined ? { detail: event.evidence.detail } : {};
         const changedAt = recorded === 'passed' || recorded === 'failed' ? firstChangeAfter(timeOf(event), changes, editMoments) : undefined;
         const changedSinceMs = changedAt === undefined ? undefined : Math.max(0, changedAt - startAt);
-        log.push({ kind: 'validation', atMs: at, validation: kind, status: recorded });
+        log.push({ kind: 'validation', atMs: at, validation: kind, status: recorded, ...detail });
         if (changedSinceMs === undefined) {
-          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at });
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, ...detail });
         } else if (recorded === 'passed') {
           // A pass the project outlived gets a later `stale` entry at the change time (never past the session's last event).
           const staleAt = Math.min(changedSinceMs, lastAtMs);

@@ -26,7 +26,7 @@ export type ValidationKind = 'build' | 'tests';
  */
 export type ValidationStatus = 'running' | 'passed' | 'failed' | 'unknown' | 'incomplete' | 'stale';
 /** What the completion summary may honestly claim about checks. */
-export type CheckVerdict = 'all-passed' | 'some-failed' | 'unverified' | 'none-ran';
+export type CheckVerdict = 'all-passed' | 'some-failed' | 'unverified' | 'none-observed';
 export type Gaze = 'auto' | 'down' | 'viewer';
 
 /** Raio's path is a list of contiguous motion segments. A segment without `from` starts where the previous ended. */
@@ -93,6 +93,8 @@ export interface ValidationCue {
   readonly kind: ValidationKind;
   readonly status: ValidationStatus;
   readonly at: number;
+  /** Contract detail explaining an unknown result; only known values are displayed. */
+  readonly detail?: string;
 }
 
 export interface StatusCue {

@@ -95,10 +95,10 @@ describe('validation claims need evidence', () => {
     { kind: 'file.write', atMs: 1000, path: 'src/auth/a.ts', nodeId: 'auth', change: 'modified' },
   ];
 
-  it('says no checks ran when no validation was observed', () => {
+  it('says no checks were observed when no validation was observed', () => {
     const script = compileReplay(log([...base, { kind: 'session.end', atMs: 5000, outcome: 'completed' }]), demoGraph);
     expect(script.validations).toEqual([]);
-    expect(script.summary.checks).toBe('none-ran');
+    expect(script.summary.checks).toBe('none-observed');
   });
 
   it('claims everything validated only when every observed check passed', () => {

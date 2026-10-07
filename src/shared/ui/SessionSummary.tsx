@@ -14,7 +14,7 @@ const CLEAR_DETAIL: Record<CheckVerdict, string> = {
   'all-passed': 'Everything validated',
   'some-failed': 'Checks failed',
   unverified: 'Checks not confirmed',
-  'none-ran': 'No checks ran',
+  'none-observed': 'No checks observed',
 };
 
 export const SessionSummary = ({ systems, reviewCount, checks, visible, detailVisible }: SessionSummaryProps) => (

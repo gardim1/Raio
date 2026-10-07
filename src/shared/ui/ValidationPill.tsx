@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import type { ValidationKind, ValidationStatus } from '../../features/session/model/script';
 import { CheckIcon, CrossIcon, SpinnerIcon } from './icons';
+import { unknownResultText } from '../../features/session/model/unknownResultText';
 
 const KIND_LABEL: Record<ValidationKind, string> = { build: 'Build', tests: 'Tests' };
 /** Neutral mark for checks whose outcome Raio did not observe. */
@@ -30,17 +31,18 @@ const STATUS_TEXT: Record<ValidationStatus, string> = {
 export interface ValidationPillProps {
   readonly kind: ValidationKind;
   readonly status: ValidationStatus;
+  readonly detail?: string;
   /** Toggling `visible` plays the enter/exit transition (700ms bouncy spring). */
   readonly visible?: boolean;
 }
 
 /** Compact build/test result chip. Passed = mint, running = cool, failed = coral, unknown/incomplete = muted. */
-export const ValidationPill = ({ kind, status, visible = true }: ValidationPillProps) => {
+export const ValidationPill = ({ kind, status, detail, visible = true }: ValidationPillProps) => {
   const Icon = ICON[status];
   return (
     <div className={`chip chip--${status}${visible ? ' chip--show' : ''}`} aria-hidden={!visible}>
       <Icon />
-      {KIND_LABEL[kind]} {STATUS_TEXT[status]}
+      {KIND_LABEL[kind]} {status === 'unknown' ? unknownResultText(detail) : STATUS_TEXT[status]}
     </div>
   );
 };
