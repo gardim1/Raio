@@ -28,6 +28,8 @@ const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(3600);
 const HOUSEKEEPING_CATCH_UP: Duration = Duration::from_secs(60);
 pub const INGESTED_EVENT: &str = "events-ingested";
 const CONNECTIONS_FILE: &str = "connections.json";
+/// Present while a connection change is not yet reflected in `connections.json`; readers must then treat the list as unknown.
+const CONNECTIONS_PENDING: &str = "connections.pending";
 
 #[cfg(test)]
 thread_local! {
@@ -175,15 +177,24 @@ impl Core {
             let bytes = serde_json::to_vec(&connections).map_err(|e| e.to_string())?;
             #[cfg(test)]
             if FAIL_CONNECTIONS_WRITE.with(|fail| fail.get()) { return Err("simulated write failure".into()); }
-            paths::write_atomic(&self.data.join(CONNECTIONS_FILE), &bytes).map_err(|e| e.to_string())
+            paths::write_atomic(&self.data.join(CONNECTIONS_FILE), &bytes).map_err(|e| e.to_string())?;
+            // Only a successful rewrite clears the marker: the published list is current again.
+            match fs::remove_file(self.data.join(CONNECTIONS_PENDING)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            }
         };
         if let Err(error) = refresh() { eprintln!("Raio could not update connections.json: {error}"); }
     }
 
-    /// Before a connection change: withdraw the published list, so a reader (the uninstaller) never trusts a list
-    /// the change could make stale. If the rewrite afterwards fails, the list stays absent, which readers must treat
-    /// as unknown. Best effort, like the rewrite.
+    /// Before a connection change: mark the published list as pending and withdraw it, so a reader (the
+    /// uninstaller) never trusts a list the change could make stale. The marker is a new file, so a reader holding
+    /// the old list open cannot block it; it is removed only after a successful rewrite. If the rewrite fails, the
+    /// marker (or at least the missing list) tells readers the connections are unknown. Best effort, like the rewrite.
     fn withdraw_connections(&self) {
+        if let Err(e) = fs::write(self.data.join(CONNECTIONS_PENDING), b"") {
+            eprintln!("Raio could not mark connections.json as pending: {e}");
+        }
         match fs::remove_file(self.data.join(CONNECTIONS_FILE)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => eprintln!("Raio could not withdraw connections.json: {e}"),
             _ => {}
@@ -529,9 +540,11 @@ mod tests {
         FAIL_CONNECTIONS_WRITE.with(|fail| fail.set(true));
         core.connect_at(root, id.clone(), command, &preview).unwrap();
         assert!(!path.exists(), "the old empty list must not survive a connect whose rewrite failed");
+        assert!(data.path().join(CONNECTIONS_PENDING).exists(), "readers are told the list is unknown");
         FAIL_CONNECTIONS_WRITE.with(|fail| fail.set(false));
         core.disconnect_id(&id).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"[]");
+        assert!(!data.path().join(CONNECTIONS_PENDING).exists(), "a successful rewrite clears the marker");
     }
 
     #[test]
