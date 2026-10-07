@@ -16,6 +16,7 @@ node_modules/
 /target/
 /src-tauri/target/
 /dist/
+/release-local/
 /coverage/
 /playwright-report/
 /test-results/

@@ -42,6 +42,21 @@ There is no installer yet: `npm run app` runs the development build in place.
 
 The `raio-hook` binary must stay next to `raio.exe` (packaging is not done yet). The hook is asynchronous, always exits 0, and goes inert if Raio has not run for 7 days.
 
+## Portable local package (Windows)
+
+On Windows x64, build and package locally:
+
+```powershell
+npm run app:build
+npm run app:pack
+```
+
+The pack command requires both release executables to be newer than every file under `src/` and `src-tauri/src/`. It refuses tracked changes outside `docs/` and `*.md`; `npm run app:pack -- --allow-dirty` explicitly permits those changes and labels the package accordingly, but still requires fresh binaries. It creates the ignored `release-local/raio-<shortsha>-windows-x64/` folder with `raio.exe`, `raio-hook.exe`, and `README-PORTABLE.txt`, plus a zip using Windows' built-in `tar.exe` when available. Existing package output is never overwritten. The README records the full commit SHA, build time (the latest executable modification time) and SHA256 hashes. This is a local package; nothing is signed, installed or published.
+
+Keep the executables together and open `raio.exe` (Windows x64 and WebView2 required). This build is unsigned, so Windows SmartScreen may warn; keep OS protections enabled. Connected projects' hooks point to this folder's `raio-hook.exe`: **Disconnect** those projects before moving the folder, quit from the tray, then run Raio in the new location and **Reconnect** through the settings preview.
+
+Data lives at `%APPDATA%\io.github.gardim1.raio`. To remove the package, Disconnect all projects, quit from the tray, then delete the package folder and that data directory (including Raio's local history). The zip can also be deleted.
+
 ## Privacy
 
 Everything stays on this machine. There is no account, cloud backend, telemetry or LLM call. Grouping of files into areas is a heuristic, relationships between areas are shown as unknown, and edits are reported as "consistent on disk", never as proven authorship.
