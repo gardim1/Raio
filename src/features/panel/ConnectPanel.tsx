@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBridge } from '../../platform/BridgeContext';
 import type { ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { Button } from '../../shared/ui/Button';
 import { MiniOrb } from '../raio/MiniOrb';
+import { ConnectMapPreview, readPreviewMap, type PreviewMapState } from './ConnectMapPreview';
 
 /**
  * Shows only what Raio changes: the `hooks` key in full, every other value masked so secrets in
@@ -20,15 +21,16 @@ export const maskedSettings = (text: string | null): string => {
   }
 };
 
-type Step = { readonly kind: 'idle' } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview } | { readonly kind: 'error'; readonly message: string };
+type Step = { readonly kind: 'idle' } | { readonly kind: 'loading'; readonly root: string; readonly map: PreviewMapState } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview; readonly map: PreviewMapState } | { readonly kind: 'error'; readonly message: string };
 
 /** The same explicit before/after review for initial connection and refreshing an existing connection. */
-export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = false }: {
+export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = false, map }: {
   readonly preview: ConnectPreview;
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onConnect: () => void;
   readonly sidebar?: boolean;
+  readonly map?: PreviewMapState;
 }) => {
   const review = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -56,6 +58,7 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
       Disconnect removes only Raio's entries.
     </p>
     {preview.gitIgnored === false && <p className="connect__warn">Git does not ignore this file. It contains a path on this computer; do not commit it.</p>}
+    {map && <ConnectMapPreview state={map} />}
     <div className="connect__diff">
       <div><span>Before</span><pre>{maskedSettings(preview.before)}</pre></div>
       <div><span>After</span><pre>{maskedSettings(preview.after)}</pre></div>
@@ -73,29 +76,55 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
  * Empty state of the native app: connect a project (opt-in, previewed, reversible) or, once connected,
  * wait for the first agent session. Nothing is written until the user confirms the exact diff.
  */
-export const ConnectPanel = ({ connector }: { readonly connector: Connector }) => {
+export const ConnectPanel = ({ connector, initialRoot, onClose }: { readonly connector: Connector; readonly initialRoot?: string; readonly onClose?: () => void }) => {
   const bridge = useBridge();
   const project = useSyncExternalStore(bridge.subscribe, connector.project, connector.project);
-  const [step, setStep] = useState<Step>({ kind: 'idle' });
+  const [step, setStep] = useState<Step>(initialRoot ? { kind: 'loading', root: initialRoot, map: { kind: 'loading' } } : { kind: 'idle' });
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
+
+  const begin = (root: string) => {
+    const token = ++request.current;
+    setBusy(false);
+    setError(null);
+    setStep({ kind: 'loading', root, map: { kind: 'loading' } });
+    // The settings diff can be reviewed while the independent read-only map scan is pending.
+    void readPreviewMap(bridge, root).then((map) => {
+      if (token !== request.current) return;
+      setStep((current) => current.kind === 'loading' || current.kind === 'review' ? { ...current, map } : current);
+    });
+    void connector.preview(root).then((preview) => {
+      if (token !== request.current) return;
+      setStep((current) => ({ kind: 'review', root, preview, map: current.kind === 'loading' ? current.map : { kind: 'loading' } }));
+    }).catch((cause: unknown) => { if (token === request.current) setStep({ kind: 'error', message: String(cause) }); });
+  };
+  useEffect(() => {
+    if (initialRoot) begin(initialRoot);
+    return () => { request.current++; };
+  }, [initialRoot, connector, bridge]);
+  const cancel = () => { request.current++; setBusy(false); setStep({ kind: 'idle' }); setError(null); onClose?.(); };
 
   const run = async (action: () => Promise<void>) => {
+    const token = request.current;
     setBusy(true);
+    setError(null);
     try {
       await action();
     } catch (error) {
-      setStep({ kind: 'error', message: String(error) });
+      if (token === request.current) setError(String(error));
     } finally {
-      setBusy(false);
+      if (token === request.current) setBusy(false);
     }
   };
 
-  if (project && step.kind !== 'review') {
+  if (project && !initialRoot && step.kind === 'idle') {
     return (
       <div className="connect">
         <MiniOrb size={22} glow={0.35} bob restartKey="connected" />
         <p className="connect__title">Connected to {project.name}</p>
         <p className="connect__body">Start a new Claude Code session in this folder. Hooks apply to sessions started after connecting.</p>
+        {error && <p className="connect__warn" role="alert">{error}</p>}
         <Button onClick={() => void run(() => connector.disconnect())} disabled={busy}>
           Disconnect
         </Button>
@@ -103,14 +132,25 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
     );
   }
 
+  if (step.kind === 'loading') return <div className="connect connect--review">
+    <p className="connect__title">Reviewing {step.root}</p>
+    <ConnectMapPreview state={step.map} />
+    <p className="evidence__note">Loading settings preview…</p>
+    <Button onClick={cancel}>Cancel</Button>
+  </div>;
+
   if (step.kind === 'review') {
     const { root, preview } = step;
     return (
-      <ConnectReview preview={preview} busy={busy} onCancel={() => setStep({ kind: 'idle' })}
+      <div className="connect__flow">
+      {error && <p className="connect__warn" role="alert">{error}</p>}
+      <ConnectReview preview={preview} map={step.map} busy={busy} onCancel={cancel}
         onConnect={() => void run(async () => {
+          const token = request.current;
           await connector.connect(root, preview);
-          setStep({ kind: 'idle' });
+          if (token === request.current) { setStep({ kind: 'idle' }); onClose?.(); }
         })} />
+      </div>
     );
   }
 
@@ -120,11 +160,14 @@ export const ConnectPanel = ({ connector }: { readonly connector: Connector }) =
       <p className="connect__title">No project yet</p>
       <p className="connect__body">Choose a repository and connect Claude Code to it. Raio shows the exact change before writing anything.</p>
       {step.kind === 'error' && <p className="connect__warn">{step.message}</p>}
+      {error && <p className="connect__warn" role="alert">{error}</p>}
+      {initialRoot && <Button onClick={cancel}>Cancel</Button>}
       <Button
         onClick={() =>
           void run(async () => {
+            const token = request.current;
             const root = await connector.chooseFolder();
-            if (root) setStep({ kind: 'review', root, preview: await connector.preview(root) });
+            if (root && token === request.current) begin(root);
           })
         }
         disabled={busy}

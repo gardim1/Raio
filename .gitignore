@@ -2,6 +2,8 @@
 /.local/
 /.worktrees/
 /.claude/settings.local.json
+/CLAUDE.local.md
+/AGENTS.override.md
 
 # Credentials and machine-specific secrets
 .env

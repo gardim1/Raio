@@ -1,6 +1,8 @@
 import type { CSSProperties } from 'react';
+import type { CompanionPresence } from '../modes/companionPresence';
 
 export interface MiniOrbProps {
+  readonly companion?: CompanionPresence;
   /** Diameter in px (brand mark 12, island 14–18, wordmark 18). */
   readonly size?: number;
   /** 0–1 glow intensity; follow the live orb's working level. */
@@ -13,11 +15,11 @@ export interface MiniOrbProps {
 }
 
 /** CSS rendition of Raio used in chrome (title bar, Island, wordmark). */
-export const MiniOrb = ({ size = 12, glow = 0.55, warm = 0, bob = false, restartKey }: MiniOrbProps) => {
+export const MiniOrb = ({ size = 12, glow = 0.55, warm = 0, bob = false, restartKey, companion }: MiniOrbProps) => {
   const style: CSSProperties = {
     width: size,
     height: size,
     boxShadow: `0 0 ${Math.round(size * 0.85)}px rgba(${Math.round(138 + 107 * warm)},${Math.round(180 + 2 * warm)},${Math.round(255 - 163 * warm)},${glow.toFixed(2)})`,
   };
-  return <span key={restartKey} className={`mini-orb${bob ? ' mini-orb--bob' : ''}`} style={style} aria-hidden />;
+  return <span key={restartKey} className={`mini-orb${bob && (!companion || companion.state === 'working') ? ' mini-orb--bob' : ''}`} data-presence={companion?.state} style={style} aria-hidden />;
 };

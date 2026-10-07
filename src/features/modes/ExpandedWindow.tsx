@@ -20,6 +20,7 @@ import { EvidencePanel } from '../panel/EvidencePanel';
 import { ConnectionFooter } from '../panel/ConnectionFooter';
 import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
 import type { DesktopBridge } from '../../platform/desktopBridge';
+import { lastRecordedSession } from '../session/model/lastRecordedSession';
 
 /** Matches the Windows-only chrome configuration in surfaces.rs; the harness never opens a native API. */
 export const expandedWindowChrome = (
@@ -138,6 +139,7 @@ export const ExpandedWindow = ({
               <div className="sidebar__task">{overview.title}</div>
               <div className="sidebar__meta">{overview.meta}</div>
             </div>
+            <p className="evidence__note">{lastRecordedSession(snapshotNow?.log ?? null)}</p>
             {selected ? (
               <NodeInspector node={selected} frame={frame.nodes.get(selected.id)} insight={insights.byNode.get(selected.id)} onClose={() => onSelectNode(null)} />
             ) : (

@@ -26,7 +26,7 @@ export const ProjectOnlyView = ({ snapshot, mode }: { readonly snapshot: Project
   const go = (surface: Surface) => bridge.showSurface(surface);
   if (mode === 'island') return <IdleIsland onOpen={() => go('expanded')} />;
   if (mode === 'mini') return (
-    <MiniSurface project={snapshot.project.name} status="ready" stateLabel="No session yet" pinned={pinned}
+    <MiniSurface project={snapshot.project.name} projectTitle="No session recorded yet" status="ready" stateLabel="No session yet" pinned={pinned}
       onTogglePin={() => { bridge.setPinned(!pinned); togglePin(); }} onExpand={() => go('expanded')} onCollapse={() => go('island')}
       footer={<div className="mini__foot"><span className="mini__foot-text" title={waiting} style={problem ? { overflow: 'hidden', textOverflow: 'ellipsis' } : undefined}>{problem ?? (snapshot.listing === 'ready' ? waiting : heading)}</span></div>}>
       <ArchitectureCanvas graph={snapshot.graph} frame={frame} variant="mini" camera={false} fit={snapshot.graph.nodes.length > 0 ? 'content' : 'world'} className="mini__svg" label="Project architecture map" />
@@ -44,6 +44,7 @@ export const ProjectOnlyView = ({ snapshot, mode }: { readonly snapshot: Project
           <div className="map expanded__map"><ArchitectureCanvas graph={snapshot.graph} frame={frame} className="map__svg" label="Project architecture map" /></div>
           <aside className="sidebar"><div className="sidebar__scroll">
             <div className="sidebar__overview"><div className="sidebar__eyebrowless">{snapshot.project.name}</div><div className="sidebar__task">{heading}</div><div className="sidebar__meta">{waiting}</div></div>
+            <p className="evidence__note">No session recorded yet</p>
             <p className="evidence__note">{snapshot.note}</p>
             {snapshot.technologies.length > 0 && <ul className="evidence__list" aria-label="Technologies">{snapshot.technologies.map((line) => <li key={line} className="evidence__item"><span className="evidence__path" title={line}>{line}</span><span className="evidence__meta">named in manifests (names only, heuristic)</span></li>)}</ul>}
             {bridge.connector && <ConnectionFooter connector={bridge.connector} />}

@@ -6,6 +6,7 @@ import { CollapseIcon, ExpandIcon, PinIcon } from '../../shared/ui/icons';
 import { tokens } from '../../tokens';
 import type { AgentStatusState } from '../session/model/script';
 import { MORPH_TRANSITION } from './presence';
+import type { CompanionPresence } from './companionPresence';
 
 const SIZE = tokens.size.miniPlayer;
 interface Rect { x: number; y: number; w: number; h: number }
@@ -16,7 +17,9 @@ const initialRect = (): Rect => ({
 });
 
 export interface MiniSurfaceProps {
+  readonly companion?: CompanionPresence;
   readonly project: string;
+  readonly projectTitle?: string;
   readonly status: AgentStatusState;
   readonly stateLabel: string;
   readonly pinned: boolean;
@@ -28,7 +31,7 @@ export interface MiniSurfaceProps {
 }
 
 /** Shared Mini chrome and gestures, whether it displays a session or a project before telemetry. */
-export const MiniSurface = ({ project, status, stateLabel, pinned, onTogglePin, onExpand, onCollapse, children, footer }: MiniSurfaceProps) => {
+export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned, onTogglePin, onExpand, onCollapse, children, footer, companion }: MiniSurfaceProps) => {
   const [rect, setRect] = useState<Rect>(initialRect);
   const gesture = useRef<{ kind: 'move' | 'resize'; startX: number; startY: number; origin: Rect } | null>(null);
   const begin = useCallback(
@@ -55,9 +58,9 @@ export const MiniSurface = ({ project, status, stateLabel, pinned, onTogglePin, 
       className="mini" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, borderRadius: 20 }}
       onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       <header className="mini__head" onPointerDown={begin('move')}>
-        <span className={`mini__status mini__status--${status}`} />
-        <span className="mini__project">{project}</span>
-        <span className="mini__state">{stateLabel}</span>
+        <span className={`mini__status mini__status--${status}`} data-presence={companion?.state} role="img" aria-label={companion?.description ?? stateLabel} title={companion?.description} aria-hidden={companion ? undefined : true}>{companion?.state === 'unknown' ? '?' : companion?.state === 'disconnected' ? '−' : null}</span>
+        <span className="mini__project" title={projectTitle}>{project}</span>
+        <span className="mini__state" title={companion?.description}>{companion && !/Replay/.test(stateLabel) ? companion.label : stateLabel}</span>
         <span className="mini__spacer" />
         <IconButton label={pinned ? 'Unpin (stop floating on top)' : 'Keep on top'} active={pinned} onClick={onTogglePin}><PinIcon filled={pinned} /></IconButton>
         <IconButton label="Tuck into Island" onClick={onCollapse}><CollapseIcon /></IconButton>

@@ -6,6 +6,19 @@ export interface ReplayActivitySnapshot {
   readonly complete: boolean;
 }
 
+export interface ReplayActivityState {
+  readonly previous: ReplayActivitySnapshot | null;
+  readonly pending: boolean;
+  readonly run: number;
+}
+export const trackReplayActivity = (state: ReplayActivityState, next: ReplayActivitySnapshot, options: { followsLive: boolean; isReplay: boolean; playing: boolean; run: number }): ReplayActivityState & { returnToLive: boolean } => {
+  const projectChanged = state.previous !== null && state.previous.projectKey !== next.projectKey;
+  const reset = !options.followsLive || !options.isReplay || state.run !== options.run || projectChanged;
+  const pending = !reset && (state.pending || (state.previous !== null && hasNewActivity(state.previous, next)));
+  const returnToLive = (options.followsLive && options.isReplay && projectChanged) || (!reset && (shouldReturnToLive(state.previous, next, options) || (pending && !options.playing && next.complete)));
+  return { previous: next, pending, run: options.run, returnToLive };
+};
+
 /** Map classifications can change after a scan; they do not make an observed event new. */
 const activityKey = (event: AgentEvent): string => {
   switch (event.kind) {
@@ -25,6 +38,10 @@ export const shouldReturnToLive = (
   options: { followsLive: boolean; isReplay: boolean; playing: boolean },
 ): boolean => {
   if (!options.followsLive || !options.isReplay || options.playing || !previous?.complete || previous.projectKey !== next.projectKey) return false;
+  return hasNewActivity(previous, next);
+};
+
+const hasNewActivity = (previous: ReplayActivitySnapshot, next: ReplayActivitySnapshot): boolean => {
   if (previous.log.id !== next.log.id) return next.log.events.length > 0;
   if (previous.log === next.log) return false;
   const seen = new Map<string, number>();

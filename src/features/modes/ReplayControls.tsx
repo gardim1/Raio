@@ -14,10 +14,12 @@ export interface ReplayControlsProps {
   readonly compact?: boolean;
   readonly onInspect?: (event: StoryEvent) => void;
   readonly onExit?: () => void;
+  readonly newActivity?: boolean;
+  readonly onBackToLive?: () => void;
 }
 
 /** Play/Pause · Replay · speed · scrubber with event ticks. Deliberately not a video editor. */
-export const ReplayControls = ({ script, playback, compact = false, onInspect, onExit }: ReplayControlsProps) => {
+export const ReplayControls = ({ script, playback, compact = false, onInspect, onExit, newActivity = false, onBackToLive }: ReplayControlsProps) => {
   const end = script.duration;
   const fraction = Math.min(1, playback.t / end);
   const seekTo = (clientX: number, rect: DOMRect) => playback.seek(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * end);
@@ -77,6 +79,10 @@ export const ReplayControls = ({ script, playback, compact = false, onInspect, o
           {playback.speed}×
         </button>
       )}
+      {newActivity && <div className="replay__activity">
+        <span role="status">New activity</span>
+        {onBackToLive && <button type="button" className="link-btn" onClick={onBackToLive}>Back to live</button>}
+      </div>}
       {onExit && (
         <IconButton label="Close replay" onClick={onExit}>
           <CloseIcon />

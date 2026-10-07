@@ -1,5 +1,5 @@
 import { LayoutGroup } from 'motion/react';
-import { type ReactNode, useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ExpandedWindow } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
@@ -12,7 +12,7 @@ import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
 import { useLiveFollow } from '../features/session/live/useLiveFollow';
-import { shouldReturnToLive, type ReplayActivitySnapshot } from '../features/session/live/replayActivity';
+import { trackReplayActivity, type ReplayActivityState } from '../features/session/live/replayActivity';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
 import { useSessionUi } from '../features/session/store/sessionStore';
@@ -21,6 +21,7 @@ import { ProjectOnlyView } from '../features/project/ProjectOnlyView';
 import { NativeSurfaceEffects } from '../platform/NativeSurfaceEffects';
 import type { SessionSnapshot, Surface } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
+import { followProjectIntents, isWindowsRoot, sameProjectRoot } from '../platform/projectIntent';
 
 /** The live surfaces use the canonical choreography without the film-only wordmark. */
 const liveScript: ChoreographyScript = (() => {
@@ -41,11 +42,30 @@ export const App = ({ underlay }: AppProps) => {
   const bridge = useBridge();
   const storeMode = useSessionUi((s) => s.mode);
   const mode = bridge.fixedSurface ?? storeMode;
+  const [intent, setIntent] = useState<{ root: string; revision: number } | null>(null);
+  const intentRevision = useRef(0);
+  useEffect(() => {
+    if (bridge.fixedSurface !== null && bridge.fixedSurface !== 'expanded') return;
+    const stop = followProjectIntents(bridge, (root) => {
+      const revision = ++intentRevision.current;
+      void (async () => {
+        const current = bridge.connector?.project();
+        const selected = bridge.selectProject ? await bridge.selectProject(root).catch(() => false) : current ? sameProjectRoot(current.root, root, isWindowsRoot(current.root)) : false;
+        if (revision !== intentRevision.current) return;
+        useSessionUi.getState().exitReplay();
+        setIntent(selected ? null : { root, revision });
+        if (bridge.fixedSurface === null) bridge.showSurface('expanded');
+      })();
+    });
+    return () => { intentRevision.current++; stop(); };
+  }, [bridge]);
   return (
     <div className={`app app--${mode}`}>
       {bridge.kind === 'native' && <NativeSurfaceEffects />}
       {underlay}
-      {snapshot ? (
+      {intent && bridge.connector ? (
+        <div className="app__empty"><ConnectPanel key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} /></div>
+      ) : snapshot ? (
         <Surfaces snapshot={snapshot} />
       ) : projectSnapshot ? (
         <ProjectOnlyView snapshot={projectSnapshot} mode={mode} />
@@ -76,6 +96,8 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   const bridge = useBridge();
   const { mode: storeMode, source, selectedNodeId, pinned, liveRun, replayRun, startReplay, exitReplay, selectNode, togglePin } = useSessionUi();
   const mode = bridge.fixedSurface ?? storeMode;
+  const connected = bridge.connector?.project();
+  const projectKey = connected ? JSON.stringify([connected.id, connected.root]) : project;
   /** Browser: switch in place. Native: show that surface's window (and hide this one). */
   const go = (surface: Surface) => bridge.showSurface(surface);
   /** "View changes": native Island hands the replay to the Mini Player window; elsewhere it plays in place. */
@@ -84,8 +106,12 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
     bridge.setPinned(!pinned);
     togglePin();
   };
-  const replayScript = useMemo(() => compileReplay(log, graph), [log, graph]);
-  const insights = useMemo(() => deriveInsights(log), [log]);
+  // Keep the session being reviewed stable while the current live snapshot continues to advance.
+  const replaySnapshot = useMemo(() => snapshot, [replayRun, projectKey]);
+  const replayScript = useMemo(() => compileReplay(replaySnapshot.log, replaySnapshot.graph), [replaySnapshot]);
+  const isReplay = source === 'replay';
+  const shownGraph = isReplay ? replaySnapshot.graph : graph;
+  const insights = useMemo(() => deriveInsights(isReplay ? replaySnapshot.log : log), [isReplay, replaySnapshot, log]);
 
   // Live agent data (and the dev simulated feed) is followed by the live director; only the plain demo fixture plays the film.
   const followsLive = snapshot.provenance === 'live' || snapshot.simulatedFeed !== undefined;
@@ -114,20 +140,20 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [source, replay]);
 
-  const isReplay = source === 'replay';
   const script = isReplay ? replayScript : follow ? follow.script : liveScript;
   const t = isReplay ? replay.t : follow ? follow.t : live.t;
-  const frame = evaluateFrame(script, graph, t);
-  const presence = derivePresence(script, graph, frame, isReplay);
+  const frame = evaluateFrame(script, shownGraph, t);
+  const presence = derivePresence(script, shownGraph, frame, isReplay);
 
-  const connected = bridge.connector?.project();
-  const projectKey = connected ? JSON.stringify([connected.id, connected.root]) : project;
-  const lastActivity = useRef<ReplayActivitySnapshot | null>(null);
+  const lastActivity = useRef<ReplayActivityState>({ previous: null, pending: false, run: replayRun });
+  const [newActivity, setNewActivity] = useState(false);
+  const leaveReplay = () => { replay.pause(); exitReplay(); };
   useEffect(() => {
-    const next = { projectKey, log, complete: isReplay && frame.ui.finished && !replay.playing };
-    if (shouldReturnToLive(lastActivity.current, next, { followsLive, isReplay, playing: replay.playing })) exitReplay();
+    const next = trackReplayActivity(lastActivity.current, { projectKey, log, complete: isReplay && frame.ui.finished }, { followsLive, isReplay, playing: replay.playing, run: replayRun });
     lastActivity.current = next;
-  }, [projectKey, log, isReplay, frame.ui.finished, replay.playing, followsLive, exitReplay]);
+    setNewActivity(next.pending);
+    if (next.returnToLive) leaveReplay();
+  }, [projectKey, log, isReplay, frame.ui.finished, replay.playing, replayRun, followsLive, exitReplay]);
 
   const onSelectEvent = (ev: StoryEvent) => {
     if (ev.nodeId) selectNode(ev.nodeId);
@@ -144,7 +170,9 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
           if (ev.nodeId) selectNode(ev.nodeId);
           if (compact && ev.nodeId) go('expanded');
         }}
-        onExit={exitReplay}
+        onExit={leaveReplay}
+        newActivity={newActivity}
+        onBackToLive={leaveReplay}
       />
     ) : undefined;
 
@@ -157,7 +185,7 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
         <MiniPlayer
           script={script}
           frame={frame}
-          graph={graph}
+          graph={shownGraph}
           project={project}
           presence={presence}
           pinned={pinned}
@@ -173,7 +201,7 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
         <ExpandedWindow
           script={script}
           frame={frame}
-          graph={graph}
+          graph={shownGraph}
           project={project}
           insights={insights}
           presence={presence}
