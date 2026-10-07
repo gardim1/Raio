@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { classifyPath, groupPaths, HEURISTIC_NOTE, MAX_GROUPS, OTHER_GROUP } from './classifyPath';
 
 describe('classifyPath', () => {
+  it('separates Python server templates, frontend tests and client modules by path evidence', () => {
+    expect(classifyPath('app/admin/templates/login.html')).toMatchObject({ groupId: 'templates', kind: 'frontend' });
+    expect(classifyPath('frontend/tests/records.test.ts')).toMatchObject({ groupId: 'tests', kind: 'other' });
+    expect(classifyPath('app/core/calendar_client.py')).toMatchObject({ groupId: 'integrations', label: 'Integrations', kind: 'other' });
+    expect(classifyPath('src/adapters/sms_client.ts')).toMatchObject({ groupId: 'integrations', kind: 'other' });
+    expect(classifyPath('tests/test_sms_client.py')).toMatchObject({ groupId: 'tests', kind: 'other' });
+    expect(classifyPath('docs/sms_client.png')).toMatchObject({ groupId: 'docs' });
+  });
+
   it('uses the package for monorepo roots', () => {
     expect(classifyPath('apps/web/src/main.tsx')).toEqual({ groupId: 'apps/web/src', label: 'web/Src', kind: 'frontend' });
     expect(classifyPath('packages/auth/index.ts')).toEqual({ groupId: 'packages/auth', label: 'auth', kind: 'auth' });

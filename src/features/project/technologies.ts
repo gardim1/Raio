@@ -10,12 +10,12 @@ import type { InventoryManifest } from './projectInventory';
  * is named only by a compose `images` entry or by the prisma datasource `provider`: a driver or client package (pg,
  * psycopg, pgx, ioredis, ...) never implies one, and is listed by its literal package name at most.
  */
-export type TechArea = 'Frontend' | 'API' | 'Database' | 'Queue' | 'Cache';
+export type TechArea = 'Frontend' | 'API' | 'Database' | 'Queue' | 'Cache' | 'Integrations';
 
-export const TECH_AREAS: readonly TechArea[] = ['Frontend', 'API', 'Database', 'Queue', 'Cache'];
+export const TECH_AREAS: readonly TechArea[] = ['Frontend', 'API', 'Database', 'Queue', 'Cache', 'Integrations'];
 
-/** The kind of map area a technology area describes. `Cache` has no area of its own, so it is only listed in the copy. */
-export const KIND_OF_AREA: Readonly<Record<TechArea, SystemKind | null>> = { Frontend: 'frontend', API: 'api', Database: 'database', Queue: 'jobs', Cache: null };
+/** The kind of map area a technology area describes. Cache/integration clients do not imply a system kind. */
+export const KIND_OF_AREA: Readonly<Record<TechArea, SystemKind | null>> = { Frontend: 'frontend', API: 'api', Database: 'database', Queue: 'jobs', Cache: null, Integrations: null };
 export const AREA_OF_KIND: Readonly<Partial<Record<SystemKind, TechArea>>> = { frontend: 'Frontend', api: 'API', database: 'Database', jobs: 'Queue' };
 
 export const NEXT_JS = 'Next.js';
@@ -44,7 +44,7 @@ interface Entry {
 }
 
 const tool = (area: TechArea, name: string, impliedBy?: readonly string[]): Entry => ({ area, name, role: 'tool', ...(impliedBy ? { impliedBy } : {}) });
-const driver = (area: 'Database' | 'Cache'): Entry => ({ area, role: 'driver' });
+const driver = (area: 'Database' | 'Cache' | 'Integrations'): Entry => ({ area, role: 'driver' });
 const engine = (area: 'Database' | 'Cache' | 'Queue', name: string): Entry => ({ area, name, role: 'engine' });
 
 const NPM: Readonly<Record<string, Entry>> = {
@@ -94,6 +94,8 @@ const PYTHON: Readonly<Record<string, Entry>> = {
   psycopg2: driver('Database'),
   'psycopg2-binary': driver('Database'),
   psycopg: driver('Database'),
+  'google-auth': driver('Integrations'),
+  openai: driver('Integrations'),
   asyncpg: driver('Database'),
   pymysql: driver('Database'),
   mysqlclient: driver('Database'),
@@ -223,15 +225,17 @@ const unique = (names: readonly string[]): string[] => [...new Set(names)].sort(
 
 /**
  * The copy for one technology area, e.g. `Database · Prisma (PostgreSQL)`, `Database · pg` or `Cache · Redis (compose)`,
- * from the technologies of that area (others are ignored). Tools come first; drivers only when no tool is named; the
+ * from the technologies of that area (others are ignored). Tools come first; drivers only when no tool is named unless
+ * `includeDrivers` keeps literal client names alongside tools (the project summary); the
  * engine of a prisma datasource follows in parentheses; engines a compose file declares are listed apart, marked
  * `(compose)`, unless `compose: false` (a compose file is about the whole project, not about one area). Null when there is nothing.
  */
-export const describeArea = (area: TechArea, technologies: readonly Technology[], options: { readonly compose?: boolean } = {}): string | null => {
+export const describeArea = (area: TechArea, technologies: readonly Technology[], options: { readonly compose?: boolean; readonly includeDrivers?: boolean } = {}): string | null => {
   const ofArea = technologies.filter((t) => t.area === area);
   const present = new Set(ofArea.map((t) => t.name));
   const tools = unique(ofArea.filter((t) => t.role === 'tool' && !IMPLIED_BY.get(t.name)?.some((by) => present.has(by))).map((t) => t.name)).slice(0, MAX_NAMES);
-  const head = tools.length > 0 ? tools : unique(ofArea.filter((t) => t.role === 'driver').map((t) => t.name)).slice(0, MAX_NAMES);
+  const drivers = unique(ofArea.filter((t) => t.role === 'driver').map((t) => t.name)).slice(0, MAX_NAMES);
+  const head = tools.length > 0 ? [...tools, ...(options.includeDrivers ? drivers : [])] : drivers;
   const provided = unique(ofArea.filter((t) => t.role === 'engine' && t.via === 'provider').map((t) => t.name));
   const composed = options.compose === false ? [] : unique(ofArea.filter((t) => t.role === 'engine' && t.via === 'compose').map((t) => t.name)).filter((n) => !provided.includes(n));
   const named = head.length > 0 ? `${head.join(', ')}${provided.length > 0 ? ` (${provided.join(', ')})` : ''}` : provided.join(', ');

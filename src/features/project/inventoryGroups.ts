@@ -7,7 +7,7 @@ import { AREA_OF_KIND, describeArea, detectTechnologies, KIND_OF_AREA, NEXT_JS, 
 /** The areas of a whole project, ranked for the map, with the copy about the technologies its manifests name. */
 export interface InventoryMap {
   /**
-   * The 12 largest areas of the listing (by file count, ties by name) plus `Other` when some areas did not fit. Which
+   * The 12 largest areas of the listing (non-asset file count, ties by name) plus `Other` when some areas did not fit. Which
    * areas a session touched never changes the 12, so nothing moves between sessions of the same listing. The areas a
    * session touched that did not fit are listed in `Other.members`.
    */
@@ -36,6 +36,11 @@ const DJANGO_API_FILES = new Set(['views.py', 'urls.py', 'serializers.py']);
 /** Folder names that only mean a database or a queue in a backend language layout (not Redux `store`, TS `models`, gulp `tasks`). */
 const BACKEND_KIND_BY_NAME: Readonly<Record<string, SystemKind>> = { models: 'database', store: 'database', entities: 'database', repository: 'database', repositories: 'database', tasks: 'jobs' };
 const ASSET_FOLDERS = new Set(['static', 'public', 'assets']);
+/** Known graphics/binary extensions get no ranking weight, but retain their groups and path mappings. */
+const ASSET_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico', 'bmp', 'tif', 'tiff', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'mp3', 'mp4', 'mov', 'webm', 'ogg', 'wav', 'flac', 'pdf', 'zip', 'exe', 'dll', 'bin', 'pyc']);
+const CAPABILITY_EXTENSIONS = new Set([...BACKEND_EXTENSIONS, ...FRONTEND_EXTENSIONS, 'html', 'htm', 'jinja', 'jinja2', 'j2', 'hbs', 'erb']);
+const AUTH_NAMES = new Set(['auth', 'authentication', 'login', 'signin', 'sign-in', 'sign_in', 'password-reset', 'password_reset', 'reset-password', 'reset_password', 'session', 'sessions']);
+const AUTHENTICATION_HINT = 'Authentication (detected from file names)';
 
 const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1).toLowerCase();
 const extensionOf = (path: string): string => {
@@ -45,6 +50,13 @@ const extensionOf = (path: string): string => {
 const lastSegment = (groupId: string): string => groupId.slice(groupId.lastIndexOf('/') + 1);
 const directoryOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf('/')));
 const isUnder = (file: string, dir: string): boolean => file.startsWith(`${dir}/`);
+const hasAuthenticationEvidence = (path: string): boolean => {
+  const normal = path.replaceAll('\\', '/').toLowerCase();
+  if (!CAPABILITY_EXTENSIONS.has(extensionOf(normal))) return false;
+  const segments = normal.split('/');
+  const file = segments.pop() ?? '';
+  return segments.some((s) => AUTH_NAMES.has(s)) || AUTH_NAMES.has(file.split('.')[0] ?? '');
+};
 
 /** Workspace folders the root `package.json` declares: `libs/*` makes `libs` a package root, `tools/cli` a package. */
 const workspaceContext = (manifests: readonly InventoryManifest[]): Required<ClassifyContext> => {
@@ -91,7 +103,7 @@ const refineKind = (group: PathGroup, files: readonly string[], ownTechnologies:
   const names = new Set(files.map(baseName));
   if (names.has('settings.py')) return 'config';
   if ([...names].some((n) => DJANGO_API_FILES.has(n))) return 'api';
-  if (names.has('models.py')) return 'database';
+  if (names.has('models.py') || names.has('database.py') || names.has('db.py')) return 'database';
   return group.kind;
 };
 
@@ -124,8 +136,8 @@ const analyse = (inventory: ProjectInventory): Analysis => {
   for (const [id, group] of named) {
     const files = filesOf.get(id) ?? [];
     const kind = refineKind(group, files, ownTechnologies(id));
-    const area = AREA_OF_KIND[kind];
     const name = lastSegment(id);
+    const area = name === 'integrations' ? 'Integrations' : AREA_OF_KIND[kind];
     let hint: string | null = null;
     if (area && name !== 'migrations' && !ASSET_FOLDERS.has(name)) {
       // A root manifest is about every area of the matching kind; a manifest inside a folder, about the areas that hold files there.
@@ -134,14 +146,15 @@ const analyse = (inventory: ProjectInventory): Analysis => {
       const nextJs = technologies.find((t) => t.name === NEXT_JS && (dirOf(t) === '' || files.some((f) => isUnder(f, dirOf(t)))));
       hint = describeArea(area, nextRoutes && nextJs ? [...applicable, { ...nextJs, area: 'API' }] : applicable, { compose: false });
     }
+    if (files.some(hasAuthenticationEvidence)) hint = [hint, AUTHENTICATION_HINT].filter(Boolean).join('; ');
     byId.set(id, { groupId: id, label: group.label, kind, ...(hint ? { hint } : {}) });
-    counts.set(id, files.length);
+    counts.set(id, files.filter((file) => !ASSET_EXTENSIONS.has(extensionOf(file))).length);
   }
 
   const compare = (a: PathGroup, b: PathGroup): number => (counts.get(b.groupId) ?? 0) - (counts.get(a.groupId) ?? 0) || a.label.localeCompare(b.label) || a.groupId.localeCompare(b.groupId);
   const ranked = [...byId.values()].filter((g) => g.groupId !== ROOT_GROUP.groupId).sort(compare);
 
-  const lines = TECH_AREAS.map((area) => describeArea(area, technologies)).filter((line): line is string => line !== null);
+  const lines = TECH_AREAS.map((area) => describeArea(area, technologies, { includeDrivers: true })).filter((line): line is string => line !== null);
   return { base, byId, ranked, technologies: lines, maps: new Map() };
 };
 
@@ -154,7 +167,7 @@ const analysisOf = (inventory: ProjectInventory): Analysis => {
 
 /**
  * The areas of the whole project from the core's inventory (a heuristic from folder names and manifest names, see
- * `HEURISTIC_NOTE`). The map keeps the 12 largest areas of the listing (by file count, ties by name) and folds the
+ * `HEURISTIC_NOTE`). The map keeps the 12 largest areas by non-asset file count (ties by name) and folds the
  * rest into `Other`; the areas `touchedPaths` fall in never change that, so positions stay the same between sessions
  * of the same listing. A touched area that did not fit, or that the listing does not hold at all (created since,
  * outside the project, a loose root file), is shown inside `Other`, which lists it (`members`), whatever the number

@@ -89,12 +89,12 @@ describe('projectSession: whole-project inventory', () => {
     expect(frame.nodes.get('auth')?.touched).toBe(true);
   });
 
-  it('hangs the technology hints from the manifests on the nodes, and none where no manifest names one', () => {
+  it('hangs manifest technology hints on the nodes and a qualified auth hint only where file names show it', () => {
     const { snapshot } = run(SESSION, INVENTORY);
     const hint = (id: string) => snapshot.graph.nodeById.get(id)?.hint;
     expect(hint('api')).toBe('API · Express');
     expect(hint('web')).toBe('Frontend · React');
-    expect(hint('auth')).toBeUndefined();
+    expect(hint('auth')).toBe('Authentication (detected from file names)');
     expect(hint('payments')).toBeUndefined();
   });
 

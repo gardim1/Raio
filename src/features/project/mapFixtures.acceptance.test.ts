@@ -3,6 +3,8 @@ import type { RaioEvent } from '../ingest/raioEvent';
 import { MAP_FIXTURES } from './mapFixtures.testdata';
 import { isProjectInventory } from './projectInventory';
 import { projectSessionDetailed } from './projectSession';
+import { groupInventory, inventoryNotes } from './inventoryGroups';
+import { layoutGroups } from './layoutGroups';
 
 /**
  * Acceptance for the whole-project map against the five throwaway fixture projects (each with an EXPECTED.md that says
@@ -75,7 +77,7 @@ describe('map fixture: express-react', () => {
 
   it('shows server, client, jobs, migrations and tests as folder areas', () => {
     expect(map.ids).toEqual(['client', 'config', 'jobs', 'migrations', 'server', 'tests']);
-    expect(map.areas['server']).toMatchObject({ kind: 'api', hint: 'API · Express' });
+    expect(map.areas['server']).toMatchObject({ kind: 'api', hint: 'API · Express; Authentication (detected from file names)' });
     expect(map.areas['client']).toMatchObject({ kind: 'frontend', hint: 'Frontend · React' });
     expect(map.areas['jobs']).toMatchObject({ kind: 'jobs', hint: 'Queue · BullMQ' });
     expect(map.areas['migrations']).toMatchObject({ kind: 'database', hint: undefined });
@@ -146,7 +148,7 @@ describe('map fixture: next-prisma-monorepo', () => {
     expect(map.areas['apps/web/api']).toEqual({ label: 'web/API', kind: 'api', hint: 'API · Next.js' });
     expect(map.areas['apps/web/app']).toEqual({ label: 'web/App', kind: 'frontend', hint: 'Frontend · Next.js' });
     expect(map.areas['apps/web/components']).toEqual({ label: 'web/Components', kind: 'frontend', hint: 'Frontend · Next.js' });
-    expect(map.areas['apps/web/lib']).toEqual({ label: 'web/Lib', kind: 'other', hint: undefined });
+    expect(map.areas['apps/web/lib']).toEqual({ label: 'web/Lib', kind: 'other', hint: 'Authentication (detected from file names)' });
   });
 
   it('shows the Prisma package with its datasource engine, and the UI package with React', () => {
@@ -171,5 +173,68 @@ describe('map fixtures: the output of the core', () => {
   it.each(Object.keys(MAP_FIXTURES))('is accepted by the guard: %s', (name) => {
     const fixture = MAP_FIXTURES[name]!;
     expect(isProjectInventory({ files: fixture.files, truncated: false, skipped: 0, scannedAtMs: 1, manifests: fixture.manifests })).toBe(true);
+  });
+});
+
+describe('map fixture: python-fastapi-next (synthetic)', () => {
+  const fixture = MAP_FIXTURES['python-fastapi-next']!;
+  const inventory = { files: fixture.files, truncated: false, skipped: 0, scannedAtMs: 1, manifests: fixture.manifests };
+  const map = project('python-fastapi-next', 'app/api/routes/records.py');
+
+  it('keeps API, backend logic, integrations, persistence, both interfaces and tests visible despite screenshot-heavy docs', () => {
+    expect(fixture.files.length).toBeGreaterThanOrEqual(60);
+    expect(fixture.files.length).toBeLessThanOrEqual(90);
+    for (const id of ['api', 'services', 'domain', 'integrations', 'repositories', 'alembic', 'frontend', 'templates', 'tests']) {
+      expect(map.ids, `missing ${id}`).toContain(id);
+    }
+    expect(map.areas['api']).toMatchObject({ kind: 'api', hint: 'API · FastAPI' });
+    expect(map.areas['repositories']).toMatchObject({ kind: 'database', hint: 'Database · Alembic, SQLAlchemy' });
+    expect(map.areas['templates']).toMatchObject({ kind: 'frontend' });
+    expect(map.areas['tests']).toMatchObject({ kind: 'other' });
+  });
+
+  it('lists frameworks and literal client packages but claims no database engine or dependency-based authentication', () => {
+    const names = map.insights.technologies!.join(' ');
+    for (const name of ['FastAPI', 'SQLAlchemy', 'Alembic', 'Next.js', 'psycopg', 'google-auth', 'openai']) expect(names).toContain(name);
+    expect(names).not.toMatch(/PostgreSQL|MySQL|SQLite|Authentication|Login/i);
+    expect(map.areas['integrations']!.hint).toBe('Integrations · google-auth, openai');
+    const withoutAuthPaths = { ...inventory, files: ['app/main.py', 'app/integrations/calendar_client.py', 'frontend/app/page.tsx'] };
+    expect(JSON.stringify(groupInventory(withoutAuthPaths))).not.toMatch(/Authentication|Login/);
+  });
+
+  it('attaches qualified authentication hints only to the areas that contain file or route evidence', () => {
+    const hint = 'Authentication (detected from file names)';
+    expect(map.areas['admin']!.hint).toBe(`API · FastAPI; ${hint}`);
+    expect(map.areas['templates']!.hint).toBe(hint);
+    expect(map.areas['frontend']!.hint).toBe(`Frontend · Next.js; ${hint}`);
+    for (const id of ['api', 'services', 'domain', 'integrations', 'repositories', 'alembic', 'tests']) {
+      expect(map.areas[id]!.hint ?? '', id).not.toContain('Authentication');
+    }
+  });
+
+  it('draws only the frontend TS import relationship; Python-only inventory still says relationships unknown', () => {
+    expect(map.pairs).toEqual(['frontend|tests']);
+    const pythonOnly = { ...inventory, files: fixture.files.filter((f) => !f.startsWith('frontend/')), manifests: fixture.manifests.filter((m) => !m.path.startsWith('frontend/')) };
+    const projected = projectSessionDetailed(PROJECT, [event(1, 'session.started'), event(2, 'file.inspected', ['app/api/routes/records.py', 'app/services/records.py'])], undefined, { files: [], truncated: false, skipped: 0, scannedAtMs: 1 }, false, pythonOnly)!;
+    expect(projected.snapshot.graph.edges).toEqual([]);
+    expect(projected.insights.relationships).toBe('unknown');
+    expect(projected.insights.note).toContain('Relationships between areas are unknown');
+  });
+
+  it('keeps top 12 plus Other and positions stable across file order, activity and extra binary-only folders', () => {
+    const initial = groupInventory(inventory);
+    const touched = groupInventory(inventory, ['app/utils/formatting.py', 'docs/screenshots/view-1.png']);
+    const shuffled = groupInventory({ ...inventory, files: [...fixture.files].reverse() });
+    const binaries = groupInventory({ ...inventory, files: [...fixture.files, ...Array.from({ length: 80 }, (_, i) => `illustrations-${i}/preview.png`)] });
+    expect(initial.groups).toHaveLength(13);
+    expect(initial.groups.at(-1)!.groupId).toBe('merged-other');
+    const positions = (groups: typeof initial.groups) => layoutGroups(groups).nodes.map((n) => [n.id, n.position]);
+    expect(positions(touched.groups)).toEqual(positions(initial.groups));
+    expect(positions(shuffled.groups)).toEqual(positions(initial.groups));
+    expect(positions(binaries.groups)).toEqual(positions(initial.groups));
+    expect(inventoryNotes({ ...inventory, truncated: true, skipped: 2 })).toEqual([
+      'The project listing was partial, so some areas may be missing.',
+      '2 files or folders not listed (large, unreadable or online-only).',
+    ]);
   });
 });

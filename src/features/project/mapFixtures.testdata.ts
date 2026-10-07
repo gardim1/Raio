@@ -1,4 +1,5 @@
-// Generated from the five map fixtures (.local/map-fixtures, throwaway projects with an EXPECTED.md each). Do not edit by hand.
+// The original five entries were generated from throwaway .local/map-fixtures projects.
+// python-fastapi-next is a hand-written synthetic alpha fixture: invented names, no private-project content.
 // `files` and `manifests` are the exact output of the core's `project_inventory` for each fixture (names only, Amendment 1);
 // `scripts` are the TS/JS files with the specifiers a `project_imports` scan reports (derived from the sources).
 export interface MapFixtureData {
@@ -8,6 +9,50 @@ export interface MapFixtureData {
 }
 
 export const MAP_FIXTURES: Readonly<Record<string, MapFixtureData>> = {
+  'python-fastapi-next': {
+    files: [
+      'README.md', 'pyproject.toml', 'alembic.ini',
+      'app/__init__.py', 'app/main.py',
+      'app/api/__init__.py', 'app/api/routes/health.py', 'app/api/routes/records.py', 'app/api/v1/__init__.py', 'app/api/v1/users.py',
+      'app/services/__init__.py', 'app/services/records.py', 'app/services/notifications.py', 'app/services/reports.py',
+      'app/domain/__init__.py', 'app/domain/record.py', 'app/domain/user.py',
+      'app/repositories/__init__.py', 'app/repositories/records.py', 'app/repositories/users.py',
+      'app/schemas/__init__.py', 'app/schemas/record.py', 'app/schemas/user.py',
+      'app/core/__init__.py', 'app/core/config.py', 'app/core/database.py',
+      'app/integrations/__init__.py', 'app/integrations/sms_client.py', 'app/integrations/chat_client.py',
+      'app/integrations/calendar_client.py', 'app/integrations/billing_client.py', 'app/integrations/analytics_client.py',
+      'app/admin/auth.py', 'app/admin/views.py',
+      'app/admin/templates/base.html', 'app/admin/templates/login.html', 'app/admin/templates/records.html',
+      'app/jobs/cleanup.py', 'app/utils/formatting.py',
+      'alembic/env.py', 'alembic/script.py.mako',
+      ...Array.from({ length: 5 }, (_, i) => `alembic/versions/000${i + 1}_revision.py`),
+      'frontend/package.json', 'frontend/next.config.mjs',
+      'frontend/app/layout.tsx', 'frontend/app/page.tsx', 'frontend/app/login/page.tsx', 'frontend/app/password-reset/page.tsx',
+      'frontend/components/Nav.tsx', 'frontend/components/RecordTable.tsx',
+      'frontend/lib/auth.ts', 'frontend/lib/http.ts', 'frontend/lib/format.ts', 'frontend/tests/record.test.ts',
+      'tests/conftest.py', 'tests/test_records.py', 'tests/test_users.py', 'tests/test_reports.py',
+      'tests/test_notifications.py', 'tests/test_repositories.py', 'tests/test_integrations.py',
+      'docs/guide.md', ...Array.from({ length: 18 }, (_, i) => `docs/screenshots/view-${i + 1}.png`),
+      'scripts/checks.ps1', 'scripts/sync.sh',
+    ],
+    manifests: [
+      { path: 'pyproject.toml', kind: 'python', facts: { packages: ['fastapi', 'sqlalchemy', 'alembic', 'psycopg', 'google-auth', 'openai', 'httpx', 'apscheduler'] } },
+      { path: 'frontend/package.json', kind: 'npm', facts: { dependencies: ['next', 'react', 'swr', 'zod'], scripts: ['dev', 'build', 'start', 'test'] } },
+    ],
+    scripts: [
+      { path: 'frontend/next.config.mjs', specifiers: [] },
+      { path: 'frontend/app/layout.tsx', specifiers: ['react', '../components/Nav'] },
+      { path: 'frontend/app/page.tsx', specifiers: ['../components/RecordTable'] },
+      { path: 'frontend/app/login/page.tsx', specifiers: ['../../lib/auth'] },
+      { path: 'frontend/app/password-reset/page.tsx', specifiers: ['../../lib/auth'] },
+      { path: 'frontend/components/Nav.tsx', specifiers: [] },
+      { path: 'frontend/components/RecordTable.tsx', specifiers: ['../lib/http', '../lib/format'] },
+      { path: 'frontend/lib/auth.ts', specifiers: ['next/headers'] },
+      { path: 'frontend/lib/http.ts', specifiers: [] },
+      { path: 'frontend/lib/format.ts', specifiers: [] },
+      { path: 'frontend/tests/record.test.ts', specifiers: ['../lib/http'] },
+    ],
+  },
   "django-shop": {
     "files": [
       ".env.example",

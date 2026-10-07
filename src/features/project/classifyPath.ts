@@ -29,6 +29,7 @@ const MONOREPO_ROOTS = ['apps', 'packages', 'services'];
 const SOURCE_ROOTS = new Set(['src', 'lib', 'internal', 'pkg']);
 const NEXT_ROUTE_ROOTS = new Set(['app', 'pages']);
 const TEST_NAMES = new Set(['test', 'tests', '__tests__', 'spec']);
+const CLIENT_MODULE = /_client\.(py|go|java|kt|cs|rb|php|rs|ex|scala|ts|tsx|js|jsx|mjs|cjs)$/i;
 
 const KIND_BY_NAME: Readonly<Record<string, SystemKind>> = {
   web: 'frontend',
@@ -105,6 +106,12 @@ const classifyFolder = (segments: readonly string[]): PathGroup => {
   const first = segments[0]!;
   const root = first.toLowerCase();
   const second = segments[1];
+
+  // Frontend subprojects keep their tests separate; Python app templates are an interface, not API code.
+  if (TEST_NAMES.has(root) || (['frontend', 'client', 'web'].includes(root) && TEST_NAMES.has(second?.toLowerCase() ?? ''))) return TESTS_GROUP;
+  if (root === 'app' && segments.slice(1, -1).some((s) => s.toLowerCase() === 'templates')) return directoryGroup('templates');
+  // A client module is only a name-based integration hint, never evidence of a runtime connection.
+  if (CLIENT_MODULE.test(segments.at(-1)!) && !segments.slice(0, -1).some((s) => TEST_NAMES.has(s.toLowerCase())) && !/^test_/i.test(segments.at(-1)!)) return directoryGroup('integrations');
 
   const routes = (root === 'src' ? segments.slice(1) : segments).map((s) => s.toLowerCase());
   if (NEXT_ROUTE_ROOTS.has(routes[0] ?? '') && routes[1] === 'api' && routes.length >= 3) return directoryGroup('api');

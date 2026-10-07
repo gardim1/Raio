@@ -75,7 +75,7 @@ const LAYOUTS: readonly Layout[] = [
     ),
     groups: {
       app: ['App', 'frontend', 'Frontend · Next.js'],
-      api: ['API', 'api', 'API · Next.js'],
+      api: ['API', 'api', 'API · Next.js; Authentication (detected from file names)'],
       components: ['Components', 'frontend', 'Frontend · Next.js'],
       prisma: ['Prisma', 'database', 'Database · Prisma (PostgreSQL)'],
       public: ['Public', 'frontend', null],
@@ -129,7 +129,7 @@ const LAYOUTS: readonly Layout[] = [
       tests: ['Tests', 'other', null],
       config: ['Config', 'config', null],
     },
-    technologies: ['API · FastAPI', 'Database · Alembic, SQLAlchemy; PostgreSQL (compose)'],
+    technologies: ['API · FastAPI', 'Database · Alembic, SQLAlchemy, psycopg2-binary; PostgreSQL (compose)'],
   },
   {
     name: 'Django',
@@ -173,7 +173,7 @@ const LAYOUTS: readonly Layout[] = [
       logger: ['Logger', 'other', null],
       config: ['Config', 'config', null],
     },
-    technologies: ['API · Gin', 'Database · GORM'],
+    technologies: ['API · Gin', 'Database · GORM, github.com/jackc/pgx/v5'],
   },
   {
     name: 'docker-compose with PostgreSQL and Redis, workers and infra',
@@ -367,6 +367,30 @@ describe('groupInventory: names that only mean something in a backend layout', (
 });
 
 describe('groupInventory: assets and migrations', () => {
+  it('recognizes a Python database module without treating frontend database utilities as persistence', () => {
+    const map = groupInventory(inventory(['app/core/database.py', 'app/core/config.py', 'frontend/lib/database.ts']));
+    expect(map.classify('app/core/database.py').kind).toBe('database');
+    expect(map.classify('frontend/lib/database.ts').kind).toBe('frontend');
+  });
+
+  it('ranks informative files above binary-only areas without dropping their path mapping', () => {
+    const source = Array.from({ length: 12 }, (_, i) => `area${String(i).padStart(2, '0')}/file.ts`);
+    const pictures = Array.from({ length: 100 }, (_, i) => `docs/screenshots/view-${i}.png`);
+    const map = groupInventory(inventory([...pictures, ...source]));
+    expect(map.groups.slice(0, MAX_GROUPS).map((g) => g.groupId)).toEqual(Array.from({ length: 12 }, (_, i) => `area${String(i).padStart(2, '0')}`));
+    expect(map.classify(pictures[0]!)!.groupId).toBe('merged-other');
+    expect(groupInventory(inventory(['static/logo.svg'])).groups.map((g) => g.groupId)).toEqual(['static']);
+  });
+
+  it('uses source/template names for authentication hints, never docs, images, substrings or dependencies alone', () => {
+    for (const path of ['app/admin/auth.py', 'frontend/lib/session.ts', 'frontend/app/password-reset/page.tsx', 'app/admin/templates/login.html', 'src/auth/index.ts']) {
+      expect(groupInventory(inventory([path])).classify(path).hint, path).toContain('Authentication (detected from file names)');
+    }
+    const files = ['app/main.py', 'app/integrations/calendar_client.py', 'docs/login.md', 'docs/screenshots/login.png', 'src/utils/author.ts', 'src/utils/google_auth_client.py'];
+    const map = groupInventory(inventory(files, [{ path: 'pyproject.toml', kind: 'python', facts: { packages: ['google-auth'] } }]));
+    expect(map.groups.map((g) => g.hint ?? '').join(' ')).not.toContain('Authentication');
+  });
+
   it('gives static, public and assets folders no technology hint', () => {
     const inv = inventory(['static/a.css', 'public/b.svg', 'web/app.tsx', 'package.json'], [npm('package.json', { dependencies: ['react'] })]);
     const groups = shape(inv);
