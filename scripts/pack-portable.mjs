@@ -25,8 +25,45 @@ export const packageNames = (version) => {
 
 export const sha256Manifest = (entries) => entries.map(({ name, sha256 }) => `${sha256}  ${name}\n`).join('');
 
-export const portableReadme = ({ sha, buildTime, hashes, dirty }) => `Raio - portable local package (Windows x64)
+const PACK_USAGE = 'Usage: npm run app:pack [-- --allow-dirty] [--cargo-metadata <file>]';
 
+export const parsePackArgs = (args) => {
+  const options = { allowDirty: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--allow-dirty' && !options.allowDirty) options.allowDirty = true;
+    else if (arg === '--cargo-metadata' && options.cargoMetadata === undefined) {
+      const value = args[++i];
+      if (typeof value !== 'string' || !value.trim() || value.startsWith('--')) throw new Error(PACK_USAGE);
+      options.cargoMetadata = value;
+    } else throw new Error(PACK_USAGE);
+  }
+  return options;
+};
+
+/** Process failure propagates to pack's error handler; never create a zip without generated notices. */
+export const writePackageNotices = ({ root, folder, cargoMetadata }, run = execFileSync) => {
+  copyFileSync(join(root, 'LICENSE'), join(folder, 'LICENSE'));
+  const args = [join(root, 'scripts', 'third-party-notices.mjs'), join(folder, 'THIRD-PARTY-NOTICES.txt')];
+  if (cargoMetadata !== undefined) args.push('--cargo-metadata', cargoMetadata);
+  run(process.execPath, args, { stdio: 'inherit' });
+};
+
+/** Hash only the bytes actually shipped alongside the versioned manifest. */
+export const writeReleaseAssets = ({ root, release, zipName, manifestName }) => {
+  const manifest = join(release, manifestName);
+  if (existsSync(manifest)) throw new Error(`Checksum manifest already exists: ${manifest}`);
+  const installer = join(release, 'install-raio.ps1');
+  copyFileSync(join(root, 'scripts', 'install-raio.ps1'), installer);
+  const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+  writeFileSync(manifest, sha256Manifest([
+    { name: zipName, sha256: digest(join(release, zipName)) },
+    { name: 'install-raio.ps1', sha256: digest(installer) },
+  ]), { encoding: 'utf8', flag: 'wx' });
+};
+export const portableReadme = ({ version, sha, buildTime, hashes, dirty }) => `Raio - portable local package (Windows x64)
+
+Version: ${version}
 Commit: ${sha}
 Build time (latest executable modification time, UTC): ${buildTime}
 ${dirty ? 'Built with --allow-dirty: uncommitted tracked changes may be included; the commit alone does not identify this build.' : 'Tracked tree clean outside docs/ and *.md at packaging time.'}
@@ -41,6 +78,17 @@ Open raio.exe, choose a project folder, review the settings preview, then Connec
 Switch surfaces from the tray; quit from the tray icon when finished.
 This local build is unsigned. Windows SmartScreen may warn. Keep OS protections enabled.
 
+Licenses
+LICENSE contains Raio's MIT license. THIRD-PARTY-NOTICES.txt contains bundled
+third-party dependency and font license notices.
+
+Install (optional)
+The release also offers install-raio.ps1 for stable per-user installation.
+Before running a downloaded installer, run:
+Get-FileHash -Algorithm SHA256 install-raio.ps1
+Compare the result with its line in SHA256SUMS-v${version}.txt.
+The installer verifies the zip's exact-name checksum entry before extraction.
+
 Moving this folder
 Hooks of connected projects point at this folder's raio-hook.exe.
 Disconnect those projects before moving the folder, quit from the tray, then run
@@ -52,7 +100,9 @@ Local data
 Remove
 Disconnect all connected projects first, quit Raio from the tray, then delete this
 package folder and %APPDATA%\\io.github.gardim1.raio (deletes Raio's local history).
-You may also delete the package zip. No installer or uninstaller is involved.
+You may also delete the package zip. These steps are for direct portable use.
+For installer-managed copies, use install-raio.ps1 -Uninstall; add -RemoveData
+only if you also want to delete local history. Disconnect projects first.
 `;
 
 const newestFileTime = (directory) => {
@@ -67,10 +117,12 @@ const newestFileTime = (directory) => {
 };
 
 const pack = () => {
-  const args = process.argv.slice(2);
-  if (args.some((arg) => arg !== '--allow-dirty')) throw new Error('Usage: npm run app:pack [-- --allow-dirty]');
+  const { allowDirty, cargoMetadata } = parsePackArgs(process.argv.slice(2));
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('This package command requires Windows x64.');
   const root = fileURLToPath(new URL('..', import.meta.url));
+  const required = ['LICENSE', 'scripts/third-party-notices.mjs', 'scripts/install-raio.ps1'];
+  const missing = required.filter((path) => !existsSync(join(root, path)) || !statSync(join(root, path)).isFile());
+  if (missing.length) throw new Error(`Missing packaging inputs: ${missing.join(', ')}`);
   const git = (args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   const sha = git(['rev-parse', 'HEAD']).trim();
   if (!/^[a-f0-9]{40,64}$/.test(sha)) throw new Error('Could not establish the Git commit SHA.');
@@ -82,7 +134,7 @@ const pack = () => {
   const blocked = blockingDirtyFiles(dirtyPaths);
   if (blocked.length) {
     console.error(`Tracked changes outside docs/ and *.md:\n${blocked.map((path) => `  ${JSON.stringify(path)}`).join('\n')}`);
-    if (!args.includes('--allow-dirty')) throw new Error('Commit/review these changes first, or explicitly use npm run app:pack -- --allow-dirty.');
+    if (!allowDirty) throw new Error('Commit/review these changes first, or explicitly use npm run app:pack -- --allow-dirty.');
   }
   const newestSourceMs = Math.max(newestFileTime(join(root, 'src')), newestFileTime(join(root, 'src-tauri', 'src')));
   const binaries = ['raio.exe', 'raio-hook.exe'].map((name) => {
@@ -93,14 +145,18 @@ const pack = () => {
   const stale = staleBinaries(binaries, newestSourceMs);
   if (stale.length) throw new Error(`Missing or stale release executables: ${stale.join(', ')}. Run npm run app:build before packaging. --allow-dirty does not bypass freshness.`);
 
+  const tar = join(process.env.SystemRoot ?? 'C:/Windows', 'System32', 'tar.exe');
+  if (!existsSync(tar)) throw new Error('Windows built-in tar.exe unavailable; cannot create complete release assets.');
   const release = join(root, 'release-local');
-  const { name, zipName, manifestName } = packageNames(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version);
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  const { name, zipName, manifestName } = packageNames(version);
   const folder = join(release, name);
   const zip = join(release, zipName);
   const manifest = join(release, manifestName);
   if ([folder, zip, manifest].some(existsSync)) throw new Error(`Package output already exists for version ${name}. Move it aside before retrying; connected hooks may reference it.`);
   mkdirSync(release, { recursive: true });
   mkdirSync(folder);
+  writePackageNotices({ root, folder, cargoMetadata });
   const hashes = {};
   for (const binary of binaries) {
     const destination = join(folder, binary.name);
@@ -111,20 +167,13 @@ const pack = () => {
   }
   const buildMs = Math.max(...binaries.map(({ mtimeMs }) => mtimeMs));
   const readme = join(folder, 'README-PORTABLE.txt');
-  writeFileSync(readme, portableReadme({ sha, buildTime: new Date(buildMs).toISOString(), hashes, dirty: blocked.length > 0 }), 'utf8');
+  writeFileSync(readme, portableReadme({ version, sha, buildTime: new Date(buildMs).toISOString(), hashes, dirty: blocked.length > 0 }), 'utf8');
   utimesSync(readme, buildMs / 1000, buildMs / 1000);
   console.log(`Created local portable folder: ${folder}`);
-  const tar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
-  if (!existsSync(tar)) {
-    console.log('Windows built-in tar.exe unavailable; zip skipped. The portable folder is ready.');
-    return;
-  }
   execFileSync(tar, ['-a', '-c', '-f', zip, '-C', release, name], { stdio: 'inherit' });
-  writeFileSync(manifest, sha256Manifest([
-    { name: zipName, sha256: createHash('sha256').update(readFileSync(zip)).digest('hex') },
-    ...binaries.map(({ name: binary }) => ({ name: `${name}/${binary}`, sha256: hashes[binary] })),
-  ]), { encoding: 'utf8', flag: 'wx' });
+  writeReleaseAssets({ root, release, zipName, manifestName });
   console.log(`Created local zip: ${zip}`);
+  console.log(`Created installer: ${join(release, 'install-raio.ps1')}`);
   console.log(`Created checksum manifest: ${manifest}`);
 };
 

@@ -89,7 +89,12 @@ try {
     $null = Run-Installer @{ Source = $zip } 0 'https://developer.microsoft.com/microsoft-edge/webview2/'
     Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'first install') 'Install payload differs.'
     Assert-That ([IO.File]::ReadAllText((Join-Path $install 'VERSION.txt')).Trim() -eq '0.1.0-alpha.1') 'Version was not recorded.'
+    # Verify only the exact zip entry, ignoring script and similar-name entries.
+    $firstManifest = Join-Path $source 'SHA256SUMS-v0.1.0-alpha.1.txt'
+    $zipEntry = [IO.File]::ReadAllText($firstManifest)
+    [IO.File]::WriteAllText($firstManifest, ('b' * 64) + "  install-raio.ps1`n" + ('c' * 64) + '  ' + [IO.Path]::GetFileName($zip) + ".backup`n" + $zipEntry)
     $null = Run-Installer @{ Source = $zip }
+    Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'first install') 'Extra manifest entries prevented an exact-name zip install.'
     Assert-That (Test-Path -LiteralPath (Join-Path $data 'history.txt')) 'Reinstall deleted history.'
     $update = New-Package '0.1.0-alpha.2' 'updated install'
     $raioTestBoundary.FailPromotion = $true
@@ -105,6 +110,10 @@ try {
     $missing = New-Package '0.1.0-alpha.3' 'missing entry'
     [IO.File]::WriteAllText((Join-Path $source 'SHA256SUMS-v0.1.0-alpha.3.txt'), ('a' * 64) + "  other.zip`n")
     $null = Run-Installer @{ Source = $missing } 1 'manifest entry'
+    $scriptOnly = New-Package '0.1.0-alpha.8' 'script and near-name entries only'
+    $scriptOnlyHash = (Get-FileHash -LiteralPath $scriptOnly -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText((Join-Path $source 'SHA256SUMS-v0.1.0-alpha.8.txt'), $scriptOnlyHash + "  install-raio.ps1`n" + $scriptOnlyHash + '  ' + [IO.Path]::GetFileName($scriptOnly) + ".backup`n")
+    $null = Run-Installer @{ Source = $scriptOnly } 1 'manifest entry'
     $missingManifest = New-Package '0.1.0-alpha.6' 'missing manifest'
     Remove-Item -LiteralPath (Join-Path $source 'SHA256SUMS-v0.1.0-alpha.6.txt')
     $null = Run-Installer @{ Source = $missingManifest } 1

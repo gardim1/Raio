@@ -1,9 +1,67 @@
 import { describe, expect, it } from 'vitest';
+// Runtime imports keep these Node-only tests outside the renderer's type/dependency inputs.
+const nodeTestModules = ['node:crypto', 'node:fs', 'node:os', 'node:path', 'node:buffer', 'node:process'];
+const [{ createHash }, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { basename, join, resolve, sep }, { Buffer }, { execPath }] = await Promise.all(nodeTestModules.map(name => import(name)));
 
 // Node-only packaging module, kept outside the renderer and its TypeScript inputs.
 const scriptPath = '../../scripts/pack-portable.mjs';
-const { staleBinaries, blockingDirtyFiles, portableReadme, packageNames, sha256Manifest } = await import(scriptPath);
+const { staleBinaries, blockingDirtyFiles, portableReadme, packageNames, sha256Manifest, parsePackArgs, writePackageNotices, writeReleaseAssets } = await import(scriptPath);
 
+const withPackageFixture = (run: (root: string) => void) => {
+  const root = mkdtempSync(join(tmpdir(), 'raio-alpha-shell-pack-'));
+  try { run(root); }
+  finally {
+    if (!resolve(root).startsWith(resolve(tmpdir()) + sep) || !basename(root).startsWith('raio-alpha-shell-pack-')) throw new Error('Unsafe test cleanup');
+    rmSync(root, { recursive: true, force: true });
+  }
+};
+
+describe('release assets', () => {
+  it('accepts wrapper metadata paths with spaces and rejects ambiguous arguments', () => {
+    expect(parsePackArgs([])).toEqual({ allowDirty: false });
+    expect(parsePackArgs(['--cargo-metadata', 'build files/cargo metadata.json', '--allow-dirty']))
+      .toEqual({ allowDirty: true, cargoMetadata: 'build files/cargo metadata.json' });
+    for (const args of [['--cargo-metadata'], ['--cargo-metadata', ''], ['--cargo-metadata', '--allow-dirty'], ['--unknown'], ['--cargo-metadata', 'a.json', '--cargo-metadata', 'b.json']]) {
+      expect(() => parsePackArgs(args)).toThrow('Usage:');
+    }
+  });
+
+  it('copies LICENSE, calls the generator with optional metadata, and propagates failure', () => withPackageFixture(root => {
+    const folder = join(root, 'portable');
+    mkdirSync(folder);
+    const license = Buffer.from('MIT license fixture\r\n');
+    writeFileSync(join(root, 'LICENSE'), license);
+    const metadata = join(root, 'build files', 'cargo metadata.json');
+    const calls: unknown[][] = [];
+    const run = (...args: unknown[]) => {
+      calls.push(args);
+      writeFileSync(join(folder, 'THIRD-PARTY-NOTICES.txt'), 'generated notices fixture');
+    };
+    writePackageNotices({ root, folder, cargoMetadata: metadata }, run);
+    expect(readFileSync(join(folder, 'LICENSE'))).toEqual(license);
+    expect(readFileSync(join(folder, 'THIRD-PARTY-NOTICES.txt'), 'utf8')).toBe('generated notices fixture');
+    expect(calls[0]).toEqual([execPath, [join(root, 'scripts', 'third-party-notices.mjs'), join(folder, 'THIRD-PARTY-NOTICES.txt'), '--cargo-metadata', metadata], { stdio: 'inherit' }]);
+    writePackageNotices({ root, folder }, run);
+    expect(calls[1]).toEqual([execPath, [join(root, 'scripts', 'third-party-notices.mjs'), join(folder, 'THIRD-PARTY-NOTICES.txt')], { stdio: 'inherit' }]);
+    expect(() => writePackageNotices({ root, folder, cargoMetadata: metadata }, () => { throw new Error('generator failed'); })).toThrow('generator failed');
+  }));
+
+  it('ships a byte-identical installer and hashes the actual zip and script bytes', () => withPackageFixture(root => {
+    const release = join(root, 'release-local');
+    mkdirSync(release);
+    mkdirSync(join(root, 'scripts'));
+    const installer = Buffer.from('\uFEFF# caf\u00E9\r\nWrite-Output "Raio"\r\n', 'utf8');
+    const zip = Buffer.from([0x50, 0x4b, 0, 255, 128]);
+    const { zipName, manifestName } = packageNames('0.1.0-alpha.2');
+    writeFileSync(join(root, 'scripts', 'install-raio.ps1'), installer);
+    writeFileSync(join(release, zipName), zip);
+    writeReleaseAssets({ root, release, zipName, manifestName });
+    expect(readFileSync(join(release, 'install-raio.ps1'))).toEqual(installer);
+    const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+    expect(readFileSync(join(release, manifestName), 'utf8')).toBe(`${hash(zip)}  ${zipName}\n${hash(installer)}  install-raio.ps1\n`);
+    expect(() => writeReleaseAssets({ root, release, zipName, manifestName })).toThrow();
+  }));
+});
 describe('portable package validation', () => {
   it('names the directory, zip and checksum manifest from the release version', () => {
     expect(packageNames('0.1.0')).toEqual({ name: 'raio-v0.1.0-windows-x64', zipName: 'raio-v0.1.0-windows-x64.zip', manifestName: 'SHA256SUMS-v0.1.0.txt' });
@@ -41,7 +99,12 @@ describe('portable package validation', () => {
   });
 
   it('puts the supplied provenance and both executable hashes in the portable README', () => {
-    const text = portableReadme({ sha: '0123456789abcdef', buildTime: '2026-10-07T10:00:00.000Z', hashes: { 'raio.exe': 'a'.repeat(64), 'raio-hook.exe': 'b'.repeat(64) }, dirty: false });
+    const text = portableReadme({ version: '0.1.0-alpha.2', sha: '0123456789abcdef', buildTime: '2026-10-07T10:00:00.000Z', hashes: { 'raio.exe': 'a'.repeat(64), 'raio-hook.exe': 'b'.repeat(64) }, dirty: false });
+    expect(text).toContain('Version: 0.1.0-alpha.2');
+    expect(text).toContain('LICENSE');
+    expect(text).toContain('THIRD-PARTY-NOTICES.txt');
+    expect(text).toContain('Get-FileHash -Algorithm SHA256 install-raio.ps1');
+    expect(text).toContain('SHA256SUMS-v0.1.0-alpha.2.txt');
     expect(text).toContain('Commit: 0123456789abcdef');
     expect(text).toContain('2026-10-07T10:00:00.000Z');
     expect(text).toContain(`raio.exe: ${'a'.repeat(64)}`);
@@ -55,7 +118,7 @@ describe('portable package validation', () => {
   });
 
   it('labels an allowed dirty tree rather than implying the commit fully identifies the build', () => {
-    const text = portableReadme({ sha: 'abcdef1', buildTime: '2026-10-07T10:00:00.000Z', hashes: { 'raio.exe': 'a', 'raio-hook.exe': 'b' }, dirty: true });
+    const text = portableReadme({ version: '0.1.0', sha: 'abcdef1', buildTime: '2026-10-07T10:00:00.000Z', hashes: { 'raio.exe': 'a', 'raio-hook.exe': 'b' }, dirty: true });
     expect(text).toContain('--allow-dirty');
     expect(text).toContain('uncommitted tracked changes');
   });
