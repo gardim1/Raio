@@ -23,7 +23,7 @@ describe('dropped-event evidence', () => {
     { name: 'lower bound', dropped: 3, flag: true, expected: 'At least 3 event(s) could not be recorded; this session may be incomplete.' },
     { name: 'exact count', dropped: 3, flag: false, expected: '3 event(s) could not be recorded; this session may be incomplete.' },
     { name: 'legacy count without a flag', dropped: 3, flag: undefined, expected: '3 event(s) could not be recorded; this session may be incomplete.' },
-    { name: 'uncounted losses with a zero lower bound', dropped: 0, flag: true, expected: 'At least 0 event(s) could not be recorded; this session may be incomplete.' },
+    { name: 'uncounted losses with a zero lower bound', dropped: 0, flag: true, expected: 'Some events may not have been recorded; this session may be incomplete.' },
     { name: 'zero exact count', dropped: 0, flag: false, expected: null },
     { name: 'zero legacy count', dropped: 0, flag: undefined, expected: null },
   ])('shows truthful evidence for $name', ({ dropped, flag, expected }) => {
