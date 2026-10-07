@@ -73,9 +73,24 @@ fn mark_at_least(dirs: &Dirs) {
     // Keep this bounded file in place: unlinking it could erase a concurrent producer's raise.
     // Producers write only the first pair (latest raise); tidy writes only the second (retired
     // raise). Retiring an old raise cannot overwrite a newer one. At most 32 bytes, one file.
-    if let Ok(mut file) = fs::File::options().write(true).create(true).truncate(false).open(dirs.dropped.join(DROP_AT_LEAST))
-        && let Ok(raised) = drop_timestamp(SystemTime::now()) {
-        let _ = write_pair(&mut file, 0, raised);
+    if let Ok(mut file) = fs::File::options().read(true).write(true).create(true).truncate(false).open(dirs.dropped.join(DROP_AT_LEAST)) {
+        let raised = || -> std::io::Result<u64> {
+            let metadata = file.metadata()?;
+            let retired = if metadata.len() == 32 { read_pair(&mut file, 16)? } else { 0 };
+            let previous = if metadata.len() == 0 { drop_timestamp(metadata.modified()?)? } else { read_pair(&mut file, 0).unwrap_or(0) };
+            // Include the previous raise: cleanup may have observed it but not retired it yet.
+            let floor = retired.max(previous).checked_add(1).ok_or_else(|| std::io::Error::other("drop generation saturated"))?;
+            Ok(drop_timestamp(SystemTime::now())?.max(floor))
+        }();
+        match raised {
+            Ok(raised) => { let _ = write_pair(&mut file, 0, raised); }
+            Err(_) => {
+                // No representable newer value (or unreadable watermark): invalidate the first
+                // pair so readers report uncertainty, never a false retired loss. Not the legacy
+                // all-zero sentinel. Concurrent raises remain unlocked as before.
+                let _ = file.seek(SeekFrom::Start(0)).and_then(|_| file.write_all(&[1; 16]));
+            }
+        }
     }
 }
 
@@ -291,6 +306,16 @@ pub struct DropAccounting {
     pub at_least: bool,
 }
 
+fn read_counter_with_retry(mut read: impl FnMut() -> std::io::Result<u64>) -> std::io::Result<u64> {
+    let result = read();
+    // Windows byte-range locks are mandatory even for lock-free readers. Retry only these
+    // transient conflicts, once, without taking a lock or raising the persistent flag.
+    if cfg!(windows) && result.as_ref().is_err_and(|error| matches!(error.raw_os_error(), Some(32) | Some(33))) {
+        thread::sleep(Duration::from_millis(3));
+        read()
+    } else { result }
+}
+
 pub fn drop_accounting(dirs: &Dirs) -> DropAccounting {
     let mut out = DropAccounting::default();
     let entries = match fs::read_dir(&dirs.dropped) {
@@ -317,7 +342,7 @@ pub fn drop_accounting(dirs: &Dirs) -> DropAccounting {
                 let mut file = fs::File::open(&path)?;
                 read_drop_counter(&mut file)
             };
-            match read() {
+            match read_counter_with_retry(read) {
                 Ok(count) => count,
                 Err(_) => { out.at_least = true; continue; }
             }
@@ -717,6 +742,121 @@ mod tests {
         assert_eq!(files.len(), 14);
         assert_eq!(files.iter().map(|f| f.metadata().unwrap().len()).sum::<u64>(), 240);
         assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+    }
+
+    #[test]
+    fn drop_accounting_raise_after_clock_rollback_is_newer_than_retired_watermark() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        let future = drop_timestamp(SystemTime::now() + 30 * DAY).unwrap();
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        fs::write(&flag, [future.to_le_bytes(), (!future).to_le_bytes(), future.to_le_bytes(), (!future).to_le_bytes()].concat()).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: false });
+        let held = fs::File::options().read(true).write(true).open(dirs.dropped.join("count-expired")).unwrap();
+        held.try_lock().unwrap();
+        mark_dropped(&dirs, "expired"); // A real uncounted loss after the clock moved backwards.
+        drop(held);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        let (raised, retired) = read_drop_flag(&mut fs::File::open(flag).unwrap()).unwrap();
+        assert_eq!(retired, Some(future));
+        assert!(raised > future);
+    }
+
+    #[test]
+    fn drop_accounting_rollback_raise_survives_retirement_of_a_previous_future_raise() {
+        let (_d, dirs) = fresh();
+        let future = drop_timestamp(SystemTime::now() + 30 * DAY).unwrap();
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        fs::write(&flag, [future.to_le_bytes(), (!future).to_le_bytes()].concat()).unwrap();
+        mark_at_least(&dirs); // Clock now precedes the old raise that cleanup already observed.
+        let mut cleaner = fs::File::options().write(true).open(&flag).unwrap();
+        write_pair(&mut cleaner, 16, future).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[test]
+    fn drop_accounting_saturated_retirement_cannot_hide_a_new_loss() {
+        let (_d, dirs) = fresh();
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        fs::write(&flag, [u64::MAX.to_le_bytes(), 0u64.to_le_bytes(), u64::MAX.to_le_bytes(), 0u64.to_le_bytes()].concat()).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+        mark_at_least(&dirs);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[cfg(windows)]
+    fn assert_reader_recovers_after_windows_conflict(sharing: bool) {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (_d, dirs) = fresh();
+        for _ in 0..7 { mark_dropped(&dirs, "expired"); }
+        let path = dirs.dropped.join("count-expired");
+        let file = if sharing {
+            fs::File::options().read(true).share_mode(0).open(&path).unwrap()
+        } else {
+            let file = fs::File::options().read(true).write(true).open(&path).unwrap();
+            file.try_lock().unwrap();
+            file
+        };
+        let mut held = Some(file);
+        let mut reads = 0;
+        let result = read_counter_with_retry(|| {
+            reads += 1;
+            let result = fs::File::open(&path).and_then(|mut file| read_drop_counter(&mut file));
+            if reads == 1 {
+                assert_eq!(result.as_ref().unwrap_err().raw_os_error(), Some(if sharing { 32 } else { 33 }));
+                drop(held.take()); // Release deterministically before the one permitted retry.
+            }
+            result
+        });
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(reads, 2);
+        assert!(!dirs.dropped.join(DROP_AT_LEAST).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drop_accounting_reader_retries_a_windows_lock_violation_once() {
+        assert_reader_recovers_after_windows_conflict(false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drop_accounting_reader_retries_a_windows_sharing_violation_once() {
+        assert_reader_recovers_after_windows_conflict(true);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drop_accounting_reader_stops_after_one_retry_on_a_held_lock() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        let path = dirs.dropped.join("count-expired");
+        let held = fs::File::options().read(true).write(true).open(&path).unwrap();
+        held.try_lock().unwrap();
+        let mut reads = 0;
+        let result = read_counter_with_retry(|| {
+            reads += 1;
+            fs::File::open(&path).and_then(|mut file| read_drop_counter(&mut file))
+        });
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(33));
+        assert_eq!(reads, 2);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        assert!(!dirs.dropped.join(DROP_AT_LEAST).exists());
+        drop(held);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: false });
+    }
+
+    #[test]
+    fn drop_accounting_reader_does_not_retry_corruption_or_other_errors() {
+        for error in [std::io::Error::from_raw_os_error(5), std::io::Error::new(std::io::ErrorKind::InvalidData, "corrupt counter")] {
+            let mut error = Some(error);
+            let mut reads = 0;
+            assert!(read_counter_with_retry(|| {
+                reads += 1;
+                Err(error.take().expect("non-conflict errors must not be retried"))
+            }).is_err());
+            assert_eq!(reads, 1);
+        }
     }
 
     #[test]
