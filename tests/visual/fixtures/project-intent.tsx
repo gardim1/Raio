@@ -8,8 +8,18 @@ import type { ConnectedProject, ConnectPreview } from '../../../src/platform/des
 import { createProjectFixtureBridge } from '../../../src/platform/fixtureBridge';
 import type { ProjectMapBridge } from '../../../src/platform/projectMapBridge';
 import { sameProjectRoot } from '../../../src/platform/projectIntent';
+import { setNativeSurfaceVisible } from '../../../src/shared/motion/surfaceVisibility';
 
-export const mountProjectIntentFixture = (options: { connected?: boolean; startupRoot?: string } = {}) => {
+export const setVisible = setNativeSurfaceVisible;
+let releaseChosen: () => void = () => {};
+export const resolveChosenPreview = () => releaseChosen();
+
+export const mountProjectIntentFixture = (options: { connected?: boolean; startupRoot?: string; holdChosenPreview?: boolean } = {}) => {
+  setNativeSurfaceVisible(true);
+  let held = options.holdChosenPreview ?? false;
+  const pending: (() => void)[] = [];
+  const hold = <T,>(value: T): Promise<T> => held ? new Promise(resolve => pending.push(() => resolve(value))) : Promise.resolve(value);
+  releaseChosen = () => { held = false; pending.splice(0).forEach(resolve => resolve()); };
   const base = createProjectFixtureBridge();
   const demo = base.currentProjectMap()!;
   let project: ConnectedProject | null = options.connected ? { id: 'fixture-a', name: 'Fixture A', root: 'C:/fixture/A' } : null;
@@ -33,11 +43,11 @@ export const mountProjectIntentFixture = (options: { connected?: boolean; startu
     takeProjectIntent: async () => { const value = startup; startup = null; return value; },
     onProjectIntent: async (receive) => { intents.add(receive); return () => { intents.delete(receive); }; },
     selectProject: async (root) => project !== null && sameProjectRoot(project.root, root, true),
-    previewProjectMap: async (root) => unavailable ? null : { ...demo, project: { id: 'preview-fixture', name: root.split('/').at(-1)! } },
+    previewProjectMap: (root) => hold(unavailable ? null : { ...demo, project: { id: 'preview-fixture', name: root.split('/').at(-1)! } }),
     connector: {
       project: () => project,
       chooseFolder: async () => 'C:/fixture/new',
-      preview: (root) => root.endsWith('/slow') ? new Promise((resolve) => { releaseOld = () => resolve(preview(root)); }) : Promise.resolve(preview(root)),
+      preview: (root) => root.endsWith('/slow') ? new Promise((resolve) => { releaseOld = () => resolve(preview(root)); }) : hold(preview(root)),
       connect: async (root) => {
         writes++;
         project = { id: 'fixture-new', name: root.split('/').at(-1)!, root };

@@ -21,5 +21,5 @@ export const MiniOrb = ({ size = 12, glow = 0.55, warm = 0, bob = false, restart
     height: size,
     boxShadow: `0 0 ${Math.round(size * 0.85)}px rgba(${Math.round(138 + 107 * warm)},${Math.round(180 + 2 * warm)},${Math.round(255 - 163 * warm)},${glow.toFixed(2)})`,
   };
-  return <span key={restartKey} className={`mini-orb${bob && (!companion || companion.state === 'working') ? ' mini-orb--bob' : ''}`} data-presence={companion?.state} style={style} aria-hidden />;
+  return <span key={restartKey} className={`mini-orb${bob ? ' mini-orb--bob' : ''}`} data-presence={companion?.state} style={style} aria-hidden />;
 };

@@ -155,3 +155,19 @@ describe('project folder intents', () => {
     expect(mini.connector?.project()?.id).toBe('b');
   });
 });
+
+describe('legacy root dot components', () => {
+  it.each([
+    ['C:\\work\\App\\.', 'c:/WORK/app', true],
+    ['C:/work/App/./', 'C:\\work\\app\\', true],
+    ['\\\\?\\UNC\\server\\share\\App\\.', '//SERVER/share/app', true],
+    ['/work/app/.', '/work/app', false],
+    ['/.', '/', false],
+  ] as const)('matches %s to %s', (a, b, windows) => expect(sameProjectRoot(a, b, windows)).toBe(true));
+  it('does not fold POSIX case or resolve a parent across a possible symlink', () => {
+    expect(sameProjectRoot('/work/App/.', '/work/app', false)).toBe(false);
+    expect(sameProjectRoot('C:/link/../app', 'C:/app', true)).toBe(false);
+  });
+});
+
+it('does not match a missing root to the filesystem root', () => expect(sameProjectRoot('', '/', false)).toBe(false));

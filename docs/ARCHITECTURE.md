@@ -1,6 +1,6 @@
 # Raio architecture (v1)
 
-Status: **approved by the owner on 2026-10-01, with adjustments** (recorded below). This document records the approved technical direction; it is not evidence that anything described here is implemented. See `docs/STATUS.md` for what actually exists and was verified.
+Status: **approved by the maintainer on 2026-10-01**; later rounds extended it (see `docs/STATUS.md`). This document records the approved technical direction; it is not evidence that anything described here is implemented. See `docs/STATUS.md` for what actually exists and was verified.
 
 ## Sources and precedence
 
@@ -90,9 +90,9 @@ Same event/state model, `evaluateFrame` and components as the live UI. Idle and 
 
 Domain and contract tests (Vitest), core tests (`cargo test`), integration (hook binary -> inbox -> DB -> projection), renderer visual tests (Playwright, deterministic clock), a native Windows checklist recorded only when actually performed, and macOS build CI labelled "builds", not "validated".
 
-## Guideline consultation and justified deviations
+## Common defaults deliberately not used
 
-The organisation-administered policy of the assistant account requires consulting a generic architecture router before generating code. It was consulted once as advisory guidance on 2026-10-01. This does **not** make Raio an organisation project; Raio's `AGENTS.md` and this approved architecture prevail. Deviations from those generic defaults:
+Generic web-service defaults that were considered and not adopted:
 
 | Generic default | Raio decision | Reason |
 |---|---|---|
@@ -101,15 +101,8 @@ The organisation-administered policy of the assistant account requires consultin
 | TanStack Router/Query | None | No server and no routes; surfaces are windows. |
 | React Hook Form + Zod | None for now | No forms in v1 scope; IPC payloads use small typed guards. |
 | Token/auth baseline | Not applicable | No login or accounts. |
-| Docker/compose reproducibility | README + pinned versions + lockfile + Rust toolchain file | Native desktop app; containers do not exercise windows/tray. |
+| Docker/compose reproducibility | README + pinned versions + lockfiles + `rust-version` in Cargo.toml | Native desktop app; containers do not exercise windows/tray. |
 | OTEL observability | Local structured logs only, no telemetry | Local-first privacy requirement. |
-| develop/staging/main branching | Small local commits per `AGENTS.md`; no push without owner approval | Owner's repository policy. |
+| develop/staging/main branching | One `main` branch, small commits | Single-maintainer project. |
 
 Kept: feature-first structure, English identifiers, tests first for domain logic, Vitest + Playwright, coverage as a signal.
-
-## Owner adjustments at approval (2026-10-01)
-
-- If the native Tauri gate fails, record evidence; do not switch to Electron automatically.
-- If Codex or a browser-automation plugin is unavailable, continue independent work with the planned alternatives and state explicitly which review did not happen.
-- Manual Windows/macOS/Linux checks are never reported as executed unless actually performed on that platform.
-- No push, releases, or publication of images, videos or design references in this round.

@@ -187,6 +187,21 @@ try {
     [IO.File]::WriteAllText((Join-Path $data 'connections.json'), 'not json')
     $null = Run-Installer @{ Uninstall = $true } 1 'Cannot establish connected projects'
     [IO.File]::WriteAllText((Join-Path $data 'connections.json'), '[]')
+    # A pending connection change makes even a syntactically valid manifest stale.
+    $pending = Join-Path $data 'connections.pending'
+    [IO.File]::WriteAllText($pending, '')
+    foreach ($manifest in @('[]', '[{"root":"stale project","settingsPath":"stale settings"}]', $null)) {
+        if ($null -eq $manifest) { Remove-Item -LiteralPath (Join-Path $data 'connections.json') }
+        else { [IO.File]::WriteAllText((Join-Path $data 'connections.json'), $manifest) }
+        $pendingOutput = Run-Installer @{ Uninstall = $true } 1 'Cannot establish connected projects'
+        Assert-That (-not $pendingOutput.Contains('Connected project:')) 'Pending manifest listed unverified projects.'
+        Assert-That (Test-Path -LiteralPath (Join-Path $install 'app/raio.exe')) 'Pending manifest allowed unforced removal.'
+        $forcedOutput = Run-Installer @{ Uninstall = $true; Force = $true; WhatIf = $true } 0 'hooks would point at a missing program'
+        Assert-That (-not $forcedOutput.Contains('Connected project:')) 'Forced pending manifest listed unverified projects.'
+        Assert-That (Test-Path -LiteralPath $pending) 'Installer cleared the core-owned pending marker.'
+    }
+    Remove-Item -LiteralPath $pending
+    [IO.File]::WriteAllText((Join-Path $data 'connections.json'), '[]')
     $null = Run-Installer @{ Uninstall = $true; RemoveData = $true; WhatIf = $true }
     Assert-That (Test-Path -LiteralPath $install) 'WhatIf uninstall removed program.'
     Assert-That (Test-Path -LiteralPath $data) 'WhatIf uninstall removed history.'

@@ -15,20 +15,20 @@ export interface SurfaceWindowAdapter {
 /**
  * Folds "shown by the app", "not minimized" and "document not hidden" into one visible flag, so a
  * minimized or occluded window stops animating like a window the app hid. Calls `apply` only when the
- * combined flag changes. Returns a function that stops tracking.
+ * first state resolves and whenever the combined flag changes. Returns a function that stops tracking.
  */
 export const trackSurfaceVisibility = (adapter: SurfaceWindowAdapter, apply: (visible: boolean) => void): Unlisten => {
-  let shown = true;
-  let minimized = false;
+  let shown: boolean | undefined;
+  let minimized: boolean | undefined;
   let pageHidden = adapter.isPageHidden();
   let stopped = false;
   let shownEventSeen = false;
   let minimizedQuery = 0;
-  let lastApplied = true;
+  let lastApplied: boolean | undefined;
   const unlisteners: Unlisten[] = [];
 
   const publish = () => {
-    if (stopped) return;
+    if (stopped || shown === undefined || minimized === undefined) return;
     const visible = shown && !minimized && !pageHidden;
     if (visible === lastApplied) return;
     lastApplied = visible;
@@ -44,7 +44,11 @@ export const trackSurfaceVisibility = (adapter: SurfaceWindowAdapter, apply: (vi
         minimized = value;
         publish();
       })
-      .catch(() => {});
+      .catch(() => {
+        if (query !== minimizedQuery) return;
+        minimized ??= false;
+        publish();
+      });
   };
 
   const track = (registration: Promise<Unlisten>) => {
@@ -79,7 +83,11 @@ export const trackSurfaceVisibility = (adapter: SurfaceWindowAdapter, apply: (vi
       shown = value;
       publish();
     })
-    .catch(() => {});
+    .catch(() => {
+      if (shownEventSeen) return;
+      shown ??= true;
+      publish();
+    });
   refreshMinimized();
   publish();
 

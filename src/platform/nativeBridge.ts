@@ -12,6 +12,15 @@ import { factsFromEvents } from '../features/modes/presenceFacts';
 import type { PresenceInput } from '../features/modes/companionPresence';
 import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
+/** One app-local UI preference shared by webviews, including lazily created windows. */
+const SELECTED_ROOT_KEY = 'raio.selected-project-root';
+const readSelectedRoot = (): string | null => {
+  try { return globalThis.localStorage?.getItem(SELECTED_ROOT_KEY) || null; } catch { return null; }
+};
+const saveSelectedRoot = (root: string): void => {
+  try { globalThis.localStorage?.setItem(SELECTED_ROOT_KEY, root); } catch { /* Existing windows still receive the selection event. */ }
+};
+
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
 
 /** The surface a native window was opened for (`?surface=`). */
@@ -101,7 +110,7 @@ export const createNativeBridge = (
   let projectSnapshot: ProjectMapSnapshot | null = null;
   let project: ConnectedProject | null = null;
   let connectedProjects: readonly ConnectedProject[] = [];
-  let selectedRoot: string | null = null;
+  let selectedRoot: string | null = readSelectedRoot();
   let selectionQuery = 0;
   let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
@@ -259,12 +268,16 @@ export const createNativeBridge = (
     }
     refreshing = (async () => {
       try {
+        const requestedRoot = selectedRoot;
         const health = await ipc.invoke<CoreHealth | undefined>('core_status').catch(() => undefined);
         const projects = await ipc.invoke<ConnectedProject[]>('list_projects');
         connectedProjects = projects;
+        // A pending list belongs to the selection it started with, not a later Connect/intent.
+        if (selectedRoot !== requestedRoot) { dirty = true; return; }
         const current = (selectedRoot ? projects.find((p) => sameProjectRoot(p.root, selectedRoot!, isWindowsRoot(p.root))) : undefined) ?? projects[0] ?? null;
-        selectedRoot = current?.root ?? null;
         const events = current ? await ipc.invoke<RaioEvent[]>('project_events', { projectId: current.id }) : [];
+        if (selectedRoot !== requestedRoot) { dirty = true; return; }
+        selectedRoot = current?.root ?? null;
         const key = current ? `${current.id}|${current.root}` : null;
         if (key !== scanKey) {
           scanKey = key;
@@ -304,7 +317,7 @@ export const createNativeBridge = (
         refreshing = null;
         if (dirty) {
           dirty = false;
-          void refresh();
+          await refresh();
         }
       }
     })();
@@ -320,6 +333,7 @@ export const createNativeBridge = (
     const match = connectedProjects.find((p) => sameProjectRoot(p.root, root, isWindowsRoot(p.root)));
     if (!match) return false;
     selectedRoot = match.root;
+    saveSelectedRoot(match.root);
     await refresh();
     if (query !== selectionQuery) return false;
     // Renderer-to-renderer selection keeps Island/Mini on the same project; never writes settings.
@@ -336,11 +350,13 @@ export const createNativeBridge = (
     chooseFolder: () => ipc.chooseFolder(),
     preview: (root) => ipc.invoke<ConnectPreview>('preview_connect', { root }),
     connect: async (root, previewed) => {
-      await ipc.invoke('connect_project', { root, previewed });
-      selectedRoot = root;
+      const connected = await ipc.invoke<ConnectedProject>('connect_project', { root, previewed });
+      if (!connected || typeof connected.id !== 'string' || typeof connected.name !== 'string' || typeof connected.root !== 'string' || !connected.root) throw new Error('Core did not return the connected project');
+      selectedRoot = connected.root;
+      saveSelectedRoot(connected.root);
       hooksRefreshRequested = true;
       await refresh();
-      await ipc.emitProjectSelected?.(root).catch(report('project selection'));
+      await ipc.emitProjectSelected?.(connected.root).catch(report('project selection'));
     },
     disconnect: async () => {
       if (!project) return;

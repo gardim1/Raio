@@ -144,7 +144,10 @@ function Check-Connections {
     $file = Join-Path $DataDir 'connections.json'
     $unknown = $false
     $connections = @()
-    if (Test-Path -LiteralPath $file) {
+    if (Test-Path -LiteralPath (Join-Path $DataDir 'connections.pending')) {
+        # Core has not published the new connection list yet; even a valid old JSON is stale.
+        $unknown = $true
+    } elseif (Test-Path -LiteralPath $file) {
         try {
             $text = [IO.File]::ReadAllText($file)
             if (-not $text.TrimStart().StartsWith('[')) { throw 'Expected an array.' }

@@ -447,6 +447,7 @@ svg text { font-family: var(--raio-font-ui); }
 @media (prefers-reduced-motion: reduce) {
   .status--working .status__dot::after, .status--working .status__label, .mini-orb--bob, .icon-spin { animation: none; }
   .status--working .status__label { color: #fff; background: none; }
+  .status[data-presence] .status__dot { transition: none; }
 }
 
 /* ---------- Data provenance and empty app ---------- */
@@ -503,6 +504,9 @@ svg text { font-family: var(--raio-font-ui); }
 [data-presence="failure"] { --presence-color: var(--raio-color-accent-danger); --presence-fill: var(--raio-color-pill-danger-fill); --presence-border: var(--raio-color-pill-danger-stroke); }
 .status[data-presence] { color: var(--raio-color-text-primary); background: var(--presence-fill); border-color: var(--presence-border); }
 .status[data-presence] .status__dot, .mini__status[data-presence], .island__dot[data-presence] { background: var(--presence-color); }
+.status[data-presence="working"] .status__dot { background: var(--raio-color-accent-cool); }
+.status[data-presence="attention"] .status__dot { background: var(--raio-color-accent-warning); }
+.status[data-presence="failure"] .status__dot { background: var(--raio-color-accent-danger); }
 .status[data-presence]:not([data-presence="working"]) .status__dot::after { animation: none; content: none; }
 .status[data-presence]:not([data-presence="working"]) .status__label { animation: none; background: none; color: inherit; }
 .status[data-presence="unknown"] .status__dot, .status[data-presence="disconnected"] .status__dot, .mini__status[data-presence="unknown"], .mini__status[data-presence="disconnected"] { width: 12px; height: 12px; line-height: 12px; font-size: 12px; text-align: center; color: var(--presence-color); background: transparent; }
@@ -513,3 +517,9 @@ html.surface-hidden *, html.surface-hidden *::before, html.surface-hidden *::aft
 
 /* Recorded running checks do not keep spinning once companion activity expires. */
 [data-companion-state]:not([data-companion-state="working"]) .icon-spin { animation: none; }
+
+/* Keep the title bar fixed above a scrollable Connect preview on smaller windows. */
+.expanded__connect { display: grid; justify-items: center; align-items: start; min-height: 0; max-height: calc(100vh - 160px); overflow-y: auto; padding: 20px; }
+.expanded__connect .connect__flow { max-height: none; }
+
+html.native.surface-expanded .expanded__connect { flex: 1; max-height: none; }
