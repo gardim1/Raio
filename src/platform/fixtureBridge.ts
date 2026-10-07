@@ -28,10 +28,13 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
   if (snapshot && snapshot.provenance !== 'fixture') {
     throw new Error('Fixture bridge only serves fixture data');
   }
+  const current = snapshot?.core
+    ? { ...snapshot, core: { ...snapshot.core, droppedAtLeast: snapshot.core.droppedAtLeast ?? false } }
+    : snapshot;
   return {
     kind: 'fixture',
     fixedSurface: null,
-    currentSession: () => snapshot,
+    currentSession: () => current,
     subscribe: () => () => {},
     showSurface: showSurfaceInPlace,
     setPinned: () => {},

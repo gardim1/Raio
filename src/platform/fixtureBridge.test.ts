@@ -21,6 +21,21 @@ describe('fixture bridge', () => {
   it('refuses to pass off live data as a fixture', () => {
     expect(() => createFixtureBridge({ ...demoSnapshot, provenance: 'live' })).toThrow();
   });
+
+  it.each([true, false, undefined])('defaults fixture dropped accounting to exact without overriding %s', (flag) => {
+    const core = {
+      dropped: 3, ...(flag === undefined ? {} : { droppedAtLeast: flag }),
+      watcherOverflow: false, historyResetFrom: null, hookBinary: 'raio-hook',
+    };
+    const bridge = createFixtureBridge({ ...demoSnapshot, core });
+    const snapshot = bridge.currentSession();
+    expect(snapshot?.core).toEqual({ ...core, droppedAtLeast: flag ?? false });
+    expect(bridge.currentSession()).toBe(snapshot);
+    expect(core).toEqual({
+      dropped: 3, ...(flag === undefined ? {} : { droppedAtLeast: flag }),
+      watcherOverflow: false, historyResetFrom: null, hookBinary: 'raio-hook',
+    });
+  });
 });
 
 describe('fixture bridge: import facts', () => {

@@ -54,7 +54,7 @@ export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectIn
         ))}
       </ul>
     )}
-    {core && core.dropped > 0 && <p className="evidence__warn">{core.dropped} event(s) could not be recorded; this session may be incomplete.</p>}
+    {core && (core.dropped > 0 || core.droppedAtLeast) && <p className="evidence__warn">{core.droppedAtLeast ? 'At least ' : ''}{core.dropped} event(s) could not be recorded; this session may be incomplete.</p>}
     {core?.watcherOverflow && <p className="evidence__warn">The file watcher overflowed; some disk changes may be missing.</p>}
     {core?.historyResetFrom && <p className="evidence__warn">Local history was unreadable and was moved aside; earlier sessions are not shown.</p>}
     {core && !core.hookBinary && <p className="evidence__warn">raio-hook was not found next to Raio; new agent events cannot be recorded.</p>}

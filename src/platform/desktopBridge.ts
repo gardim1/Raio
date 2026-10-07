@@ -29,6 +29,8 @@ export interface SessionSnapshot {
 
 export interface CoreHealth {
   readonly dropped: number;
+  /** True when dropped is only a lower bound; absent means an exact count (older cores). */
+  readonly droppedAtLeast?: boolean;
   readonly watcherOverflow: boolean;
   readonly historyResetFrom: string | null;
   readonly hookBinary: string | null;
