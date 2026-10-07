@@ -8,6 +8,8 @@ import { projectSessionDetailed } from '../features/project/projectSession';
 import { projectMap, type ProjectMapSnapshot } from '../features/project/projectMap';
 import type { ProjectMapBridge } from './projectMapBridge';
 import { isWindowsRoot, sameProjectRoot } from './projectIntent';
+import { factsFromEvents } from '../features/modes/presenceFacts';
+import type { PresenceInput } from '../features/modes/companionPresence';
 import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
@@ -103,6 +105,7 @@ export const createNativeBridge = (
   let selectionQuery = 0;
   let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
+  let presenceInput: PresenceInput = { connected: false, available: false, facts: [] };
   let hooksQuery = 0;
   let hooksKey: string | null = null;
   let hooksTimer: ReturnType<typeof setTimeout> | undefined;
@@ -145,6 +148,7 @@ export const createNativeBridge = (
       const next: ProjectHooksState = value === 'current' || value === 'outdated' ? value : 'unknown';
       if (next !== hooksState) {
         hooksState = next;
+        presenceInput = { ...presenceInput, hooks: next };
         listeners.forEach((l) => l());
       }
       hooksTimer = setTimeout(() => {
@@ -280,6 +284,7 @@ export const createNativeBridge = (
         const forceHooks = hooksRefreshRequested;
         hooksRefreshRequested = false;
         refreshHooks(current, forceHooks);
+        presenceInput = { connected: current !== null, available: health !== undefined, facts: current ? factsFromEvents(events, current.id) : [], core: health ?? null, hooks: hooksState };
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
         projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null }) : null;
@@ -288,10 +293,11 @@ export const createNativeBridge = (
         report('refresh')(error);
         const hooksChanged = hooksState !== 'unknown';
         hooksState = 'unknown';
+        presenceInput = { ...presenceInput, available: false, hooks: 'unknown' };
         if (projectSnapshot) {
           projectSnapshot = { ...projectSnapshot, core: null };
         }
-        if (projectSnapshot || hooksChanged) {
+        if (projectSnapshot || hooksChanged || project) {
           listeners.forEach((l) => l());
         }
       } finally {
@@ -363,6 +369,7 @@ export const createNativeBridge = (
       return projectMap({ id: 'preview', name }, value.inventory, value.imports);
     },
     projectHooksState: () => hooksState,
+    projectPresence: () => presenceInput,
     currentProjectMap: () => projectSnapshot,
     subscribe: (listener) => {
       listeners.add(listener);

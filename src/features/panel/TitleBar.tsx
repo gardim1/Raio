@@ -3,6 +3,7 @@ import { AgentStatus } from '../../shared/ui/AgentStatus';
 import { agentFullName } from '../../shared/ui/agentName';
 import { MiniOrb } from '../raio/MiniOrb';
 import type { AgentId, AgentStatusState } from '../session/model/script';
+import type { CompanionPresence } from '../modes/companionPresence';
 
 /** Only supplied for Expanded's undecorated native window; injectable without a Tauri runtime. */
 export interface TitleBarWindowApi {
@@ -29,6 +30,7 @@ const dragTitlebar = (window: TitleBarWindowApi, event: MouseEvent<HTMLDivElemen
 };
 
 export interface TitleBarProps {
+  readonly companion?: CompanionPresence;
   readonly project: string;
   readonly agent: AgentId;
   readonly task: string;
@@ -46,7 +48,7 @@ export interface TitleBarProps {
 }
 
 /** 54px title bar: dots · brand · project | centred task | status pill (+ actions). */
-export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabel, windowDots = true, nativeWindow, actions, taskPrefix, taskIsPlaceholder = false }: TitleBarProps) => (
+export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabel, windowDots = true, nativeWindow, actions, taskPrefix, taskIsPlaceholder = false, companion }: TitleBarProps) => (
   <div className={`titlebar${nativeWindow ? ' titlebar--native' : ''}`} onMouseDown={nativeWindow ? (event) => dragTitlebar(nativeWindow, event) : undefined}>
     {windowDots && (
       nativeWindow ? <div className="titlebar__dots">
@@ -66,7 +68,7 @@ export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabe
       </div>
     )}
     <div className="titlebar__brand">
-      <MiniOrb size={12} />
+      <MiniOrb size={12} companion={companion} />
       Raio
     </div>
     <span className="titlebar__sep" />
@@ -84,7 +86,7 @@ export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabe
       )}
     </div>
     <div className="titlebar__end">
-      <AgentStatus state={status} agent={agent} {...(statusLabel ? { label: statusLabel } : {})} />
+      <AgentStatus state={status} agent={agent} companion={companion} {...(statusLabel ? { label: statusLabel } : {})} />
       {actions && <div className="titlebar__actions">{actions}</div>}
     </div>
   </div>
