@@ -46,7 +46,10 @@ export const isConfigFile = (path: string): boolean => {
 export const isMigrationPath = (path: string): boolean => {
   const directories = segmentsOf(path).slice(0, -1);
   if (directories.includes('migrations')) return true;
-  return baseName(path).endsWith('.sql') && directories.some((d) => d === 'db' || d === 'database');
+  // Alembic keeps one revision module per migration in `<...>/alembic/versions/` (not its env.py or package marker).
+  const name = baseName(path);
+  if (directories.at(-2) === 'alembic' && directories.at(-1) === 'versions') return name.endsWith('.py') && name !== '__init__.py';
+  return name.endsWith('.sql') && directories.some((d) => d === 'db' || d === 'database');
 };
 
 /** The factual notice a path deserves, if any. A path gets at most one: migration, then dependency, then config. */

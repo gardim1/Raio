@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { isConfigFile, isDependencyManifest, isMigrationPath, noticeKindForPath } from './pathKinds';
 
 describe('isMigrationPath', () => {
+  it('recognises Alembic revision files under an alembic/versions directory (a file added, not a migration run)', () => {
+    expect(isMigrationPath('alembic/versions/0006_add_reminders.py')).toBe(true);
+    expect(isMigrationPath('backend/alembic/versions/a1b2c3_add_index.py')).toBe(true);
+    expect(isMigrationPath('alembic/versions/__init__.py')).toBe(false);
+    expect(isMigrationPath('alembic/env.py')).toBe(false);
+    expect(isMigrationPath('alembic/versions/__pycache__/0006_add_reminders.cpython-312.pyc')).toBe(false);
+    expect(isMigrationPath('app/versions/release_notes.py')).toBe(false);
+    expect(noticeKindForPath('alembic/versions/0006_add_reminders.py')).toBe('migration');
+  });
+
   it('recognises files in migrations directories', () => {
     expect(isMigrationPath('db/migrations/0001_init.sql')).toBe(true);
     expect(isMigrationPath('prisma/migrations/20260101_x/migration.sql')).toBe(true);
