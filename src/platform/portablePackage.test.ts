@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 // Runtime imports keep these Node-only tests outside the renderer's type/dependency inputs.
 const nodeTestModules = ['node:crypto', 'node:fs', 'node:os', 'node:path', 'node:buffer', 'node:process'];
-const [{ createHash }, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { basename, join, resolve, sep }, { Buffer }, { execPath }] = await Promise.all(nodeTestModules.map(name => import(name)));
+const [{ createHash }, { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync }, { tmpdir }, { basename, join, resolve, sep }, { Buffer }, { execPath }] = await Promise.all(nodeTestModules.map(name => import(name)));
 
 // Node-only packaging module, kept outside the renderer and its TypeScript inputs.
 const scriptPath = '../../scripts/pack-portable.mjs';
-const { staleBinaries, blockingDirtyFiles, portableReadme, packageNames, sha256Manifest, parsePackArgs, writePackageNotices, writeReleaseAssets } = await import(scriptPath);
+const { staleBinaries, blockingDirtyFiles, portableReadme, packageNames, sha256Manifest, parsePackArgs, writePackageNotices, writeReleaseAssets, createReleaseLayout } = await import(scriptPath);
 
 const withPackageFixture = (run: (root: string) => void) => {
   const root = mkdtempSync(join(tmpdir(), 'raio-alpha-shell-pack-'));
@@ -47,12 +47,10 @@ describe('release assets', () => {
   }));
 
   it('ships a byte-identical installer and hashes the actual zip and script bytes', () => withPackageFixture(root => {
-    const release = join(root, 'release-local');
-    mkdirSync(release);
+    const { release, zipName, manifestName } = createReleaseLayout({ releaseRoot: join(root, 'release-local'), version: '0.1.0-alpha.2' });
     mkdirSync(join(root, 'scripts'));
     const installer = Buffer.from('\uFEFF# caf\u00E9\r\nWrite-Output "Raio"\r\n', 'utf8');
     const zip = Buffer.from([0x50, 0x4b, 0, 255, 128]);
-    const { zipName, manifestName } = packageNames('0.1.0-alpha.2');
     writeFileSync(join(root, 'scripts', 'install-raio.ps1'), installer);
     writeFileSync(join(release, zipName), zip);
     writeReleaseAssets({ root, release, zipName, manifestName });
@@ -105,6 +103,8 @@ describe('portable package validation', () => {
     expect(text).toContain('THIRD-PARTY-NOTICES.txt');
     expect(text).toContain('Get-FileHash -Algorithm SHA256 install-raio.ps1');
     expect(text).toContain('SHA256SUMS-v0.1.0-alpha.2.txt');
+    expect(text).toContain('release-local/v0.1.0-alpha.2/');
+    expect(text).toContain("-Version '0.1.0-alpha.2' -Source .");
     expect(text).toContain('Commit: 0123456789abcdef');
     expect(text).toContain('2026-10-07T10:00:00.000Z');
     expect(text).toContain(`raio.exe: ${'a'.repeat(64)}`);
@@ -123,3 +123,55 @@ describe('portable package validation', () => {
     expect(text).toContain('uncommitted tracked changes');
   });
 });
+
+it('keeps the first version installer and checksum valid after packaging a changed installer for the next version', () => withPackageFixture(root => {
+  const releaseRoot = join(root, 'release-local');
+  mkdirSync(join(root, 'scripts'));
+  const writeVersion = (version: string, installer: string) => {
+    const { release, zipName, manifestName } = createReleaseLayout({ releaseRoot, version });
+    const zip = Buffer.from('zip fixture ' + version);
+    writeFileSync(join(root, 'scripts', 'install-raio.ps1'), installer);
+    writeFileSync(join(release, zipName), zip);
+    writeReleaseAssets({ root, release, zipName, manifestName });
+    return { release, zipName, manifestName, installer, zip };
+  };
+  const first = writeVersion('0.1.0-alpha.1', '# first installer\r\n');
+  const firstManifest = readFileSync(join(first.release, first.manifestName), 'utf8');
+  const second = writeVersion('0.1.0-alpha.2', '# changed installer\r\n');
+  expect(readdirSync(releaseRoot).sort()).toEqual(['v0.1.0-alpha.1', 'v0.1.0-alpha.2']);
+  expect(readFileSync(join(first.release, 'install-raio.ps1'), 'utf8')).toBe(first.installer);
+  expect(readFileSync(join(first.release, first.manifestName), 'utf8')).toBe(firstManifest);
+  for (const version of [first, second]) {
+    expect(readFileSync(join(version.release, version.zipName))).toEqual(version.zip);
+    const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
+    expect(readFileSync(join(version.release, version.manifestName), 'utf8')).toBe(
+      `${hash(version.zip)}  ${version.zipName}\n${hash(version.installer)}  install-raio.ps1\n`,
+    );
+  }
+}));
+
+it('allocates every asset under its version and refuses complete or partial existing version folders', () => withPackageFixture(root => {
+  const releaseRoot = join(root, 'Release files');
+  const layout = createReleaseLayout({ releaseRoot, version: '0.1.0-alpha.3' });
+  expect(layout.release).toBe(join(releaseRoot, 'v0.1.0-alpha.3'));
+  expect(layout.folder).toBe(join(layout.release, 'raio-v0.1.0-alpha.3-windows-x64'));
+  expect(layout.zip).toBe(join(layout.release, 'raio-v0.1.0-alpha.3-windows-x64.zip'));
+  expect(layout.manifest).toBe(join(layout.release, 'SHA256SUMS-v0.1.0-alpha.3.txt'));
+  expect(layout.installer).toBe(join(layout.release, 'install-raio.ps1'));
+  writeFileSync(join(layout.folder, 'raio-hook.exe'), 'do not replace');
+  expect(() => createReleaseLayout({ releaseRoot, version: '0.1.0-alpha.3' })).toThrow('already exists');
+  expect(readFileSync(join(layout.folder, 'raio-hook.exe'), 'utf8')).toBe('do not replace');
+  mkdirSync(join(releaseRoot, 'v0.1.0-alpha.4'));
+  expect(() => createReleaseLayout({ releaseRoot, version: '0.1.0-alpha.4' })).toThrow('already exists');
+  expect(() => createReleaseLayout({ releaseRoot, version: '../other' })).toThrow('version');
+}));
+
+it('refuses replacing an installer even when the manifest has not been completed', () => withPackageFixture(root => {
+  const { release, zipName, manifestName, installer } = createReleaseLayout({ releaseRoot: join(root, 'release-local'), version: '0.1.0' });
+  mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts', 'install-raio.ps1'), '# new installer');
+  writeFileSync(installer, '# existing installer');
+  writeFileSync(join(release, zipName), 'zip fixture');
+  expect(() => writeReleaseAssets({ root, release, zipName, manifestName })).toThrow('already exists');
+  expect(readFileSync(installer, 'utf8')).toBe('# existing installer');
+}));

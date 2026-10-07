@@ -89,6 +89,26 @@ try {
     $null = Run-Installer @{ Source = $zip } 0 'https://developer.microsoft.com/microsoft-edge/webview2/'
     Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'first install') 'Install payload differs.'
     Assert-That ([IO.File]::ReadAllText((Join-Path $install 'VERSION.txt')).Trim() -eq '0.1.0-alpha.1') 'Version was not recorded.'
+    # Version directories are installer Source folders; their manifests remain version-local.
+    $firstRelease = Join-Path $source 'v0.1.0-alpha.1'
+    [IO.Directory]::CreateDirectory($firstRelease) | Out-Null
+    Copy-Item -LiteralPath $zip -Destination $firstRelease
+    Copy-Item -LiteralPath (Join-Path $source 'SHA256SUMS-v0.1.0-alpha.1.txt') -Destination $firstRelease
+    Copy-Item -LiteralPath $installer -Destination $firstRelease
+    $firstInstallerHash = (Get-FileHash -LiteralPath (Join-Path $firstRelease 'install-raio.ps1') -Algorithm SHA256).Hash
+    $null = Run-Installer @{ Version = '0.1.0-alpha.1'; Source = $firstRelease }
+    Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'first install') 'Version directory Source did not install v1.'
+    $secondZip = New-Package '0.1.0-alpha.9' 'version directory update'
+    $secondRelease = Join-Path $source 'v0.1.0-alpha.9'
+    [IO.Directory]::CreateDirectory($secondRelease) | Out-Null
+    Copy-Item -LiteralPath $secondZip -Destination $secondRelease
+    Copy-Item -LiteralPath (Join-Path $source 'SHA256SUMS-v0.1.0-alpha.9.txt') -Destination $secondRelease
+    Copy-Item -LiteralPath $installer -Destination $secondRelease
+    $null = Run-Installer @{ Version = '0.1.0-alpha.9'; Source = $secondRelease }
+    Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'version directory update') 'Version directory Source did not install v2.'
+    Assert-That ((Get-FileHash -LiteralPath (Join-Path $firstRelease 'install-raio.ps1') -Algorithm SHA256).Hash -eq $firstInstallerHash) 'Version directory update changed the older installer.'
+    $null = Run-Installer @{ Version = '0.1.0-alpha.1'; Source = $firstRelease }
+    Assert-That ([IO.File]::ReadAllText((Join-Path $install 'app/raio.exe')) -eq 'first install') 'Older version directory no longer verified or installed.'
     # Verify only the exact zip entry, ignoring script and similar-name entries.
     $firstManifest = Join-Path $source 'SHA256SUMS-v0.1.0-alpha.1.txt'
     $zipEntry = [IO.File]::ReadAllText($firstManifest)
