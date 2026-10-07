@@ -1,7 +1,7 @@
 // Local Windows package only: no signing, publishing or settings access.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,12 +49,26 @@ export const writePackageNotices = ({ root, folder, cargoMetadata }, run = execF
   run(process.execPath, args, { stdio: 'inherit' });
 };
 
+/** Reserve one immutable version directory, including partial failed attempts. */
+export const createReleaseLayout = ({ releaseRoot, version }) => {
+  const names = packageNames(version);
+  const release = join(releaseRoot, `v${version}`);
+  if (existsSync(release)) throw new Error(`Package output already exists for version v${version}. Move it aside before retrying; connected hooks may reference it.`);
+  mkdirSync(releaseRoot, { recursive: true });
+  // Non-recursive mkdir also refuses a concurrently created version directory.
+  mkdirSync(release);
+  const folder = join(release, names.name);
+  mkdirSync(folder);
+  return { ...names, release, folder, zip: join(release, names.zipName), manifest: join(release, names.manifestName), installer: join(release, 'install-raio.ps1') };
+};
+
 /** Hash only the bytes actually shipped alongside the versioned manifest. */
 export const writeReleaseAssets = ({ root, release, zipName, manifestName }) => {
   const manifest = join(release, manifestName);
   if (existsSync(manifest)) throw new Error(`Checksum manifest already exists: ${manifest}`);
   const installer = join(release, 'install-raio.ps1');
-  copyFileSync(join(root, 'scripts', 'install-raio.ps1'), installer);
+  if (existsSync(installer)) throw new Error(`Installer already exists: ${installer}`);
+  copyFileSync(join(root, 'scripts', 'install-raio.ps1'), installer, constants.COPYFILE_EXCL);
   const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
   writeFileSync(manifest, sha256Manifest([
     { name: zipName, sha256: digest(join(release, zipName)) },
@@ -83,10 +97,13 @@ LICENSE contains Raio's MIT license. THIRD-PARTY-NOTICES.txt contains bundled
 third-party dependency and font license notices.
 
 Install (optional)
-The release also offers install-raio.ps1 for stable per-user installation.
-Before running a downloaded installer, run:
+Each release keeps its zip, installer and checksum manifest together in
+release-local/v${version}/, beside raio-v${version}-windows-x64/.
+Use install-raio.ps1 from that version directory for stable per-user installation.
+Before running a downloaded installer, from that directory run:
 Get-FileHash -Algorithm SHA256 install-raio.ps1
 Compare the result with its line in SHA256SUMS-v${version}.txt.
+Then run: .\\install-raio.ps1 -Version '${version}' -Source .
 The installer verifies the zip's exact-name checksum entry before extraction.
 
 Moving this folder
@@ -147,15 +164,8 @@ const pack = () => {
 
   const tar = join(process.env.SystemRoot ?? 'C:/Windows', 'System32', 'tar.exe');
   if (!existsSync(tar)) throw new Error('Windows built-in tar.exe unavailable; cannot create complete release assets.');
-  const release = join(root, 'release-local');
   const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-  const { name, zipName, manifestName } = packageNames(version);
-  const folder = join(release, name);
-  const zip = join(release, zipName);
-  const manifest = join(release, manifestName);
-  if ([folder, zip, manifest].some(existsSync)) throw new Error(`Package output already exists for version ${name}. Move it aside before retrying; connected hooks may reference it.`);
-  mkdirSync(release, { recursive: true });
-  mkdirSync(folder);
+  const { name, zipName, manifestName, release, folder, zip, manifest, installer } = createReleaseLayout({ releaseRoot: join(root, 'release-local'), version });
   writePackageNotices({ root, folder, cargoMetadata });
   const hashes = {};
   for (const binary of binaries) {
@@ -173,7 +183,7 @@ const pack = () => {
   execFileSync(tar, ['-a', '-c', '-f', zip, '-C', release, name], { stdio: 'inherit' });
   writeReleaseAssets({ root, release, zipName, manifestName });
   console.log(`Created local zip: ${zip}`);
-  console.log(`Created installer: ${join(release, 'install-raio.ps1')}`);
+  console.log(`Created installer: ${installer}`);
   console.log(`Created checksum manifest: ${manifest}`);
 };
 
