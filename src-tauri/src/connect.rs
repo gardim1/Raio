@@ -16,9 +16,9 @@ const HOOKS: [(&str, Option<&str>); 6] = [
     ("SessionStart", None),
     ("SessionEnd", None),
     ("Stop", None),
-    ("PreToolUse", Some("Write|Edit|MultiEdit|NotebookEdit|Bash")),
-    ("PostToolUse", Some("Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob")),
-    ("PostToolUseFailure", Some("Write|Edit|MultiEdit|NotebookEdit|Bash")),
+    ("PreToolUse", Some("Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell")),
+    ("PostToolUse", Some("Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob")),
+    ("PostToolUseFailure", Some("Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell")),
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -237,6 +237,26 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_replaces_bash_only_matchers_and_captures_powershell_once() {
+        let mut old = with_raio(user_settings(), CMD).unwrap();
+        for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+            let groups = old["hooks"][event].as_array_mut().unwrap();
+            let managed = groups.last_mut().unwrap();
+            let matcher = managed["matcher"].as_str().unwrap().replace("|PowerShell", "");
+            managed["matcher"] = json!(matcher);
+        }
+        let updated = with_raio(old, CMD).unwrap();
+        for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+            let managed: Vec<_> = updated["hooks"][event].as_array().unwrap().iter()
+                .filter(|g| g["hooks"].as_array().unwrap().iter().any(is_raio_handler)).collect();
+            assert_eq!(managed.len(), 1, "{event}");
+            let tools: Vec<_> = managed[0]["matcher"].as_str().unwrap().split('|').collect();
+            assert!(tools.contains(&"Bash") && tools.contains(&"PowerShell"), "{event}: {tools:?}");
+        }
+        assert_eq!(without_raio(updated), user_settings());
+    }
+
+    #[test]
     fn refuses_malformed_files() {
         assert!(with_raio(json!([1, 2]), CMD).is_err());
         assert!(with_raio(json!({ "hooks": { "Stop": "nope" } }), CMD).is_err());
@@ -257,6 +277,11 @@ mod tests {
         assert_eq!(fs::read_to_string(saved).unwrap(), original);
         assert!(!fs::read_dir(root.join(".claude")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("bak")));
         assert!(fs::read_to_string(settings_path(root)).unwrap().contains(MARKER));
+        let connected: Value = serde_json::from_str(&fs::read_to_string(settings_path(root)).unwrap()).unwrap();
+        for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+            let group = connected["hooks"][event].as_array().unwrap().last().unwrap();
+            assert!(group["matcher"].as_str().unwrap().split('|').any(|tool| tool == "PowerShell"));
+        }
         disconnect(root, backups.path(), 8).unwrap();
         let restored: Value = serde_json::from_str(&fs::read_to_string(settings_path(root)).unwrap()).unwrap();
         assert_eq!(restored, user_settings());

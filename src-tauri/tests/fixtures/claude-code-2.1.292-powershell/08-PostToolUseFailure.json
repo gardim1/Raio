@@ -1,0 +1,24 @@
+﻿{
+    "hook_event_name":  "PostToolUseFailure",
+    "tool_name":  "PowerShell",
+    "tool_input":  {
+                       "command":  "node --test fail.test.mjs | Select-Object -Last 3",
+                       "other_field_names":  [
+                                                 "description"
+                                             ]
+                   },
+    "error":  "Exit code 1 \u003credacted 45 more chars\u003e",
+    "is_interrupt":  false,
+    "other_top_level_field_names":  [
+                                        "session_id",
+                                        "transcript_path",
+                                        "cwd",
+                                        "prompt_id",
+                                        "permission_mode",
+                                        "tool_use_id",
+                                        "duration_ms"
+                                    ],
+    "session_id":  "\u003csession\u003e",
+    "cwd":  "\u003cpath\u003e",
+    "transcript_path":  "\u003cpath\u003e"
+}

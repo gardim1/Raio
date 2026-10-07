@@ -12,6 +12,7 @@ use raio_lib::inbox::{self, Dirs};
 use raio_lib::store::{Insert, Store};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claude-code-2.1.286");
+const POWERSHELL_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claude-code-2.1.292-powershell");
 
 /// The first launch of a freshly linked `raio-hook.exe` can be slow (antivirus scan, cold file cache). The hook
 /// exits at its own 2 s deadline whatever happens, so a cold start could make a test lose its record before
@@ -101,6 +102,43 @@ fn recorded_session_flows_from_hook_to_store_without_content() {
     let text = String::from_utf8_lossy(&everything);
     for forbidden in ["SENTINEL_", "process.exit", "acme-mini\\", "C:/fixture", "transcripts"] {
         assert!(!text.contains(forbidden), "found {forbidden:?} on disk");
+    }
+}
+
+#[test]
+fn captured_powershell_checks_flow_from_hook_to_store_without_raw_content() {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let store = Store::open(&data.path().join("raio.db"), 0).unwrap();
+    for (name, kind, code, detail) in [
+        ("01-PreToolUse.json", "command.observed", None, None),
+        ("02-PostToolUse.json", "command.result", Some(0), None),
+        ("03-PreToolUse.json", "command.observed", None, None),
+        ("04-PostToolUseFailure.json", "command.result", Some(1), None),
+        ("05-PreToolUse.json", "command.observed", None, Some("compound command")),
+        ("06-PostToolUseFailure.json", "command.result", None, Some("compound command")),
+        ("07-PreToolUse.json", "command.observed", None, Some("compound command")),
+        ("08-PostToolUseFailure.json", "command.result", None, Some("compound command")),
+    ] {
+        assert_eq!(run_hook(data.path(), &fs::read(format!("{POWERSHELL_FIXTURES}/{name}")).unwrap()).0, 0, "{name}");
+        let pending = inbox::pending(&dirs, 1000);
+        assert_eq!(pending.len(), 1, "{name}");
+        let event = pending[0].event.as_ref().unwrap();
+        assert_eq!(event.kind, kind, "{name}");
+        assert_eq!(event.evidence.tool_name.as_deref(), Some("PowerShell"), "{name}");
+        assert_eq!(event.evidence.command_class.as_deref(), Some("test"), "{name}");
+        assert_eq!((event.evidence.exit_code, event.evidence.detail.as_deref()), (code, detail), "{name}");
+        assert!(matches!(store.insert(event, 1).unwrap(), Insert::Inserted(_)), "{name}");
+        fs::remove_file(&pending[0].path).unwrap();
+    }
+    assert_eq!(store.project_events("fixtureproject").unwrap().len(), 8);
+    drop(store);
+    let everything = all_bytes_under(data.path());
+    let text = String::from_utf8_lossy(&everything);
+    for forbidden in ["pass.test.mjs", "fail.test.mjs", "redacted", "<path>", "transcript_path", "other_field_names"] {
+        assert!(!text.contains(forbidden), "retained {forbidden} on disk");
     }
 }
 

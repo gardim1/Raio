@@ -1,0 +1,28 @@
+﻿{
+    "hook_event_name":  "PostToolUse",
+    "tool_name":  "PowerShell",
+    "tool_input":  {
+                       "command":  "node --test pass.test.mjs",
+                       "other_field_names":  [
+                                                 "description"
+                                             ]
+                   },
+    "tool_response":  {
+                          "stdout":  "\u003credacted 196 chars\u003e",
+                          "stderr":  "\u003credacted 0 chars\u003e",
+                          "interrupted":  false,
+                          "isImage":  false
+                      },
+    "other_top_level_field_names":  [
+                                        "session_id",
+                                        "transcript_path",
+                                        "cwd",
+                                        "prompt_id",
+                                        "permission_mode",
+                                        "tool_use_id",
+                                        "duration_ms"
+                                    ],
+    "session_id":  "\u003csession\u003e",
+    "cwd":  "\u003cpath\u003e",
+    "transcript_path":  "\u003cpath\u003e"
+}

@@ -84,14 +84,85 @@ pub fn relative_path(root: &Path, cwd: Option<&str>, raw: &str) -> String {
     }
 }
 
-/// Command class and program from a command line. The command line itself is never kept.
+/// Small lexical scan, not a shell parser: separates unquoted control operators without treating
+/// quoted/escaped arguments, descriptor redirections or PowerShell's call operator as background.
+fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool) {
+    let bytes = command.as_bytes();
+    let mut segments = Vec::new();
+    let (mut start, mut i, mut quote, mut background) = (0, 0, None, false);
+    let mut previous_redirection = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let follows_redirection = std::mem::take(&mut previous_redirection);
+        let escape = if powershell { b'`' } else { b'\\' };
+        if c == escape && quote != Some(b'\'') {
+            // Inside Bash double quotes a backslash only escapes these characters.
+            let can_escape = powershell || quote.is_none()
+                || bytes.get(i + 1).is_some_and(|next| matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n'));
+            if can_escape {
+                i += 2;
+                continue;
+            }
+        }
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if matches!(c, b'\'' | b'"') {
+            quote = Some(c);
+            i += 1;
+            continue;
+        }
+        let mut width = 1;
+        let separator = match c {
+            b';' | b'\n' => true,
+            b'|' => {
+                width += usize::from(bytes.get(i + 1) == Some(&b'|'));
+                true
+            }
+            b'&' if bytes.get(i + 1) == Some(&b'&') => {
+                width = 2;
+                true
+            }
+            b'&' => {
+                let redirection = follows_redirection
+                    || (!powershell && bytes.get(i + 1) == Some(&b'>'));
+                if redirection {
+                    false
+                } else if powershell && command[start..i].trim().is_empty() {
+                    // `& 'exe'` starts a command. Remove it from classification, not from evidence.
+                    start = i + 1;
+                    false
+                } else {
+                    background = true;
+                    true
+                }
+            }
+            _ => false,
+        };
+        if separator {
+            segments.push(command[start..i].trim());
+            start = i + width;
+        }
+        previous_redirection = matches!(c, b'>' | b'<');
+        i += width;
+    }
+    segments.push(command[start..].trim());
+    segments.retain(|s| !s.is_empty());
+    (segments, background)
+}
+
+/// Command class and program from a Bash command line. The command line itself is never kept.
 pub fn classify_command(command: &str) -> (String, Option<String>, bool) {
-    let segments: Vec<&str> = command
-        .split(|c| c == ';' || c == '|' || c == '\n')
-        .flat_map(|s| s.split("&&"))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
+    let (class, program, compound, background) = classify_for_tool(command, false);
+    (class, program, compound || background)
+}
+
+fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>, bool, bool) {
+    let (segments, background) = command_segments(command, powershell);
     let compound = segments.len() > 1;
     let words = |s: &str| -> Vec<String> {
         s.split_whitespace()
@@ -131,10 +202,10 @@ pub fn classify_command(command: &str) -> (String, Option<String>, bool) {
         let name = p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string();
         name.trim_end_matches(".exe").chars().take(32).collect()
     });
-    (best.into(), program, compound)
+    (best.into(), program, compound, background)
 }
 
-/// "Exit code N" at the start of a Bash failure message.
+/// "Exit code N" at the start of a command tool failure message.
 fn exit_code_from_error(error: &str) -> Option<i64> {
     error.strip_prefix("Exit code ")?.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
 }
@@ -170,11 +241,12 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
         }
         ("Stop", _) => ("turn.ended", vec![], format!("stop:{}", text(payload, "prompt_id").map(str::to_owned).unwrap_or_else(|| unique(ctx.now_ms)))),
         ("PreToolUse", Some(t)) if EDIT_TOOLS.contains(&t) => ("file.edit.attempted", paths_of(file_path()), String::new()),
-        ("PreToolUse", Some("Bash")) | ("PostToolUse", Some("Bash")) | ("PostToolUseFailure", Some("Bash")) => {
-            let (class, program, compound) = classify_command(text(&input, "command").unwrap_or(""));
+        ("PreToolUse" | "PostToolUse" | "PostToolUseFailure", Some(t @ ("Bash" | "PowerShell"))) => {
+            let powershell = t == "PowerShell";
+            let (class, program, compound, syntax_background) = classify_for_tool(text(&input, "command").unwrap_or(""), powershell);
             evidence.command_class = Some(class);
             evidence.program = program;
-            let background = input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
+            let background = syntax_background || input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
             let interrupted = payload.get("tool_response").and_then(|r| r.get("interrupted")).and_then(Value::as_bool).unwrap_or(false)
                 || payload.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false);
             // The tool's success/failure only reflects the check itself for a single, foreground, completed command.
@@ -191,12 +263,17 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
                 if !result_reflects_command {
                     // Pipes, `|| true`, `; echo`, background runs and interruptions hide the check's own result.
                 } else if event == "PostToolUse" {
-                    // Observed with Claude Code 2.1.286: non-zero exits arrive as PostToolUseFailure.
+                    // Captured Bash (2.1.286) and PowerShell (2.1.292): non-zero exits arrive as PostToolUseFailure.
                     evidence.exit_code = Some(0);
                     evidence.exit_code_source = Some("tool-success".into());
-                } else if let Some(code) = text(payload, "error").and_then(exit_code_from_error) {
+                } else if event == "PostToolUseFailure"
+                    && let Some(code) = text(payload, "error").and_then(exit_code_from_error) {
                     evidence.exit_code = Some(code);
                     evidence.exit_code_source = Some("failure-message".into());
+                }
+                if evidence.exit_code.is_none() && evidence.detail.is_none() {
+                    // A failure without a parseable exit code establishes no numeric result.
+                    evidence.detail = Some("result not established".into());
                 }
                 ("command.result", vec![], String::new())
             }
@@ -247,6 +324,7 @@ mod tests {
     use std::fs;
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claude-code-2.1.286");
+    const POWERSHELL_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claude-code-2.1.292-powershell");
 
     fn ctx() -> Context<'static> {
         Context { project_id: "pid", root: Path::new("C:\\fixture\\acme-mini"), now_ms: 1_000 }
@@ -336,6 +414,129 @@ mod tests {
         p["tool_response"]["interrupted"] = serde_json::json!(true);
         let e = normalize(&p, &ctx()).unwrap();
         assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("interrupted")));
+    }
+
+    #[test]
+    fn bash_syntax_background_never_claims_the_checks_exit_code() {
+        for command in ["npm test & wait", "npm test &", "npm test && echo done &"] {
+            let mut p = fixture("17-PostToolUse-Bash.json");
+            p["tool_input"]["command"] = serde_json::json!(command);
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{command}");
+            assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("background command")), "{command}");
+            assert_eq!(e.evidence.exit_code_source, None);
+        }
+    }
+
+    #[test]
+    fn escaped_redirection_characters_do_not_mask_a_following_background_operator() {
+        for (tool, command) in [("Bash", r"npm test \>& wait"), ("Bash", r"npm test \<& wait"), ("PowerShell", "npm test `>& wait")] {
+            let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": tool,
+                "tool_input": { "command": command } });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("background command")), "{command}");
+        }
+    }
+
+    #[test]
+    fn bash_redirections_quotes_and_escapes_do_not_hide_a_single_result() {
+        for command in [
+            "npm test 2>&1", "npm test > out.txt 2>&1", "npm test >&2", "npm test &> out.txt",
+            "npm test &>> out.txt", "npm test <&0", r#"npm test "a;b" 'x & y' "a|b""#,
+            r"npm test a\;b x\&y a\|b", r#"npm test "a\";b""#,
+        ] {
+            let mut p = fixture("17-PostToolUse-Bash.json");
+            p["tool_input"]["command"] = serde_json::json!(command);
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (Some(0), None), "{command}");
+            assert!(!classify_command(command).2, "{command}");
+        }
+    }
+
+    #[test]
+    fn unquoted_control_segments_withhold_the_overall_shell_status() {
+        for tool in ["Bash", "PowerShell"] {
+            for command in ["npm test; echo done", "npm test | echo done", "npm test || echo done", "npm test && echo done", "npm test\necho done"] {
+                let mut p = fixture("17-PostToolUse-Bash.json");
+                p["tool_name"] = serde_json::json!(tool);
+                p["tool_input"]["command"] = serde_json::json!(command);
+                let e = normalize(&p, &ctx()).unwrap();
+                assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("compound command")), "{tool}: {command}");
+            }
+        }
+    }
+
+    #[test]
+    fn powershell_observations_and_results_keep_only_established_evidence() {
+        for (hook, kind, code, source, detail) in [
+            ("PreToolUse", "command.observed", None, None, None),
+            ("PostToolUse", "command.result", Some(0), Some("tool-success"), None),
+            ("PostToolUseFailure", "command.result", Some(1), Some("failure-message"), None),
+        ] {
+            let p = serde_json::json!({
+                "hook_event_name": hook, "tool_name": "PowerShell", "tool_use_id": "ps-check",
+                "session_id": "fixture-session", "tool_input": { "command": "npm test" },
+                "error": "Exit code 1\nSENTINEL_OUTPUT", "tool_response": { "stdout": "SENTINEL_OUTPUT" }
+            });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!(e.kind, kind);
+            assert_eq!(e.evidence.tool_name.as_deref(), Some("PowerShell"));
+            assert_eq!(e.evidence.command_class.as_deref(), Some("test"));
+            assert_eq!(e.evidence.program.as_deref(), Some("npm"));
+            assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()), (code, source, detail));
+            assert_eq!(e.validate(), Ok(()));
+            assert!(!serde_json::to_string(&e).unwrap().contains("SENTINEL_"));
+        }
+    }
+
+    #[test]
+    fn captured_powershell_payloads_establish_single_checks_but_not_compound_checks() {
+        for (name, kind, code, source, detail) in [
+            ("01-PreToolUse.json", "command.observed", None, None, None),
+            ("02-PostToolUse.json", "command.result", Some(0), Some("tool-success"), None),
+            ("03-PreToolUse.json", "command.observed", None, None, None),
+            ("04-PostToolUseFailure.json", "command.result", Some(1), Some("failure-message"), None),
+            ("05-PreToolUse.json", "command.observed", None, None, Some("compound command")),
+            ("06-PostToolUseFailure.json", "command.result", None, None, Some("compound command")),
+            ("07-PreToolUse.json", "command.observed", None, None, Some("compound command")),
+            ("08-PostToolUseFailure.json", "command.result", None, None, Some("compound command")),
+        ] {
+            let payload = parse_payload(&fs::read(format!("{POWERSHELL_FIXTURES}/{name}")).unwrap()).unwrap();
+            let e = normalize(&payload, &ctx()).unwrap();
+            assert_eq!(e.kind, kind, "{name}");
+            assert_eq!(e.evidence.tool_name.as_deref(), Some("PowerShell"), "{name}");
+            assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{name}");
+            assert_eq!(e.evidence.program.as_deref(), Some("node"), "{name}");
+            assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()), (code, source, detail), "{name}");
+            assert_eq!(e.validate(), Ok(()), "{name}");
+            let json = serde_json::to_string(&e).unwrap();
+            for forbidden in ["pass.test.mjs", "fail.test.mjs", "redacted", "<path>", "transcript_path", "other_field_names"] {
+                assert!(!json.contains(forbidden), "{name}: retained {forbidden}");
+            }
+        }
+    }
+
+    #[test]
+    fn powershell_call_operator_quotes_and_backticks_are_not_background() {
+        for (command, program) in [
+            (r#"& "C:/x/node.exe" --test"#, "node"),
+            ("& 'C:/x/node.exe' --test", "node"),
+            (r#"npm test "a;b" 'x & y'"#, "npm"),
+            ("npm test a`;b x`&y a`|b", "npm"),
+            (r#"npm test "a`";b""#, "npm"),
+            ("npm test 'it''s & quoted'", "npm"),
+            ("npm test 2>&1", "npm"),
+        ] {
+            let p = serde_json::json!({ "hook_event_name": "PostToolUseFailure", "tool_name": "PowerShell",
+                "tool_input": { "command": command }, "error": "Exit code 7\nfailed" });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (Some(7), None), "{command}");
+            assert_eq!(e.evidence.program.as_deref(), Some(program), "{command}");
+        }
+        let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": "PowerShell",
+            "tool_input": { "command": "& 'C:/x/node.exe' --test &" } });
+        let e = normalize(&p, &ctx()).unwrap();
+        assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("background command")));
     }
 
     #[test]
