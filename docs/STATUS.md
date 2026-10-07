@@ -1,6 +1,30 @@
 # Raio status
 
-Last updated: 2026-10-02 (round 3). Earlier sections keep their own dates.
+Last updated: 2026-10-07 (round 4). Earlier sections keep their own dates.
+
+## Round 4 (2026-10-07): audit fixes, PowerShell checks, one title bar, local package
+
+Windows 11, 96 dpi single monitor during native QA (earlier rounds used 175% and two monitors). Nothing run on macOS or Linux. Work came from the independent Round 3 audit (findings F1-F6) and the open items above; every change was implemented in its own worktree, reviewed by a second agent, then integrated.
+
+- **Checks run through Claude Code's PowerShell tool now reach Raio** (F6). Real sanitized payloads from Claude Code 2.1.292 (`src-tauri/tests/fixtures/claude-code-2.1.292-powershell/`) show PowerShell failures arrive like Bash ones ("Exit code N"), so a single command's result is trusted the same way. Projects connected before this need a reconnect; Raio now says when a connection's hooks are out of date (`project_hooks_state`, read-only) and offers the usual preview + Connect.
+- **No more false green from shell syntax** (F4). A command's exit status is trusted only when the whole command is one simple command (allow-list: plain words, quoted strings without expansions, a short list of redirections, PowerShell `& "exe"`). Background `&`, compounds, pipes, comments, substitutions, non-ASCII text and quoted PowerShell literals stay "result unknown", now with the reason shown ("combined with other commands", "ran in the background", "interrupted", "tool result can't confirm it"). This is a closed lexical grammar, not a shell parser.
+- **"No checks observed"** replaces "No checks ran" (absence of telemetry is not proof).
+- **Resumed sessions are live again** (F2): every start/end occurrence is kept; the latest boundary decides open/ended.
+- **Map before the first session** (F1): a connected project shows its whole map with "No session yet"; nothing about a session is invented.
+- **Bounded drop accounting while Raio is closed** (F3): fixed per-reason counters (at most 14 small files) plus an "at least" flag when a count could not be updated; the UI says "At least N" or "Some events may not have been recorded". Readers do not lock counters; the flag survives clock changes and expires with the counters.
+- **Hook ownership** (F5): only Raio's exact hook command is treated as Raio's; a user hook containing `--raio-managed` is kept.
+- **One title bar on Windows**: Expanded is undecorated; the design's three dots are close (still minimizes), minimize and maximize; the title bar drags and double-click maximizes; edges resize.
+- **Island idle cost**: geometry is cached and invalidated by window events, click-through is re-applied after the Island window is recreated, and the cursor poll slows from 33 ms to 80 ms far from the capsule.
+- **Flaky Rust test fixed at the cause** (it used the production 2 s scan budget).
+- **Local portable package**: `npm run app:build` then `npm run app:pack` -> `release-local/raio-<sha>-windows-x64/` (+ zip) with commit and SHA256 in its README. Unsigned, not an installer, nothing published.
+
+A finished replay now returns to live when new activity arrives (a playing replay is not interrupted). Native QA (release `8d60649`, hash-checked, isolated data/WebView2, throwaway project, real headless Claude Code 2.1.292): PASS for the live title bar (drag, double-click, dots, Alt+F4, edge resize), second-instance restore (x4, 201-419 ms), Island click-through (20/20 hovers, ~72 ms, focus kept), connect preview with PowerShell matchers, pre-session map, live checks passed/failed/"combined with other commands", resume stays live, forced-stop relaunch keeps timeline and replay, disconnect keeps the user's hook. FAIL found and fixed afterwards: the pre-session Expanded had no window controls (fixed in `8597c48`; re-checked natively on that release: drag, double-click, dots, Alt+F4 and "1 system mapped" pass). Not run: tray "Open Raio"/"Quit" (icon sits in the hidden-icons flyout), Island restore from a minimized Expanded. Disconnect restores settings semantically, not byte-identically (re-serialised JSON; the first backup is byte-identical).
+
+Idle CPU, A/B in one sitting (same data, 45 s settle + 60 s window, app + WebView2 tree, 16 logical cores, ~13% background load, n=2 single samples each, % of one core): Expanded 1.52 -> 1.14, Island 3.60 -> 1.81, Mini 1.08 -> 1.25 (within noise). Memory unchanged (~370-425 MB working set, 88-131 MB private). Not a guarantee or a worst case.
+
+Tests on the final commit: `8597c48`: vitest 727 (38 files), tsc + build + bundle check 0, cargo 218 unit + 13 integration (+3 ignored), clippy 0 with 2 existing warnings, Playwright 39/39 in two runs. On the preceding branch commit one full Playwright run failed `film 04-auth-to-api-traversal` by 2% of pixels and passed on every rerun (3/3 isolated, 2/2 full); not re-blessed, cause unknown (the film route does not mount the changed App code). Release `raio.exe` SHA256 `8A7BC4F9…14C7099`, `raio-hook.exe` `87F0B611…F26D6AF`; portable package `release-local/raio-8597c48e5866-windows-x64(.zip)` (ignored, local).
+
+Open: events that arrive while a replay is still playing leave the view on "Replay complete" until the next event or "Close replay"; tray menu clicks and graceful Quit (owner manual check), replay of short sessions lasts ~6 s rather than ~10 s, Mini position resets when the first session starts, cross-surface morph (still deferred), installer/signing, other DPI/multi-monitor this round, macOS/Linux never run.
 
 ## Round 3 (2026-10-02): real interactive session, import edges, whole-project map
 
