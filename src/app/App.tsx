@@ -4,7 +4,7 @@ import { useCompanionPresence } from '../features/modes/presenceClock';
 import type { CompanionPresence } from '../features/modes/companionPresence';
 import { useSurfaceVisible } from '../shared/motion/surfaceVisibility';
 import { useSurfaceStore } from '../shared/motion/visibleStore';
-import { TitleBar } from '../features/panel/TitleBar';
+import { TitleBar, type TitleBarWindowApi } from '../features/panel/TitleBar';
 import { ExpandedWindow, expandedWindowChrome } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
@@ -101,22 +101,25 @@ export const App = ({ underlay }: AppProps) => {
 };
 
 /** Expanded keeps its native window controls throughout folder choice and mandatory Connect review. */
-export const ExpandedConnectView = ({ connector, initialRoot, onClose }: {
+export const ExpandedConnectView = ({ connector, initialRoot, onClose, windowApi }: {
   readonly connector: Connector;
   readonly initialRoot?: string;
   readonly onClose?: () => void;
+  readonly windowApi?: TitleBarWindowApi;
 }) => {
   const bridge = useBridge();
-  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const nativeWindow = windowApi ?? expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const [previewRoot, setPreviewRoot] = useState(initialRoot ?? null);
   const previewPresence: CompanionPresence = { state: 'disconnected', label: 'Connect preview', description: 'Connect preview · confirm the settings review to connect this folder', records: [], activeUntil: null };
-  const project = initialRoot ? initialRoot.replaceAll('\\', '/').replace(/\/+$/, '').split('/').at(-1) || initialRoot : 'No project';
+  const root = previewRoot;
+  const project = root ? root.replaceAll('\\', '/').replace(/\/+$/, '').split('/').at(-1) || root : 'No project';
   return (
     <div className="expanded-dock">
       <div className="panel expanded" style={{ borderRadius: 28 }}>
         <TitleBar companion={previewPresence} nativeWindow={nativeWindow} project={project} agent="unknown" task="Review connection"
           taskVisible taskIsPlaceholder taskPrefix="Project ·" status="ready" statusLabel="Connect preview" />
         <div className="expanded__connect">
-          <ConnectPanel connector={connector} {...(initialRoot ? { initialRoot } : {})} {...(onClose ? { onClose } : {})} />
+          <ConnectPanel connector={connector} onPreviewRootChange={setPreviewRoot} mapBesideReview {...(initialRoot ? { initialRoot } : {})} {...(onClose ? { onClose } : {})} />
         </div>
       </div>
     </div>

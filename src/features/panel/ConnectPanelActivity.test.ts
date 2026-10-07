@@ -44,7 +44,7 @@ const preview: ConnectPreview = { before: null, after: '{}', settingsPath: 'C:/f
 let previews: ReturnType<typeof deferred<ConnectPreview>>[];
 let maps: ReturnType<typeof deferred<ProjectMapSnapshot | null>>[];
 let connector: Connector;
-const render = () => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector }); };
+const render = (onPreviewRootChange?: (root: string | null) => void) => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector, onPreviewRootChange }); };
 const review = () => find(render(), node => node.type === ConnectReview);
 beforeEach(() => {
   hooks.slots = []; previews = []; maps = [];
@@ -112,4 +112,17 @@ it('older settings cannot overwrite the restarted folder review after they finis
   maps[0]!.resolve(null); await settle();
   expect(review()?.props.preview).toEqual(preview);
   expect(review()?.props.map).toEqual({ kind: 'unavailable' });
+});
+
+it('publishes a chosen folder for the preview title and clears it on cancellation', async () => {
+  const onRoot = vi.fn();
+  const tree = render(onRoot);
+  hooks.effects[0]!();
+  find(tree, node => node.props?.children === 'Choose a folder')!.props.onClick!();
+  await settle();
+  expect(onRoot).toHaveBeenLastCalledWith('C:/fixture');
+  find(render(onRoot), node => node.props?.children === 'Cancel')!.props.onClick!();
+  expect(onRoot).toHaveBeenLastCalledWith(null);
+  previews[0]!.resolve(preview); maps[0]!.resolve(null); await settle();
+  expect(onRoot).toHaveBeenCalledTimes(2);
 });
