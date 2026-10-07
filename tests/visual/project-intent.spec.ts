@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const mount = async (page: Page, options: { connected?: boolean; startupRoot?: string } = {}) => {
+const mount = async (page: Page, options: { connected?: boolean; startupRoot?: string; holdChosenPreview?: boolean } = {}) => {
   await page.goto('/harness.html?view=expanded&chrome=0&t=0');
   await page.evaluate(async (options) => {
     const modulePath = '/tests/visual/fixtures/project-intent.tsx';
@@ -76,5 +76,23 @@ test('an unconnected folder intent keeps Expanded chrome during review and retur
   await review.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(fixture.locator('.titlebar__project')).toHaveText('Fixture A');
   await expect(fixture.locator('.connect--review')).toHaveCount(0);
+  await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
+});
+
+test('a chosen folder pending across Activity hide/show recovers its settings and map without connecting', async ({ page }) => {
+  const fixture = await mount(page, { holdChosenPreview: true });
+  await fixture.getByRole('button', { name: 'Choose a folder', exact: true }).click();
+  await expect(fixture.getByText('Loading settings preview…', { exact: true })).toBeVisible();
+  await expect(fixture.getByText('Mapping project…', { exact: true })).toBeVisible();
+  const path = '/tests/visual/fixtures/project-intent.tsx';
+  await page.evaluate(async path => { (await import(path)).setVisible(false); }, path);
+  await expect(fixture.locator('.connect--review')).toBeHidden();
+  await page.waitForTimeout(100);
+  await page.evaluate(async path => { (await import(path)).resolveChosenPreview(); }, path);
+  await page.evaluate(async path => { (await import(path)).setVisible(true); }, path);
+  const review = fixture.locator('.connect--review');
+  await expect(review.locator('.connect__body code')).toHaveText('C:/fixture/new/.claude/settings.local.json');
+  await expect(review.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
+  await expect(review.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
 });

@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { trackSurfaceVisibility, type SurfaceWindowAdapter } from './surfaceVisibilityTracker';
+
+import { isSurfaceVisible, setNativeSurfaceVisible } from '../shared/motion/surfaceVisibility';
+afterEach(() => setNativeSurfaceVisible(true));
 
 type Handler<T> = (payload: T) => void;
 
@@ -68,9 +71,9 @@ const start = async (fake: ReturnType<typeof createFake>) => {
 };
 
 describe('trackSurfaceVisibility', () => {
-  it('stays visible and reports nothing for a shown, restored, visible surface', async () => {
+  it('publishes the first resolved state for a shown, restored, visible surface', async () => {
     const { seen } = await start(createFake());
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([true]);
   });
 
   it('reports hidden when the window starts minimized', async () => {
@@ -90,7 +93,7 @@ describe('trackSurfaceVisibility', () => {
     await flush();
     fake.restore();
     await flush();
-    expect(seen).toEqual([false, true]);
+    expect(seen).toEqual([true, false, true]);
   });
 
   it('hides when the document becomes hidden and shows when it is visible again', async () => {
@@ -98,7 +101,7 @@ describe('trackSurfaceVisibility', () => {
     const { seen } = await start(fake);
     fake.setPageHidden(true);
     fake.setPageHidden(false);
-    expect(seen).toEqual([false, true]);
+    expect(seen).toEqual([true, false, true]);
   });
 
   it('keeps following the app surface-visible event', async () => {
@@ -106,7 +109,7 @@ describe('trackSurfaceVisibility', () => {
     const { seen } = await start(fake);
     fake.emitShown(false);
     fake.emitShown(true);
-    expect(seen).toEqual([false, true]);
+    expect(seen).toEqual([true, false, true]);
   });
 
   it('stays hidden until every reason to hide is gone', async () => {
@@ -117,9 +120,9 @@ describe('trackSurfaceVisibility', () => {
     fake.setPageHidden(true);
     fake.restore();
     await flush();
-    expect(seen).toEqual([false]);
+    expect(seen).toEqual([true, false]);
     fake.setPageHidden(false);
-    expect(seen).toEqual([false, true]);
+    expect(seen).toEqual([true, false, true]);
   });
 
   it('does not repeat a value that did not change', async () => {
@@ -129,7 +132,7 @@ describe('trackSurfaceVisibility', () => {
     await flush();
     fake.minimize();
     await flush();
-    expect(seen).toEqual([false]);
+    expect(seen).toEqual([true, false]);
   });
 
   it('lets a later surface-visible event win over the slower initial query', async () => {
@@ -140,7 +143,7 @@ describe('trackSurfaceVisibility', () => {
     fake.emitShown(true);
     fake.release();
     await flush();
-    expect(seen.at(-1) ?? true).toBe(true);
+    expect(seen).toEqual([true]);
   });
 
   it('lets the latest minimized query win when answers arrive late', async () => {
@@ -151,7 +154,7 @@ describe('trackSurfaceVisibility', () => {
     fake.restore();
     fake.release();
     await flush();
-    expect(seen.at(-1) ?? true).toBe(true);
+    expect(seen).toEqual([true]);
   });
 
   it('removes every listener when stopped', async () => {
@@ -161,7 +164,7 @@ describe('trackSurfaceVisibility', () => {
     await flush();
     expect(fake.handlers.shownEvent.size + fake.handlers.windowChange.size + fake.handlers.page.size).toBe(0);
     fake.setPageHidden(true);
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([true]);
   });
 
   it('removes listeners that finish registering after it was stopped', async () => {
@@ -172,7 +175,7 @@ describe('trackSurfaceVisibility', () => {
     expect(fake.handlers.shownEvent.size + fake.handlers.windowChange.size).toBe(0);
   });
 
-  it('keeps the last known state when the native queries fail', async () => {
+  it('fails visible when the initial native queries fail', async () => {
     const fake = createFake();
     const failing: SurfaceWindowAdapter = {
       ...fake.adapter,
@@ -182,6 +185,39 @@ describe('trackSurfaceVisibility', () => {
     const seen: boolean[] = [];
     trackSurfaceVisibility(failing, (visible) => seen.push(visible));
     await flush();
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([true]);
   });
+});
+
+it('publishes a resolved visible startup into an initially suspended renderer', async () => {
+  setNativeSurfaceVisible(false);
+  const fake = createFake();
+  const seen: boolean[] = [];
+  const stop = trackSurfaceVisibility(fake.adapter, value => { seen.push(value); setNativeSurfaceVisible(value); });
+  await flush();
+  expect(seen).toEqual([true]);
+  expect(isSurfaceVisible()).toBe(true);
+  stop();
+});
+it('recovers visible on startup query failure, but respects known hidden page state', async () => {
+  for (const hidden of [false, true]) {
+    setNativeSurfaceVisible(false);
+    const fake = createFake({ pageHidden: hidden });
+    const seen: boolean[] = [];
+    const stop = trackSurfaceVisibility({ ...fake.adapter, isShown: async () => { throw Error('no window'); }, isMinimized: async () => { throw Error('no window'); } }, value => { seen.push(value); setNativeSurfaceVisible(value); });
+    await flush();
+    expect(seen).toEqual([!hidden]);
+    expect(isSurfaceVisible()).toBe(!hidden);
+    stop();
+  }
+});
+
+it('keeps a known minimized state when a later query fails', async () => {
+  const fake = createFake({ minimized: true });
+  const { seen, stop } = await start(fake);
+  fake.adapter.isMinimized = async () => { throw Error('no window'); };
+  fake.restore();
+  await flush();
+  expect(seen).toEqual([false]);
+  stop();
 });

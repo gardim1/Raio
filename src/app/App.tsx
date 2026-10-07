@@ -153,11 +153,20 @@ const Surfaces = ({ snapshot, companion }: { readonly snapshot: SessionSnapshot;
   const live = usePlayback({ reducedMotionAt: 30, wallClock: true, autoplay: !followsLive, stopAt: liveScript.summary.detailAt + CTA_PROMINENT_SECONDS + 2 });
   const replay = usePlayback({ stopAt: replayScript.duration + 0.6, autoplay: false });
 
+  // Activity reconnects effects on reveal while retaining these refs and the playback clocks.
+  const startedLiveRun = useRef(0);
+  const startedReplayRun = useRef(0);
   useEffect(() => {
-    if (liveRun > 0 && !followsLive) live.restart();
+    if (liveRun > 0 && liveRun !== startedLiveRun.current && !followsLive) {
+      startedLiveRun.current = liveRun;
+      live.restart();
+    }
   }, [liveRun]);
   useEffect(() => {
-    if (replayRun > 0) replay.restart();
+    if (replayRun > 0 && replayRun !== startedReplayRun.current) {
+      startedReplayRun.current = replayRun;
+      replay.restart();
+    }
   }, [replayRun]);
 
   useEffect(() => {

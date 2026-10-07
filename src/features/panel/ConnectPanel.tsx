@@ -86,9 +86,16 @@ export const ConnectPanel = ({ connector, initialRoot, onClose }: { readonly con
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
+  const pending = useRef<{ root: string; remaining: number } | null>(initialRoot ? { root: initialRoot, remaining: 2 } : null);
+  const previousInitialRoot = useRef(initialRoot);
 
   const begin = (root: string) => {
     const token = ++request.current;
+    pending.current = { root, remaining: 2 };
+    const settled = () => {
+      if (token !== request.current || !pending.current) return;
+      if (--pending.current.remaining === 0) pending.current = null;
+    };
     setBusy(false);
     setError(null);
     setStep({ kind: 'loading', root, map: { kind: 'loading' } });
@@ -96,17 +103,22 @@ export const ConnectPanel = ({ connector, initialRoot, onClose }: { readonly con
     void readPreviewMap(bridge, root).then((map) => {
       if (token !== request.current) return;
       setStep((current) => current.kind === 'loading' || current.kind === 'review' ? { ...current, map } : current);
-    });
+    }).finally(settled);
     void connector.preview(root).then((preview) => {
       if (token !== request.current) return;
       setStep((current) => ({ kind: 'review', root, preview, map: current.kind === 'loading' ? current.map : { kind: 'loading' } }));
-    }).catch((cause: unknown) => { if (token === request.current) setStep({ kind: 'error', message: String(cause) }); });
+    }).catch((cause: unknown) => { if (token === request.current) setStep({ kind: 'error', message: String(cause) }); }).finally(settled);
   };
   useEffect(() => {
-    if (initialRoot) begin(initialRoot);
+    if (initialRoot !== previousInitialRoot.current) {
+      previousInitialRoot.current = initialRoot;
+      pending.current = initialRoot ? { root: initialRoot, remaining: 2 } : null;
+    }
+    // Cleanup invalidates callbacks, but Activity retains the unfinished folder request for reveal.
+    if (pending.current) begin(pending.current.root);
     return () => { request.current++; };
   }, [initialRoot, connector, bridge]);
-  const cancel = () => { request.current++; setBusy(false); setStep({ kind: 'idle' }); setError(null); onClose?.(); };
+  const cancel = () => { request.current++; pending.current = null; setBusy(false); setStep({ kind: 'idle' }); setError(null); onClose?.(); };
 
   const run = async (action: () => Promise<void>) => {
     const token = request.current;
@@ -151,7 +163,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose }: { readonly con
         onConnect={() => void run(async () => {
           const token = request.current;
           await connector.connect(root, preview);
-          if (token === request.current) { setStep({ kind: 'idle' }); onClose?.(); }
+          if (token === request.current) { pending.current = null; setStep({ kind: 'idle' }); onClose?.(); }
         })} />
       </div>
     );

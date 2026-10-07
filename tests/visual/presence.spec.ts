@@ -28,16 +28,18 @@ test('presence uses the existing tokens, labels and distinct unknown/disconnecte
     const pill = fixture.locator('.status[data-presence="' + value + '"]');
     await expect(pill).toHaveAttribute('aria-label', new RegExp(label));
     await expect(pill.locator('.status__label')).toContainText(label);
-    const colors = await pill.evaluate((el, token) => {
+    await expect(pill.locator('.status__dot')).toHaveCSS('transition-duration', '0s');
+    const expected = await pill.evaluate((el, token) => {
       const probe = document.createElement('i');
       probe.style.color = 'var(' + token + ')';
       el.append(probe);
-      const expected = getComputedStyle(probe).color;
+      const color = getComputedStyle(probe).color;
       probe.remove();
-      const dot = el.querySelector('.status__dot')!;
-      return { expected, actual: getComputedStyle(dot)[dot.textContent ? 'color' : 'backgroundColor'] };
+      return color;
     }, token);
-    expect(colors.actual).toBe(colors.expected);
+    await expect.poll(() => pill.locator('.status__dot').evaluate(dot =>
+      getComputedStyle(dot)[dot.textContent ? 'color' : 'backgroundColor'],
+    )).toBe(expected);
     if (value === 'unknown' || value === 'disconnected') await expect(pill.locator('.status__dot')).toHaveText(value === 'unknown' ? '?' : '−');
   }
 });
@@ -103,7 +105,7 @@ test('hidden surfaces pause graphics and keep rendered data frozen until latest-
   expect(await fixture.locator('.mini').evaluate(el => { const s = (el as HTMLElement).style; return [s.left, s.top, s.width, s.height]; })).toEqual(rect);
 });
 
-test('recent activity expires to neutral without idle bob or shimmer', async ({ page }) => {
+test('recent activity expires to neutral with reduced-motion graphics at rest', async ({ page }) => {
   await page.clock.install();
   const fixture = await mount(page);
   await state(page, 'working');
@@ -112,6 +114,35 @@ test('recent activity expires to neutral without idle bob or shimmer', async ({ 
   await expect(fixture.locator('.status')).toHaveAttribute('data-presence', 'connected');
   await expect(fixture.locator('.status__label')).toHaveText('Connected · quiet');
   await mode(page, 'island');
-  await expect(fixture.locator('.mini-orb')).not.toHaveClass(/mini-orb--bob/);
+  expect(await fixture.locator('.mini-orb').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  expect(await fixture.locator('.island__dot').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
   await expect(fixture.locator('.island__label')).toContainText('Connected · quiet');
+});
+
+test('Activity reveal preserves a paused replay position and a new request still restarts it', async ({ page }) => {
+  const fixture = await mount(page, false);
+  await page.evaluate(async () => {
+    const path = '/src/features/session/store/sessionStore.ts';
+    (await import(path)).useSessionUi.getState().startReplay();
+  });
+  await fixture.getByRole('button', { name: 'Pause replay', exact: true }).click();
+  const slider = fixture.getByRole('slider', { name: 'Replay position' });
+  // Seek through the actual keyboard handler, independently of the native clock.
+  await slider.focus();
+  for (let i = 0; i < 14; i++) await page.keyboard.press('ArrowRight');
+  const position = await slider.getAttribute('aria-valuenow');
+  expect(Number(position)).toBeGreaterThanOrEqual(7);
+  await page.evaluate(async path => { (await import(path)).setVisible(false); }, fixtureModule);
+  await expect(slider).toBeHidden();
+  await page.waitForTimeout(100); // Activity cleanup must finish before reconnecting.
+  await page.evaluate(async path => { (await import(path)).setVisible(true); }, fixtureModule);
+  await expect(slider).toBeVisible();
+  await expect(slider).toHaveAttribute('aria-valuenow', position!);
+  await expect(fixture.getByRole('button', { name: 'Play replay', exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    const path = '/src/features/session/store/sessionStore.ts';
+    (await import(path)).useSessionUi.getState().startReplay();
+  });
+  await expect(fixture.getByRole('button', { name: 'Pause replay', exact: true })).toBeVisible();
+  await expect.poll(async () => Number(await slider.getAttribute('aria-valuenow'))).toBeLessThan(Number(position));
 });

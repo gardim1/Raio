@@ -24,9 +24,9 @@ describe('shared companion presence on existing chrome', () => {
     expect(mini).toContain('Claude hook');
     expect(mini).toContain('Tests failed');
   });
-  it('resting Island/header orbs do not bob even if an old animation asks them to', () => {
+  it('resting Island/header orbs retain the requested finite idle float', () => {
     const markup = renderToStaticMarkup(createElement(MiniOrb, { bob: true, companion: quiet }));
-    expect(markup).not.toContain('mini-orb--bob');
+    expect(markup).toContain('mini-orb--bob');
     expect(markup).toContain('data-presence="connected"');
   });
   it('gives unavailable/disconnected states their own icon plus readable wording', () => {

@@ -41,3 +41,9 @@ describe('MiniOrb', () => {
     expect(renderToStaticMarkup(createElement(MiniOrb, {}))).not.toContain('mini-orb--bob');
   });
 });
+
+it.each(['connected', 'attention', 'failure', 'unknown', 'disconnected'] as const)('bounded float respects bob alone for %s presence', state => {
+  const companion = { state, label: state, description: state, records: [], activeUntil: null };
+  expect(renderToStaticMarkup(createElement(MiniOrb, { bob: true, companion }))).toContain('mini-orb--bob');
+  expect(renderToStaticMarkup(createElement(MiniOrb, { bob: false, companion }))).not.toContain('mini-orb--bob');
+});
