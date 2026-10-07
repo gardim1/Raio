@@ -42,7 +42,9 @@ original design renders, which are not published; it exits 2 when they are absen
 
 ```bash
 npm run app:build
-npm run app:pack       # release-local/: versioned folder + zip, LICENSE, THIRD-PARTY-NOTICES.txt, SHA256SUMS, installer
+npm run app:pack -- --cargo-metadata <file>   # optional: pass `cargo metadata` JSON if cargo is not on PATH
+# -> release-local/v<version>/: zip, install-raio.ps1, SHA256SUMS-v<version>.txt and the unpacked folder
+#    (raio.exe, raio-hook.exe, LICENSE, THIRD-PARTY-NOTICES.txt, README-PORTABLE.txt)
 ```
 
 ## Pull requests

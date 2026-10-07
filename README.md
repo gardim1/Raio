@@ -1,62 +1,109 @@
 # Raio
 
-A local-first desktop companion that shows where an AI coding agent worked in a project: an animated map of the areas it touched, factual notices, honest validation states, and a short session replay.
+**See where your AI coding agent worked.** Raio is a small Windows companion that follows a Claude Code session in
+your project and shows it as a calm, animated map: which areas the agent read and changed, factual notices, what Raio
+could actually observe about the checks it ran, and a short replay when it finishes.
 
-Status: early development. Windows 11 is the only platform where anything has been run. macOS and Linux are targets, not verified. See `docs/STATUS.md` for what works and what was verified.
+![Raio's expanded view after a Claude Code session in a synthetic demo project: the project's areas, the two that were
+changed highlighted, a failed command shown in red with its source, and the session timeline](docs/images/raio-expanded.png)
 
-- Architecture: `docs/ARCHITECTURE.md`
-- Current plan: `docs/plans/2026-10-01-m0-m1-e2e1.md`
-- Claude Code hook contract (observed): `docs/integrations/claude-code-hooks.md`
+*Real app, synthetic demo project.*
 
-## Develop
+Everything stays on your computer: no account, no cloud service, no telemetry, no model API of its own.
 
-Requirements: Node 20.19+ (22 used), Rust stable with the MSVC toolchain on Windows, the WebView2 runtime.
+> **Alpha, in development.** Windows 10/11 x64 only, unsigned. Raio follows **Claude Code** sessions. Codex (or any
+> other agent) can install and open Raio, but Raio does **not** observe Codex sessions. macOS and Linux have not been
+> tested. **Status: source code available; the Windows alpha download is being prepared** — until a release is listed
+> on the [Releases page](https://github.com/gardim1/Raio/releases), build it from source (below).
 
-```bash
-npm ci
-npm test            # domain and adapter tests (Vitest)
-npm run build       # typecheck + product build + check that no dev-harness code ships
-npm run dev:harness # browser review harness with the labelled demo fixture
-npm run test:visual # renderer screenshots against local goldens (Playwright, Edge channel)
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run app:build   # tauri build --no-bundle: src-tauri/target/release/raio.exe and raio-hook.exe
-```
+## What it shows
 
-`index.html` is the product; `harness.html` is a development-only review harness (mode dock, concept film, states gallery) and never ships.
+- **Island**: a small capsule at the top of the screen with what the agent is doing, without taking focus.
+- **Mini Player**: a floating window with the orb and the session so far.
+- **Expanded view**: the project map, the session timeline and an inspector for each area.
+- **Replay**: about ten seconds that retell the session in order (short sessions replay in less).
+- **Map before any session**: when you choose a folder, Raio groups it into areas from folder names and known manifest
+  names (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, compose files, Prisma schema). It never reads `.env`
+  values or runs your code. Areas and technology hints are heuristics and say so; relationships between areas are
+  static TypeScript/JavaScript imports only, other languages show "relationships unknown".
 
-## What to open
+Colour always comes with a label: neutral when connected and quiet, blue while the agent works, amber for something
+worth a look (a migration file added, a dependency manifest changed), red for an observed failure, and its own
+"unknown" / "not connected" state when Raio has no data. "No checks observed" means Raio saw none, not that none ran.
 
-| You want | Command | What it is |
-|---|---|---|
-| **The product** (native Windows app) | `npm run app:build` once, then `npm run app` (`-- --surface=island\|mini\|expanded`) | Tauri app with real data from connected projects. Warns if the build is older than the sources. Quit from the tray icon. |
-| Dev review harness | `npm run dev:harness`, then open the printed `http://127.0.0.1:<port>/harness.html` | Browser-only, labelled **demo fixture** data, review controls (mode dock, film, states). Never ships. Does not open a browser by itself. |
-| Design reference | not in the repository | The approved design export is kept locally by the owner; it is the visual reference, not the product. |
+## Install (Windows)
 
-There is no installer yet: `npm run app` runs the development build in place.
+**Download: being prepared.** When the alpha release exists, it will include `install-raio.ps1`, a versioned zip and a
+`SHA256SUMS` file; the steps will be published here and in [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
 
-## Use (development build)
-
-1. Run `npm run app` (or `src-tauri/target/release/raio.exe` directly; `--surface=island|mini|expanded` picks the first surface; the tray switches surfaces).
-2. **Choose a folder**, review the exact change to `<project>/.claude/settings.local.json`, and **Connect**. Nothing is written before you confirm; the original file is backed up; **Disconnect** removes only Raio's entries.
-3. Start a new Claude Code session in that folder. Raio records minimised events (no prompts, file contents, tool output or full command lines) in a local SQLite database under your user's app data folder and shows the latest session; **View changes** replays it.
-
-The `raio-hook` binary must stay next to `raio.exe` (packaging is not done yet). The hook is asynchronous, always exits 0, and goes inert if Raio has not run for 7 days.
-
-## Portable local package (Windows)
-
-On Windows x64, build and package locally:
+Until then, build it from source (Node 20.19+, Rust stable with MSVC, WebView2 runtime):
 
 ```powershell
-npm run app:build
-npm run app:pack
+git clone https://github.com/gardim1/Raio.git
+cd Raio
+npm ci
+npm run app:build          # src-tauri\target\release\raio.exe and raio-hook.exe
+npm run app                # opens the release build
 ```
 
-The pack command requires both release executables to be newer than every file under `src/` and `src-tauri/src/`. It refuses tracked changes outside `docs/` and `*.md`; `npm run app:pack -- --allow-dirty` explicitly permits those changes and labels the package accordingly, but still requires fresh binaries. It creates the ignored `release-local/raio-<shortsha>-windows-x64/` folder with `raio.exe`, `raio-hook.exe`, and `README-PORTABLE.txt`, plus a zip using Windows' built-in `tar.exe` when available. Existing package output is never overwritten. The README records the full commit SHA, build time (the latest executable modification time) and SHA256 hashes. This is a local package; nothing is signed, installed or published.
+**Ask your local coding agent to do it** (Claude Code or Codex running on your own Windows machine, not in the cloud):
 
-Keep the executables together and open `raio.exe` (Windows x64 and WebView2 required). This build is unsigned, so Windows SmartScreen may warn; keep OS protections enabled. Connected projects' hooks point to this folder's `raio-hook.exe`: **Disconnect** those projects before moving the folder, quit from the tray, then run Raio in the new location and **Reconnect** through the settings preview.
+> Install Raio from https://github.com/gardim1/Raio following its INSTALL_FOR_AGENTS.md and open it on this folder.
+> Show me which hooks it will add before anything is connected.
 
-Data lives at `%APPDATA%\io.github.gardim1.raio`. To remove the package, Disconnect all projects, quit from the tray, then delete the package folder and that data directory (including Raio's local history). The zip can also be deleted.
+## First use
 
-## Privacy
+1. Open Raio on a folder: `raio.exe --project "C:\path\to\project"` (a running Raio comes forward on that folder), or
+   **Choose a folder** in the app.
+2. Raio shows the folder's map and the exact change it would make to `<project>\.claude\settings.local.json`: six
+   asynchronous hooks (`SessionStart`, `SessionEnd`, `Stop`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`) that run
+   `raio-hook.exe`. Existing settings and hooks are kept and the original file is backed up. **Nothing is written until
+   you click Connect.** Raio warns you if git does not ignore that settings file.
+3. Start a **new** Claude Code session in that folder (hooks apply to sessions started after connecting). Raio follows
+   it live and keeps a local history; **View changes** plays the replay. Closing Raio's windows keeps it in the tray;
+   it keeps recording while hidden and shows the current state when you open it again.
 
-Everything stays on this machine. There is no account, cloud backend, telemetry or LLM call. Grouping of files into areas is a heuristic, relationships between areas are shown as unknown, and edits are reported as "consistent on disk", never as proven authorship.
+## What Raio records
+
+Minimised events only: event type, time, project-relative paths, tool name, a command class (test, build, migration,
+install, other) and the program name, and exit codes when the hook reports them. **Not recorded**: prompts, file
+contents, tool output, transcripts or full command lines. Data lives in `%APPDATA%\io.github.gardim1.raio` (SQLite),
+kept 30 days by default. The hook is asynchronous, always exits 0, and goes inert if Raio has not run for 7 days.
+
+## Disconnect and remove
+
+- **Disconnect a project**: select it in Raio and click **Disconnect**. Only Raio's own hook entries are removed; your
+  settings stay (the JSON may be re-serialised).
+- **Remove Raio**: disconnect your projects, quit from the tray icon, then delete Raio's folder and, if you also want to
+  delete its history, `%APPDATA%\io.github.gardim1.raio`. The installer (with the release) adds `-Uninstall`, which
+  refuses while projects are still connected, and `-RemoveData`.
+
+## Known limitations (alpha)
+
+- Windows only, tested on one Windows 11 machine (96 dpi, one monitor). No other machine, scaling or multi-monitor
+  setup was tested for this alpha.
+- Follows Claude Code only. Edits are shown as "reported and consistent on disk", never as proven authorship; changes
+  you make at the same time may be mixed in and are marked "author unknown".
+- A command's result is trusted only for a single simple command; pipes, chains and background commands show
+  "result unknown" with the reason. A failing command that is not recognised as a test or build shows as "Command
+  failed" while the check summary can still say "No checks observed".
+- Area grouping, technology hints and notices (e.g. "migration file added") are path-name heuristics; a migration
+  file added is not a migration that ran.
+- Resource use is measured, not guaranteed: on the test machine idle CPU was about 1.2–2.2% of one core and the app
+  plus its WebView2 processes used about 375–400 MB working set (90–107 MB private), above the project's own target of
+  under 1% and 150 MB. Details in [`docs/STATUS.md`](docs/STATUS.md).
+- Unsigned build, no auto-update, no installer UI.
+
+Found a bug? Please open an issue with the bug template (no secrets, private code or transcripts).
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, tests and packaging. Architecture:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). What is implemented and verified: [`docs/STATUS.md`](docs/STATUS.md).
+Claude Code hook contract as observed: [`docs/integrations/claude-code-hooks.md`](docs/integrations/claude-code-hooks.md).
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). Raio is free to use. Third-party components keep their own licenses; the Windows package
+includes `THIRD-PARTY-NOTICES.txt` (generated by `scripts/third-party-notices.mjs`). The bundled Inter font is under
+the SIL Open Font License 1.1. Claude Code and other agents have their own terms and requirements.

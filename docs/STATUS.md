@@ -1,6 +1,47 @@
 # Raio status
 
-Last updated: 2026-10-07 (round 4). Earlier sections keep their own dates.
+Last updated: 2026-10-07 (alpha preparation). Earlier sections keep their own dates.
+
+## Alpha preparation (2026-10-07): open on a folder, presence states, installer
+
+Windows 11 (10.0.26200), 96 dpi, one 1920x1080 monitor, 16 logical cores, WebView2 154, Claude Code 2.1.292 (headless,
+subscription). Nothing run on macOS, Linux or a second machine.
+
+- **Open on a folder**: `raio.exe --project "<path>"`; a running Raio comes forward on that folder (no second process);
+  an unconnected folder opens the Connect preview. Nothing is connected without the click.
+- **Map before connecting**: the Connect preview shows the folder's map (same read-only listing as a connected project).
+- **Presence states** on existing tokens with a label for each: neutral (connected, quiet), blue (recent activity),
+  amber (migration file added, dependency manifest changed, events possibly lost, hooks outdated), red (observed
+  failure; an older failure or one followed by changes is shown as history), neutral + own symbol for unknown /
+  disconnected. While activity is recent the Island and Mini keep showing what the agent is doing; colour and
+  accessible label carry the state.
+- **Hidden means hidden**: rendering subscriptions, clocks and CSS animation pause while a surface is not visible;
+  ingestion continues; showing a surface reconciles to the current state.
+- **Replay with new activity**: "New activity" + "Back to live"; a finished replay returns to live by itself.
+- **Map heuristics**: Python/FastAPI + Next layouts (integrations, persistence/Alembic, templates, tests);
+  "Authentication (detected from file names)" only with path evidence; image/binary folders do not take an area slot;
+  Alembic revision files count as "migration file added" (a file, not a migration that ran).
+- **Installer** `scripts/install-raio.ps1`: per-user (`%LOCALAPPDATA%\Programs\Raiopp`, stable for hooks), SHA256 of
+  the zip checked against the release manifest before extraction (integrity, not a signature), refuses while Raio runs,
+  WebView2 check, `-Uninstall` refuses while projects are connected (Raio keeps `connections.json` plus a pending marker
+  during changes), `-RemoveData` separate. Package: `npm run app:pack` -> `release-local/v<version>/` with LICENSE and
+  generated THIRD-PARTY-NOTICES (fails if any component lacks license text).
+
+Native QA on the packaged release of `e40ea6d` (installed outside the checkout in a path with spaces and accents,
+isolated data, synthetic project): install, update, refuse-while-running, tampered manifest rejected; `--project` +
+Connect wrote only the 6 managed hooks; real sessions: neutral -> blue -> red for a failing command, amber for a
+`migrations/` file; Mini kept its position at the first session; replay 4.6-7.5 s; "New activity"/"Back to live";
+all surfaces hidden during a session then restored to the current state in 0.6 s; history and replay after a forced
+stop and relaunch; Disconnect left exactly the user's content; uninstall refused while connected; `-RemoveData`
+removed only the data folder. Found and fixed afterwards: the Connect preview's title bar ignored real mouse input,
+Alembic revisions raised no notice, the Island's visible text stayed "starting" (re-checked on the final package, see
+below). Not exercised: tray "Open Raio"/"Quit" (owner manual check), interrupted download, missing WebView2, DPI,
+multi-monitor, another machine. A planned check against a private real project was not run.
+
+Idle cost on that release (n=2, app + 6 WebView2 processes, 60 s windows, % of one core): Expanded 1.23/1.64, Island
+2.20/1.75, Mini 1.66/1.59, all hidden 1.19/1.30, active session 1.34/1.53; working set 374-400 MB, private 90-107 MB.
+**Above the project's own target (< 1% of a core, 150 MB).** Replay playing measured 52-82% of one core in ~12 s windows
+that include a UI Automation call (overstates a pure replay). Hook runtime per event: median 24-28 ms, p95 32-35 ms.
 
 ## Round 4 (2026-10-07): audit fixes, PowerShell checks, one title bar, local package
 
@@ -99,7 +140,6 @@ Not done this round: a real **interactive** Claude Code session with replay afte
 ## Machine notes and blockers
 - VS 2022 Community on this machine lacks the MSVC libraries; Rust builds run in the VS 2019 Build Tools environment through a local, process-only wrapper (`.local/tools/with-msvc.cmd`, not committed).
 - Local-only tooling and evidence (not committed): `.local/tools/` (probes, wrappers), `.local/native/` (window captures), `.local/visual/` (goldens and design-export renders), `.local/e2e-project/` (throwaway project, disconnected).
-- Coordination: one Maestri worker terminal "Raio | Lume" (Claude Code, Sonnet 5.5 high) and the workspace-scoped role "Raio | Implementer" were created; worktrees `.worktrees/m0-deltas` and `.worktrees/e2e-projection` (branches `m0-renderer-deltas`, `e2e-projection`) hold already-integrated work and can be removed.
 
 ## Next
 1. Owner manual checks on the real desktop (list above), especially 150% scaling and multi-monitor.
