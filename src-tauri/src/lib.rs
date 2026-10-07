@@ -71,6 +71,7 @@ pub fn run() {
             core::core_status,
             core::list_projects,
             core::project_events,
+            core::project_hooks_state,
             core::preview_connect,
             core::connect_project,
             core::disconnect_project,

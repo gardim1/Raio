@@ -252,6 +252,19 @@ pub fn project_events(core: State<'_, Core>, project_id: String) -> Result<Vec<R
     core.store.lock().map_err(|e| e.to_string())?.project_events(&project_id).map_err(|e| e.to_string())
 }
 
+fn hooks_state_for(core: &Core, project_id: &str, hook: Option<&Path>) -> Result<connect::HooksState, String> {
+    let root = core.connected_root(project_id)?;
+    let Some(hook) = hook else { return Ok(connect::HooksState::Unknown) };
+    let command = connect::hook_command(hook, project_id, &root);
+    Ok(connect::read_hooks_state(&root, &command))
+}
+
+/// Read-only, off the UI thread: user settings are never rewritten or backed up by a status check.
+#[tauri::command(async)]
+pub fn project_hooks_state(core: State<'_, Core>, project_id: String) -> Result<connect::HooksState, String> {
+    hooks_state_for(&core, &project_id, hook_binary().as_deref())
+}
+
 fn root_and_command(root: &str) -> Result<(PathBuf, String, String), String> {
     let root = PathBuf::from(root);
     if !root.is_dir() {
@@ -349,6 +362,35 @@ mod tests {
         assert_eq!(second.retention_removed, 1);
         assert!(!second.more);
         assert_eq!(core.store.lock().unwrap().count_events().unwrap(), 1);
+    }
+
+    #[test]
+    fn project_hooks_state_reads_the_connected_project_without_writing_settings_or_backups() {
+        let (_d, core) = open();
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project { id: "p1".into(), root: dir.path().to_string_lossy().into_owned(), name: "demo".into(), connected_at: 1 };
+        core.store.lock().unwrap().upsert_project(&project).unwrap();
+        let hook = Path::new("C:/Raio/raio-hook.exe");
+        let command = connect::hook_command(hook, "p1", dir.path());
+        let settings = connect::with_raio(serde_json::json!({}), &command).unwrap();
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        let original = serde_json::to_string_pretty(&settings).unwrap();
+        fs::write(connect::settings_path(dir.path()), &original).unwrap();
+        assert_eq!(hooks_state_for(&core, "p1", Some(hook)).unwrap(), connect::HooksState::Current);
+        assert_eq!(hooks_state_for(&core, "p1", None).unwrap(), connect::HooksState::Unknown);
+        assert_eq!(fs::read_to_string(connect::settings_path(dir.path())).unwrap(), original);
+        assert!(!core.backups.exists());
+        assert_eq!(fs::read_dir(dir.path().join(".claude")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn project_hooks_state_unknown_or_disconnected_project_is_an_error() {
+        let (_d, core) = open();
+        assert_eq!(hooks_state_for(&core, "nope", None).unwrap_err(), "unknown project");
+        let project = Project { id: "p1".into(), root: "C:/fixture/app".into(), name: "demo".into(), connected_at: 1 };
+        core.store.lock().unwrap().upsert_project(&project).unwrap();
+        core.store.lock().unwrap().disconnect_project("p1", 2).unwrap();
+        assert_eq!(hooks_state_for(&core, "p1", None).unwrap_err(), "unknown project");
     }
 
     #[test]

@@ -31,6 +31,52 @@ pub struct Preview {
     pub git_ignored: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HooksState {
+    Current,
+    Outdated,
+    Unknown,
+}
+
+/// Read-only comparison of managed handlers/matchers with this build's installation.
+pub fn hooks_state(settings: &Value, command: &str) -> HooksState {
+    let actual = managed_handlers(settings);
+    if actual.is_empty() { return HooksState::Unknown; }
+    let Ok(expected) = with_raio(json!({}), command) else { return HooksState::Unknown };
+    let mut expected = managed_handlers(&expected);
+    if actual.len() != expected.len() { return HooksState::Outdated; }
+    // Group/event order and unrelated user hooks do not change Raio's configuration.
+    for handler in actual {
+        let Some(index) = expected.iter().position(|h| *h == handler) else { return HooksState::Outdated };
+        expected.swap_remove(index);
+    }
+    HooksState::Current
+}
+
+fn managed_handlers(settings: &Value) -> Vec<(String, Option<Value>, Value)> {
+    let mut handlers = Vec::new();
+    if let Some(hooks) = settings.get("hooks").and_then(Value::as_object) {
+        for (event, groups) in hooks {
+            let Some(groups) = groups.as_array() else { continue };
+            for group in groups {
+                let Some(list) = group.get("hooks").and_then(Value::as_array) else { continue };
+                for handler in list.iter().filter(|h| is_raio_handler(h)) {
+                    handlers.push((event.clone(), group.get("matcher").cloned(), handler.clone()));
+                }
+            }
+        }
+    }
+    handlers
+}
+
+pub fn read_hooks_state(root: &Path, command: &str) -> HooksState {
+    match read_settings(&settings_path(root)) {
+        Ok((Some(_), settings)) => hooks_state(&settings, command),
+        _ => HooksState::Unknown,
+    }
+}
+
 pub fn settings_path(root: &Path) -> PathBuf {
     root.join(".claude").join("settings.local.json")
 }
@@ -248,6 +294,66 @@ mod tests {
             "permissions": { "allow": ["Bash(npm test)"] },
             "hooks": { "PostToolUse": [{ "matcher": "Write", "hooks": [{ "type": "command", "command": "prettier --write" }] }] }
         })
+    }
+
+    #[test]
+    fn hooks_state_current_ignores_user_hooks_settings_and_group_order() {
+        let mut settings = with_raio(user_settings(), CMD).unwrap();
+        settings["unrelated"] = json!({ "user": "setting" });
+        settings["hooks"]["Stop"].as_array_mut().unwrap().insert(0,
+            json!({ "matcher": "user-only", "hooks": [{ "type": "command", "command": "echo --raio-managed" }] }));
+        for groups in settings["hooks"].as_object_mut().unwrap().values_mut() { groups.as_array_mut().unwrap().reverse(); }
+        let before = settings.clone();
+        assert_eq!(hooks_state(&settings, CMD), HooksState::Current);
+        assert_eq!(settings, before, "pure comparison must not alter the caller's settings");
+    }
+
+    #[test]
+    fn hooks_state_outdated_detects_old_matchers_missing_duplicate_and_changed_handlers() {
+        let current = with_raio(user_settings(), CMD).unwrap();
+        let mut old = current.clone();
+        for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+            let group = old["hooks"][event].as_array_mut().unwrap().last_mut().unwrap();
+            group["matcher"] = json!(group["matcher"].as_str().unwrap().replace("|PowerShell", ""));
+        }
+        assert_eq!(hooks_state(&old, CMD), HooksState::Outdated);
+        let mut missing = current.clone();
+        missing["hooks"].as_object_mut().unwrap().shift_remove("SessionEnd");
+        assert_eq!(hooks_state(&missing, CMD), HooksState::Outdated);
+        let mut duplicate = current.clone();
+        let handler = duplicate["hooks"]["Stop"][0]["hooks"][0].clone();
+        duplicate["hooks"]["Stop"][0]["hooks"].as_array_mut().unwrap().push(handler);
+        assert_eq!(hooks_state(&duplicate, CMD), HooksState::Outdated);
+        let mut changed = current.clone();
+        changed["hooks"]["Stop"][0]["hooks"][0]["async"] = json!(false);
+        assert_eq!(hooks_state(&changed, CMD), HooksState::Outdated);
+        assert_eq!(hooks_state(&current, &CMD.replace("--project p", "--project other")), HooksState::Outdated);
+    }
+
+    #[test]
+    fn hooks_state_reads_are_unknown_for_missing_malformed_unreadable_or_user_only_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_hooks_state(dir.path(), CMD), HooksState::Unknown);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0, "missing settings must not be created");
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        for text in ["{not json", "[]", "{}", &serde_json::to_string(&user_settings()).unwrap(),
+            &serde_json::to_string(&with_raio(user_settings(), CMD).unwrap()).unwrap()] {
+            fs::write(settings_path(dir.path()), text).unwrap();
+            let expected = if text.contains("raio-hook.exe") { HooksState::Current } else { HooksState::Unknown };
+            assert_eq!(read_hooks_state(dir.path(), CMD), expected);
+            assert_eq!(fs::read_to_string(settings_path(dir.path())).unwrap(), text);
+            assert_eq!(fs::read_dir(dir.path().join(".claude")).unwrap().count(), 1, "no backup or temp writes");
+        }
+        fs::remove_file(settings_path(dir.path())).unwrap();
+        fs::create_dir(settings_path(dir.path())).unwrap();
+        assert_eq!(read_hooks_state(dir.path(), CMD), HooksState::Unknown, "a directory is not a readable settings file");
+    }
+
+    #[test]
+    fn hooks_state_serializes_as_the_contract_strings() {
+        for (state, expected) in [(HooksState::Current, "current"), (HooksState::Outdated, "outdated"), (HooksState::Unknown, "unknown")] {
+            assert_eq!(serde_json::to_value(state).unwrap(), json!(expected));
+        }
     }
 
     #[test]
