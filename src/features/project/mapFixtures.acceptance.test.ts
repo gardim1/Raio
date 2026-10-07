@@ -158,6 +158,8 @@ describe('map fixture: next-prisma-monorepo', () => {
   it('draws the area-level edges of the relative imports, and none from workspace package names', () => {
     expect(map.pairs).toEqual(['apps/web/api|apps/web/lib', 'apps/web/app|apps/web/components', 'apps/web/app|apps/web/lib', 'apps/web/components|apps/web/lib']);
     expect(map.pairs.some((pair) => pair.includes('packages/'))).toBe(false);
+    // Eleven bare package specifiers plus globals.css; the JSDoc type in next.config.mjs is not an import.
+    expect(map.insights.relationships).toMatchObject({ unresolved: 12 });
   });
 
   it('lists Redis only as the compose service it is, once, and the engine of the datasource', () => {

@@ -578,9 +578,7 @@ export const MAP_FIXTURES: Readonly<Record<string, MapFixtureData>> = {
       },
       {
         "path": "apps/web/next.config.mjs",
-        "specifiers": [
-          "next"
-        ]
+        "specifiers": []
       },
       {
         "path": "packages/db/src/client.ts",
