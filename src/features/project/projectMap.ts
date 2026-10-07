@@ -1,5 +1,5 @@
 import type { ArchitectureGraph } from '../architecture/model/types';
-import type { DataProvenance } from '../../platform/desktopBridge';
+import type { CoreHealth, DataProvenance } from '../../platform/desktopBridge';
 import { OTHER_GROUP } from './classifyPath';
 import { deriveMapImportEdges, drawnLinks, relationshipsFrom, relationshipsNote, type ProjectImports } from './importEdges';
 import { groupInventory, inventoryNotes } from './inventoryGroups';
@@ -15,13 +15,15 @@ export interface ProjectMapSnapshot {
   readonly listing: 'pending' | 'ready' | 'unavailable';
   readonly note: string;
   readonly technologies: readonly string[];
+  /** null: core status/refresh unavailable; absent only for older adapters and fixtures. */
+  readonly core?: CoreHealth | null;
 }
 
 export const projectMap = (
   project: ProjectRef,
   inventory: ProjectInventory | null,
   imports: ProjectImports | null,
-  options: { pending?: boolean; inventoryStale?: boolean; importsStale?: boolean; provenance?: DataProvenance } = {},
+  options: { pending?: boolean; inventoryStale?: boolean; importsStale?: boolean; provenance?: DataProvenance; core?: CoreHealth | null } = {},
 ): ProjectMapSnapshot => {
   const map = inventory ? groupInventory(inventory) : null;
   const groups = map?.groups ?? [];
@@ -30,6 +32,7 @@ export const projectMap = (
   return {
     project: { id: project.id, name: project.name },
     provenance: options.provenance ?? 'live',
+    ...(options.core !== undefined ? { core: options.core } : {}),
     graph: layoutGroups(groups, derived ? drawnLinks(derived.edges) : [], map && !groups.some((g) => g.groupId === OTHER_GROUP.groupId) ? [OTHER_GROUP] : []),
     listing: inventory ? 'ready' : options.pending ? 'pending' : 'unavailable',
     note: inventory

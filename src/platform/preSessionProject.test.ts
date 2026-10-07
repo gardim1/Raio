@@ -10,7 +10,7 @@ import { App } from '../app/App';
 import type { RaioEvent } from '../features/ingest/raioEvent';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { BridgeProvider } from './BridgeContext';
-import type { DesktopBridge } from './desktopBridge';
+import type { CoreHealth, DesktopBridge } from './desktopBridge';
 import { createNativeBridge, type NativeIpc } from './nativeBridge';
 import { readProjectMap } from './projectMapBridge';
 import { projectMapFrame } from '../features/project/projectMapFrame';
@@ -24,7 +24,8 @@ const projectMapOf = readProjectMap;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const renderApp = (bridge: DesktopBridge) => renderToStaticMarkup(createElement(BridgeProvider, { bridge, children: createElement(App) }));
 
-const fake = (list: () => Promise<unknown> = () => Promise.resolve(inventory)) => {
+const healthy: CoreHealth = { dropped: 0, watcherOverflow: false, historyResetFrom: null, hookBinary: 'raio-hook' };
+const fake = (list: () => Promise<unknown> = () => Promise.resolve(inventory), health: () => Promise<CoreHealth | undefined> = () => Promise.resolve(healthy)) => {
   const events: RaioEvent[] = [];
   let connected = true;
   let notify: () => void = () => {};
@@ -32,6 +33,7 @@ const fake = (list: () => Promise<unknown> = () => Promise.resolve(inventory)) =
   const ipc: NativeIpc = {
     invoke: <T,>(command: string) => {
       calls.push(command);
+      if (command === 'core_status') return health() as Promise<T>;
       if (command === 'list_projects') return Promise.resolve((connected ? [project] : []) as T);
       if (command === 'project_events') return Promise.resolve(events as T);
       if (command === 'project_inventory') return list() as Promise<T>;
@@ -69,6 +71,7 @@ describe('connected project before its first session', () => {
     const markup = renderApp(bridge);
     expect(markup).toContain('Waiting for an agent session');
     expect(markup).toContain('No session yet');
+    expect(markup).toContain('4 systems mapped');
     expect(markup).toContain('Project architecture map');
     expect(markup).toContain('aria-label="Auth"');
     expect(markup).toContain('aria-label="Web"');
@@ -116,7 +119,7 @@ describe('connected project before its first session', () => {
     expect(projectMapOf(bridge)?.listing).toBe('unavailable');
     expect(projectMapOf(bridge)?.graph.nodes).toEqual([]);
     expect(renderApp(bridge)).toContain('Project listing unavailable');
-    expect(renderApp(bridge)).not.toContain('0 areas mapped');
+    expect(renderApp(bridge)).not.toContain('0 systems mapped');
   });
 
   it.each(['mini', 'island'] as const)('keeps the %s surface session-free before telemetry', async (surface) => {
@@ -126,6 +129,10 @@ describe('connected project before its first session', () => {
     await settle();
     const markup = renderApp(bridge);
     expect(markup).toContain(surface === 'mini' ? 'Project architecture map' : 'Raio · no session');
+    if (surface === 'mini') {
+      expect(markup).toContain('class="mini__resize"');
+      expect(markup).toMatch(/class="mini" style="left:[^;]+;top:/);
+    }
     expect(markup).not.toMatch(/View changes|Replay|Session started|files changed/);
     expect(bridge.currentSession()).toBeNull();
   });
@@ -138,5 +145,56 @@ describe('connected project before its first session', () => {
     expect(markup).toContain('Demo fixture · not real agent activity');
     expect(markup).toContain('Waiting for an agent session');
     expect(markup).not.toMatch(/View changes|Replay|Session started/);
+  });
+
+  it.each(['expanded', 'mini'] as const)('shows missing-hook health instead of waiting on %s', async (surface) => {
+    const feed = fake(undefined, () => Promise.resolve({ ...healthy, hookBinary: null }));
+    const bridge = createNativeBridge(surface, feed.ipc, () => 100_000, 1000, []);
+    await settle();
+    await settle();
+    expect(renderApp(bridge)).toContain('raio-hook was not found next to Raio; new agent events cannot be recorded.');
+    expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    expect(bridge.currentSession()).toBeNull();
+  });
+
+  it.each(['expanded', 'mini'] as const)('does not claim to be waiting when core status is unavailable on %s', async (surface) => {
+    let available = true;
+    const feed = fake(undefined, () => available ? Promise.resolve(healthy) : Promise.reject(new Error('core unavailable')));
+    const bridge = createNativeBridge(surface, feed.ipc, () => 100_000, 1000, []);
+    await settle();
+    await settle();
+    expect(renderApp(bridge)).toContain('Waiting for an agent session');
+    available = false;
+    feed.notify();
+    await settle();
+    expect(renderApp(bridge)).toContain('Core status unavailable; new agent events cannot be confirmed.');
+    expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    expect(projectMapOf(bridge)?.graph.nodes).toHaveLength(4);
+    available = true;
+    feed.notify();
+    await settle();
+    expect(renderApp(bridge)).toContain('Waiting for an agent session');
+  });
+
+  it('marks retained project data unavailable when the core can no longer refresh the connection', async () => {
+    const feed = fake();
+    const invoke = feed.ipc.invoke;
+    let disconnectedCore = false;
+    feed.ipc.invoke = <T,>(command: string, args?: Record<string, unknown>) => disconnectedCore && command === 'list_projects'
+      ? Promise.reject(new Error('core disconnected')) : invoke<T>(command, args);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const bridge = createNativeBridge('expanded', feed.ipc, () => 100_000, 1000, []);
+      await settle();
+      await settle();
+      disconnectedCore = true;
+      feed.notify();
+      await settle();
+      expect(projectMapOf(bridge)?.graph.nodes).toHaveLength(4);
+      expect(renderApp(bridge)).toContain('Core status unavailable; new agent events cannot be confirmed.');
+      expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    } finally {
+      error.mockRestore();
+    }
   });
 });

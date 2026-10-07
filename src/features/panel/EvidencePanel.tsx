@@ -1,5 +1,6 @@
 import { formatOffset } from '../session/model/events';
 import type { CoreHealth } from '../../platform/desktopBridge';
+import { HOOK_BINARY_MISSING_NOTE } from '../../platform/coreHealth';
 import type { ProjectInsights } from '../project/projectInsights';
 import { currentValidations, describeValidation, UNASSIGNED_CHANGE_NOTE } from '../project/projectInsights';
 
@@ -57,7 +58,7 @@ export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectIn
     {core && (core.dropped > 0 || core.droppedAtLeast) && <p className="evidence__warn">{core.droppedAtLeast ? 'At least ' : ''}{core.dropped} event(s) could not be recorded; this session may be incomplete.</p>}
     {core?.watcherOverflow && <p className="evidence__warn">The file watcher overflowed; some disk changes may be missing.</p>}
     {core?.historyResetFrom && <p className="evidence__warn">Local history was unreadable and was moved aside; earlier sessions are not shown.</p>}
-    {core && !core.hookBinary && <p className="evidence__warn">raio-hook was not found next to Raio; new agent events cannot be recorded.</p>}
+    {core && !core.hookBinary && <p className="evidence__warn">{HOOK_BINARY_MISSING_NOTE}</p>}
     {evidence.technologies && evidence.technologies.length > 0 && (
       <ul className="evidence__list" aria-label="Technologies">
         {evidence.technologies.map((line) => (

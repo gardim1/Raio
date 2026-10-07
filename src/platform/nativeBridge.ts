@@ -229,10 +229,14 @@ export const createNativeBridge = (
         project = current && project?.id === current.id && project.root === current.root ? project : current;
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
-        projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale }) : null;
+        projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null }) : null;
         listeners.forEach((l) => l());
       } catch (error) {
         report('refresh')(error);
+        if (projectSnapshot) {
+          projectSnapshot = { ...projectSnapshot, core: null };
+          listeners.forEach((l) => l());
+        }
       } finally {
         refreshing = null;
         if (dirty) {

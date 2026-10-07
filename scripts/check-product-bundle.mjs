@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DIST = 'dist';
-const FORBIDDEN = ['Prototype controls', 'Dev harness', 'harness-label', 'dock__seg', 'Concept film', 'Run live session', 'gallery__grid'];
+const FORBIDDEN = ['Prototype controls', 'Dev harness', 'harness-label', 'dock__seg', 'Concept film', 'Run live session', 'gallery__grid', 'demo-project'];
 
 const files = [];
 const walk = (dir) => {
