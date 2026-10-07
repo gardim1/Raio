@@ -1,4 +1,5 @@
 import { motion } from 'motion/react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { type ReactNode, useState } from 'react';
 import { agentFullName } from '../../shared/ui/agentName';
 import { Button, IconButton } from '../../shared/ui/Button';
@@ -6,7 +7,7 @@ import { CollapseIcon, PinIcon, PlayIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
 import type { ArchitectureGraph, NodeId } from '../architecture/model/types';
 import { PanelFooter } from '../panel/PanelFooter';
-import { TitleBar } from '../panel/TitleBar';
+import { TitleBar, type TitleBarWindowApi } from '../panel/TitleBar';
 import { formatOffset } from '../session/model/events';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { SessionInsights } from '../session/model/insights';
@@ -18,6 +19,15 @@ import { useSessionMeta } from './sessionMeta';
 import { EvidencePanel } from '../panel/EvidencePanel';
 import { ConnectionFooter } from '../panel/ConnectionFooter';
 import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
+import type { DesktopBridge } from '../../platform/desktopBridge';
+
+/** Matches the Windows-only chrome configuration in surfaces.rs; the harness never opens a native API. */
+export const expandedWindowChrome = (
+  bridge: Pick<DesktopBridge, 'kind' | 'fixedSurface'>,
+  userAgent: string,
+  getWindow: () => TitleBarWindowApi = getCurrentWindow,
+): TitleBarWindowApi | undefined =>
+  bridge.kind === 'native' && bridge.fixedSurface === 'expanded' && /Windows/.test(userAgent) ? getWindow() : undefined;
 
 export interface ExpandedWindowProps {
   readonly script: ChoreographyScript;
@@ -66,7 +76,9 @@ export const ExpandedWindow = ({
   const { startedAt } = useSessionMeta();
   const snapshotNow = useSessionSnapshot();
   const evidence = snapshotNow?.evidence;
-  const connector = useBridge().connector;
+  const bridge = useBridge();
+  const connector = bridge.connector;
+  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
   const agentFull = agentFullName(script.agent);
   // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
   const overview =
@@ -85,6 +97,7 @@ export const ExpandedWindow = ({
     <div className="expanded-dock">
       <motion.div layoutId="raio-surface" layoutDependency="expanded" transition={MORPH_TRANSITION} className="panel expanded" style={{ borderRadius: 28 }}>
         <TitleBar
+          nativeWindow={nativeWindow}
           project={project}
           agent={script.agent}
           task={script.task}

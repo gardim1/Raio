@@ -81,6 +81,24 @@ svg text { font-family: var(--raio-font-ui); }
 }
 .titlebar__dots { display: flex; gap: 7px; margin-right: 6px; }
 .titlebar__dots i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); }
+.titlebar--native { user-select: none; }
+.titlebar--native .titlebar__task--show { pointer-events: auto; user-select: text; }
+.titlebar__control {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--raio-color-text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.titlebar__control svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; opacity: 0; pointer-events: none; }
+.titlebar__control:hover svg, .titlebar__control:focus svg { opacity: 1; }
+.titlebar__control:focus-visible { outline: 2px solid var(--raio-color-text-secondary); outline-offset: 2px; }
 .titlebar__brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
 .titlebar__brand .mini-orb { box-shadow: var(--raio-color-raio-css-orb-shadow) !important; }
 .titlebar__sep { width: 1px; height: 14px; background: var(--raio-color-border-separator); }

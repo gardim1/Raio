@@ -104,6 +104,16 @@ pub fn launch_surface(args: impl IntoIterator<Item = String>) -> Option<Result<&
     Some(SURFACES.iter().copied().find(|s| *s == name).ok_or(name))
 }
 
+/// The product title bar is Expanded's window chrome on Windows. Apply before startup creation or
+/// deferral so both paths keep the same window sizing, centering and native edge-resize behaviour.
+pub fn configure_expanded_chrome(config: &mut tauri::Config) {
+    if cfg!(windows)
+        && let Some(window) = config.app.windows.iter_mut().find(|w| w.label == EXPANDED)
+    {
+        window.decorations = false;
+    }
+}
+
 /// The Expanded window comes from the app config and would be created, with its webview, before anything
 /// else. When Raio is launched straight into the Island or the Mini Player, take it out of the config so it
 /// is created on first use instead: it would otherwise sit hidden, blank, ahead of the requested surface in
@@ -351,6 +361,24 @@ pub fn set_always_on_top(app: AppHandle, surface: String, on_top: bool) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expanded_uses_product_chrome_on_windows_without_changing_other_surfaces() {
+        let mut config = tauri::Config::default();
+        config.app.windows = vec![
+            WindowConfig { label: EXPANDED.into(), min_width: Some(960.0), min_height: Some(520.0), center: true, ..Default::default() },
+            WindowConfig { label: MINI.into(), ..Default::default() },
+        ];
+        configure_expanded_chrome(&mut config);
+        let expanded = &config.app.windows[0];
+        assert_eq!(expanded.decorations, !cfg!(windows));
+        assert!(expanded.resizable);
+        assert!(expanded.center);
+        assert_eq!((expanded.min_width, expanded.min_height), (Some(960.0), Some(520.0)));
+        assert!(config.app.windows[1].decorations);
+        let deferred = defer_expanded(&mut config).unwrap();
+        assert_eq!(deferred.decorations, !cfg!(windows), "lazy creation must keep the same chrome");
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

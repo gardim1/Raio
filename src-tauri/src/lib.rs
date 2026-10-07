@@ -53,6 +53,7 @@ pub fn run() {
         }
     };
     let mut context = tauri::generate_context!();
+    surfaces::configure_expanded_chrome(context.config_mut());
     // Launched straight into the Island or the Mini Player: the Expanded window is created when first shown,
     // so neither a hidden webview nor a flash of it comes before the surface that was asked for.
     let launch = surfaces::launch_surface(std::env::args());

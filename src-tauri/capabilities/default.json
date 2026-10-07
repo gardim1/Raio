@@ -1,15 +1,34 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Raio surfaces: core window/event APIs and the folder picker.",
-  "windows": [
-    "expanded",
-    "island",
-    "mini"
-  ],
-  "permissions": [
-    "core:default",
-    "core:window:allow-start-dragging",
-    "dialog:allow-open"
+  "capabilities": [
+    {
+      "identifier": "default",
+      "description": "Raio surfaces: core window/event APIs and the folder picker.",
+      "windows": [
+        "expanded",
+        "island",
+        "mini"
+      ],
+      "permissions": [
+        "core:default",
+        "core:window:allow-start-dragging",
+        "dialog:allow-open"
+      ]
+    },
+    {
+      "identifier": "expanded-chrome",
+      "description": "Expanded Windows titlebar controls.",
+      "windows": [
+        "expanded"
+      ],
+      "platforms": [
+        "windows"
+      ],
+      "permissions": [
+        "core:window:allow-close",
+        "core:window:allow-minimize",
+        "core:window:allow-toggle-maximize"
+      ]
+    }
   ]
 }
