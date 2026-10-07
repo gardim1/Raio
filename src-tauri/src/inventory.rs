@@ -1372,15 +1372,36 @@ anyhow = "1"
     }
 
     #[test]
+    fn an_expired_budget_can_return_zero_even_when_the_file_cap_allows_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["d", "a", "c", "b", "e"] {
+            write(dir.path(), &format!("{name}.txt"), "x");
+        }
+        let limits = Limits { max_files: 5, ..unhurried() };
+        let mut walk = Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() - Duration::from_secs(1),
+            files: vec![], manifests: vec![], skipped: 0, truncated: false, rules: vec![] };
+        walk.dir(dir.path(), "", 0);
+        assert!(walk.files.is_empty());
+        assert!(walk.truncated);
+        assert_eq!(walk.skipped, 0, "directory enumeration succeeded; the deadline stopped visitation");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 5, "the same fixture still exists");
+        let complete = scan(dir.path(), &limits).unwrap();
+        assert_eq!(files(&complete), ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]);
+        assert!(!complete.truncated);
+    }
+
+    #[test]
     fn more_files_than_the_cap_truncates_deterministically() {
         let dir = tempfile::tempdir().unwrap();
         for name in ["d", "a", "c", "b", "e"] {
             write(dir.path(), &format!("{name}.txt"), "x");
         }
-        let first = scan(dir.path(), &Limits { max_files: 3, ..Limits::default() }).unwrap();
+        // Exercise file-count truncation, independent of the production two-second time budget.
+        // An expired deadline can otherwise return zero files under parallel filesystem contention.
+        let first = scan(dir.path(), &Limits { max_files: 3, ..unhurried() }).unwrap();
         assert_eq!(files(&first), ["a.txt", "b.txt", "c.txt"]);
         assert!(first.truncated);
-        let exactly = scan(dir.path(), &Limits { max_files: 5, ..Limits::default() }).unwrap();
+        let exactly = scan(dir.path(), &Limits { max_files: 5, ..unhurried() }).unwrap();
         assert_eq!(exactly.files.len(), 5);
         assert!(!exactly.truncated, "reaching the cap exactly is not truncation");
     }

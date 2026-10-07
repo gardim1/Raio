@@ -492,10 +492,20 @@ mod tests {
         mark_dropped(&dirs, "unreadable-payload");
         let file = fs::File::options().read(true).write(true).open(dirs.dropped.join("count-unreadable-payload")).unwrap();
         file.try_lock().unwrap();
-        let started = std::time::Instant::now();
-        mark_dropped(&dirs, "unreadable-payload");
-        assert!(started.elapsed() < Duration::from_secs(1), "a busy counter must not delay the hook");
+        let root = dirs.inbox.parent().unwrap().to_path_buf();
+        let (done, completed) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let outcome = mark_dropped(&Dirs::new(&root), "unreadable-payload");
+            done.send(outcome).unwrap();
+        });
+        // Waiting for the lock would need us to release it. Require completion while it is still held;
+        // the timeout only bounds a broken test, not filesystem latency under parallel contention.
+        let outcome = completed.recv_timeout(Duration::from_secs(60));
+        let marked_while_locked = dirs.dropped.join(DROP_AT_LEAST).exists();
         drop(file);
+        worker.join().unwrap();
+        assert_eq!(outcome.unwrap(), WriteOutcome::Dropped("unreadable-payload"), "producer must finish before the lock is released");
+        assert!(marked_while_locked, "a busy counter must mark uncertainty before the lock is released");
         assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
         for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
         tidy(&dirs, SystemTime::now(), &Policy::default());
