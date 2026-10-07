@@ -19,6 +19,7 @@ export interface ArchitectureCanvasProps {
   readonly className?: string;
   /** `world` frames the full 1000×520 canvas (default); `content` crops to the systems (Mini Player). */
   readonly fit?: 'world' | 'content';
+  readonly label?: string;
 }
 
 const CONTENT_PADDING = 36;
@@ -47,6 +48,7 @@ export const ArchitectureCanvas = ({
   onHoverNode,
   className,
   fit = 'world',
+  label = 'Live architecture map',
 }: ArchitectureCanvasProps) => {
   const idPrefix = `raio${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const { width, height } = graph.world;
@@ -58,7 +60,7 @@ export const ArchitectureCanvas = ({
   const orb = <RaioOrb frame={frame.orb} idPrefix={idPrefix} sizeMultiplier={orbSize} />;
 
   return (
-    <svg className={className} viewBox={fit === 'content' ? contentViewBox(graph) : `0 0 ${width} ${height}`} role="img" aria-label="Live architecture map">
+    <svg className={className} viewBox={fit === 'content' ? contentViewBox(graph) : `0 0 ${width} ${height}`} role="img" aria-label={label}>
       <defs>
         <RaioDefs idPrefix={idPrefix} />
         <filter id={`${idPrefix}-blur10`} x="-60%" y="-120%" width="220%" height="340%">

@@ -6,6 +6,8 @@ import { demoSessionLog } from '../features/session/model/demoSession';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
 import type { DesktopBridge, SessionSnapshot } from './desktopBridge';
+import type { ProjectMapBridge } from './projectMapBridge';
+import { projectMap } from '../features/project/projectMap';
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
 export const demoSnapshot: SessionSnapshot = {
@@ -38,6 +40,12 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     projectInventory: () => Promise.resolve(demoInventory),
     connector: null,
   };
+};
+
+/** Development-only project map before any session; the map is explicitly labelled as fixture data. */
+export const createProjectFixtureBridge = (): ProjectMapBridge => {
+  const snapshot = projectMap({ id: 'demo-project', name: demoSessionLog.project }, demoInventory, demoImportFacts, { provenance: 'fixture' });
+  return { ...createFixtureBridge(null), currentProjectMap: () => snapshot };
 };
 
 /* Simulated live feed (development and tests only) ---------------------------------------- */

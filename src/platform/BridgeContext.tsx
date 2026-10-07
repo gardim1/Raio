@@ -1,5 +1,7 @@
 import { createContext, type ReactNode, useContext, useSyncExternalStore } from 'react';
 import type { DesktopBridge, SessionSnapshot } from './desktopBridge';
+import { readProjectMap } from './projectMapBridge';
+import type { ProjectMapSnapshot } from '../features/project/projectMap';
 
 const BridgeContext = createContext<DesktopBridge | null>(null);
 
@@ -18,5 +20,12 @@ export const useBridge = (): DesktopBridge => {
 export const useSessionSnapshot = (): SessionSnapshot | null => {
   const bridge = useContext(BridgeContext);
   if (!bridge) throw new Error('useSessionSnapshot requires a BridgeProvider');
-  return useSyncExternalStore(bridge.subscribe, bridge.currentSession);
+  return useSyncExternalStore(bridge.subscribe, bridge.currentSession, bridge.currentSession);
+};
+
+/** A connected project with no observed session; bridge notifications also cover inventory/scan updates. */
+export const useProjectMapSnapshot = (): ProjectMapSnapshot | null => {
+  const bridge = useBridge();
+  const read = () => readProjectMap(bridge);
+  return useSyncExternalStore(bridge.subscribe, read, read);
 };

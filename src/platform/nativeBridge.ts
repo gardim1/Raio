@@ -5,7 +5,9 @@ import type { RaioEvent } from '../features/ingest/raioEvent';
 import { isProjectImports, type ProjectImports } from '../features/project/importEdges';
 import { isProjectInventory, type ProjectInventory } from '../features/project/projectInventory';
 import { projectSessionDetailed } from '../features/project/projectSession';
-import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, DesktopBridge, SessionSnapshot, Surface } from './desktopBridge';
+import { projectMap, type ProjectMapSnapshot } from '../features/project/projectMap';
+import type { ProjectMapBridge } from './projectMapBridge';
+import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, SessionSnapshot, Surface } from './desktopBridge';
 
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
 
@@ -78,10 +80,11 @@ export const createNativeBridge = (
   clock: () => number = Date.now,
   scanTimeoutMs: number = SCAN_TIMEOUT_MS,
   listingRetryDelaysMs: readonly number[] = LISTING_RETRY_DELAYS_MS,
-): DesktopBridge => {
+): ProjectMapBridge => {
   const report = (command: string) => (error: unknown) => console.error(`[raio] ${command} failed`, error);
   const listeners = new Set<() => void>();
   let snapshot: SessionSnapshot | null = null;
+  let projectSnapshot: ProjectMapSnapshot | null = null;
   let project: ConnectedProject | null = null;
   let refreshing: Promise<void> | null = null;
   let dirty = false;
@@ -158,8 +161,9 @@ export const createNativeBridge = (
       }
       if (inventory && !inventoryStale) {
         inventoryStale = true;
-        void refresh();
       }
+      // A failed first listing must also notify the project-only view: pending becomes unavailable.
+      void refresh();
       const delay = listingRetryDelaysMs[retryStep++];
       if (delay !== undefined) {
         retryTimer = setTimeout(() => {
@@ -224,8 +228,9 @@ export const createNativeBridge = (
         const projected = current ? projectSessionDetailed(current, events, undefined, imports, importsStale, inventory, inventoryStale) : null;
         project = current && project?.id === current.id && project.root === current.root ? project : current;
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
+        if (current) scanIfDue(current, events);
+        projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale }) : null;
         listeners.forEach((l) => l());
-        if (current && projected) scanIfDue(current, events);
       } catch (error) {
         report('refresh')(error);
       } finally {
@@ -260,6 +265,7 @@ export const createNativeBridge = (
     kind: 'native',
     fixedSurface,
     currentSession: () => snapshot,
+    currentProjectMap: () => projectSnapshot,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

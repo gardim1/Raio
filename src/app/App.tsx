@@ -15,7 +15,8 @@ import { useLiveFollow } from '../features/session/live/useLiveFollow';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
 import { useSessionUi } from '../features/session/store/sessionStore';
-import { useBridge, useSessionSnapshot } from '../platform/BridgeContext';
+import { useBridge, useProjectMapSnapshot, useSessionSnapshot } from '../platform/BridgeContext';
+import { ProjectOnlyView } from '../features/project/ProjectOnlyView';
 import { NativeSurfaceEffects } from '../platform/NativeSurfaceEffects';
 import type { SessionSnapshot, Surface } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
@@ -35,6 +36,7 @@ export interface AppProps {
 /** The Raio product: Island, Mini Player and Expanded surfaces fed by the desktop bridge. */
 export const App = ({ underlay }: AppProps) => {
   const snapshot = useSessionSnapshot();
+  const projectSnapshot = useProjectMapSnapshot();
   const bridge = useBridge();
   const storeMode = useSessionUi((s) => s.mode);
   const mode = bridge.fixedSurface ?? storeMode;
@@ -44,6 +46,8 @@ export const App = ({ underlay }: AppProps) => {
       {underlay}
       {snapshot ? (
         <Surfaces snapshot={snapshot} />
+      ) : projectSnapshot ? (
+        <ProjectOnlyView snapshot={projectSnapshot} mode={mode} />
       ) : (
         <div className="app__empty">
           {bridge.connector && mode === 'expanded' ? (
@@ -57,9 +61,9 @@ export const App = ({ underlay }: AppProps) => {
           )}
         </div>
       )}
-      {snapshot?.provenance === 'fixture' && (
+      {(snapshot?.provenance === 'fixture' || projectSnapshot?.provenance === 'fixture') && (
         <div className="app__fixture-badge" role="note">
-          {snapshot.simulatedFeed ? 'Simulated live feed · demo fixture, not real agent activity' : 'Demo fixture · not real agent activity'}
+          {snapshot?.simulatedFeed ? 'Simulated live feed · demo fixture, not real agent activity' : 'Demo fixture · not real agent activity'}
         </div>
       )}
     </div>

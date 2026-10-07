@@ -307,7 +307,7 @@ describe('native bridge: import edges', () => {
     expect(bridge.currentSession()?.evidence?.relationships).not.toHaveProperty('stale');
   });
 
-  it('does not scan without a connected project or before there is a session', async () => {
+  it('does not scan without a connected project, but scans a connected project before its first session', async () => {
     const noProject = scanIpc([], () => Promise.resolve(SCAN), []);
     createNativeBridge('expanded', noProject.ipc);
     await settle();
@@ -315,7 +315,7 @@ describe('native bridge: import edges', () => {
     const noSession = scanIpc([], () => Promise.resolve(SCAN));
     createNativeBridge('expanded', noSession.ipc);
     await settle();
-    expect(scans(noSession.calls)).toEqual([]);
+    expect(scans(noSession.calls)).toEqual([['project_imports', { projectId: 'p1' }]]);
   });
 
   it('scans once, and again only after new file activity and not more often than every 10 seconds', async () => {

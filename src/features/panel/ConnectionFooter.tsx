@@ -5,7 +5,7 @@ import type { Connector } from '../../platform/desktopBridge';
 /** "Connected to <project> · Disconnect" at the end of the sidebar (native only). */
 export const ConnectionFooter = ({ connector }: { readonly connector: Connector }) => {
   const bridge = useBridge();
-  const project = useSyncExternalStore(bridge.subscribe, connector.project);
+  const project = useSyncExternalStore(bridge.subscribe, connector.project, connector.project);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!project) return null;

@@ -29,7 +29,7 @@ type Step = { readonly kind: 'idle' } | { readonly kind: 'review'; readonly root
  */
 export const ConnectPanel = ({ connector }: { readonly connector: Connector }) => {
   const bridge = useBridge();
-  const project = useSyncExternalStore(bridge.subscribe, connector.project);
+  const project = useSyncExternalStore(bridge.subscribe, connector.project, connector.project);
   const [step, setStep] = useState<Step>({ kind: 'idle' });
   const [busy, setBusy] = useState(false);
 
