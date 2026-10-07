@@ -44,6 +44,9 @@ pub struct Core {
     pub store: Mutex<Store>,
     watches: Mutex<HashMap<String, ProjectWatch>>,
     project_intents: Mutex<surfaces::Intents>,
+    /// Serialises whole connection changes (marker, settings, database, published list), so one change can never
+    /// clear the pending marker while another is still in flight.
+    connection_changes: Mutex<()>,
 }
 
 fn now_ms() -> i64 {
@@ -108,7 +111,7 @@ impl Core {
         dirs.create().map_err(|e| e.to_string())?;
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
-        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default() };
+        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default(), connection_changes: Mutex::default() };
         // Before the first ingest pass, so events past the inbox TTL are dropped (and counted), not stored late.
         core.housekeeping(SystemTime::now(), &Limits::default());
         core.refresh_connections();
@@ -202,6 +205,7 @@ impl Core {
     }
 
     fn connect_at(&self, root: PathBuf, id: String, command: String, previewed: &connect::Preview) -> Result<Project, String> {
+        let _change = self.connection_changes.lock().unwrap_or_else(|e| e.into_inner());
         self.withdraw_connections();
         let result = (|| {
             connect::connect(&root, &command, previewed, &self.backups, now_ms())?;
@@ -216,6 +220,7 @@ impl Core {
     }
 
     fn disconnect_id(&self, project_id: &str) -> Result<(), String> {
+        let _change = self.connection_changes.lock().unwrap_or_else(|e| e.into_inner());
         let root = self.connected_root(project_id)?;
         self.withdraw_connections();
         let result = (|| {
@@ -545,6 +550,28 @@ mod tests {
         core.disconnect_id(&id).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"[]");
         assert!(!data.path().join(CONNECTIONS_PENDING).exists(), "a successful rewrite clears the marker");
+    }
+
+    #[test]
+    fn concurrent_connection_changes_never_leave_a_list_without_its_pending_marker() {
+        let (data, core) = open();
+        let core = std::sync::Arc::new(core);
+        let roots: Vec<_> = (0..4).map(|_| tempfile::tempdir().unwrap()).collect();
+        let workers: Vec<_> = roots.iter().map(|dir| {
+            let (core, root) = (core.clone(), paths::project_root(dir.path()).unwrap());
+            std::thread::spawn(move || {
+                let id = project_id(&root);
+                let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), &id, &root);
+                for _ in 0..3 {
+                    let preview = connect::preview(&root, &command).unwrap();
+                    core.connect_at(root.clone(), id.clone(), command.clone(), &preview).unwrap();
+                    core.disconnect_id(&id).unwrap();
+                }
+            })
+        }).collect();
+        for worker in workers { worker.join().unwrap(); }
+        assert_eq!(fs::read(data.path().join(CONNECTIONS_FILE)).unwrap(), b"[]");
+        assert!(!data.path().join(CONNECTIONS_PENDING).exists());
     }
 
     #[test]
