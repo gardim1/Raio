@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { RaioEvent } from '../features/ingest/raioEvent';
 import { isProjectImports, type ProjectImports } from '../features/project/importEdges';
@@ -7,6 +7,7 @@ import { isProjectInventory, type ProjectInventory } from '../features/project/p
 import { projectSessionDetailed } from '../features/project/projectSession';
 import { projectMap, type ProjectMapSnapshot } from '../features/project/projectMap';
 import type { ProjectMapBridge } from './projectMapBridge';
+import { isWindowsRoot, sameProjectRoot } from './projectIntent';
 import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 const SURFACES: readonly Surface[] = ['island', 'mini', 'expanded'];
@@ -22,11 +23,21 @@ export interface NativeIpc {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   onIngested(listener: () => void): void;
   chooseFolder(): Promise<string | null>;
+  onProjectIntent?(listener: (root: string) => void): Promise<() => void>;
+  onProjectSelected?(listener: (root: string) => void): void;
+  emitProjectSelected?(root: string): Promise<void>;
 }
 
 const tauriIpc: NativeIpc = {
   invoke: (command, args) => invoke(command, args),
   onIngested: (listener) => void listen('events-ingested', listener),
+  onProjectIntent: (listener) => listen<unknown>('project-intent', (event) => {
+    if (typeof event.payload === 'string' && event.payload.length > 0) listener(event.payload);
+  }),
+  onProjectSelected: (listener) => { void listen<unknown>('raio-project-selected', (event) => {
+    if (typeof event.payload === 'string' && event.payload.length > 0) listener(event.payload);
+  }).catch(() => {}); },
+  emitProjectSelected: (root) => emit('raio-project-selected', root),
   chooseFolder: async () => {
     const picked = await open({ directory: true, multiple: false, title: 'Choose a project folder to connect' });
     return typeof picked === 'string' ? picked : null;
@@ -87,6 +98,10 @@ export const createNativeBridge = (
   let snapshot: SessionSnapshot | null = null;
   let projectSnapshot: ProjectMapSnapshot | null = null;
   let project: ConnectedProject | null = null;
+  let connectedProjects: readonly ConnectedProject[] = [];
+  let selectedRoot: string | null = null;
+  let selectionQuery = 0;
+  let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
   let hooksQuery = 0;
   let hooksKey: string | null = null;
@@ -242,7 +257,9 @@ export const createNativeBridge = (
       try {
         const health = await ipc.invoke<CoreHealth | undefined>('core_status').catch(() => undefined);
         const projects = await ipc.invoke<ConnectedProject[]>('list_projects');
-        const current = projects[0] ?? null;
+        connectedProjects = projects;
+        const current = (selectedRoot ? projects.find((p) => sameProjectRoot(p.root, selectedRoot!, isWindowsRoot(p.root))) : undefined) ?? projects[0] ?? null;
+        selectedRoot = current?.root ?? null;
         const events = current ? await ipc.invoke<RaioEvent[]>('project_events', { projectId: current.id }) : [];
         const key = current ? `${current.id}|${current.root}` : null;
         if (key !== scanKey) {
@@ -290,14 +307,34 @@ export const createNativeBridge = (
   ipc.onIngested(() => void refresh());
   void refresh();
 
+  const selectProject = async (root: string, broadcast = true): Promise<boolean> => {
+    const query = ++selectionQuery;
+    await refresh();
+    if (query !== selectionQuery) return false;
+    const match = connectedProjects.find((p) => sameProjectRoot(p.root, root, isWindowsRoot(p.root)));
+    if (!match) return false;
+    selectedRoot = match.root;
+    await refresh();
+    if (query !== selectionQuery) return false;
+    // Renderer-to-renderer selection keeps Island/Mini on the same project; never writes settings.
+    if (broadcast) await ipc.emitProjectSelected?.(match.root).catch(report('project selection'));
+    return true;
+  };
+  ipc.onProjectSelected?.((root) => {
+    if (project && sameProjectRoot(project.root, root, isWindowsRoot(project.root))) return;
+    void selectProject(root, false);
+  });
+
   const connector: Connector = {
     project: () => project,
     chooseFolder: () => ipc.chooseFolder(),
     preview: (root) => ipc.invoke<ConnectPreview>('preview_connect', { root }),
     connect: async (root, previewed) => {
       await ipc.invoke('connect_project', { root, previewed });
+      selectedRoot = root;
       hooksRefreshRequested = true;
       await refresh();
+      await ipc.emitProjectSelected?.(root).catch(report('project selection'));
     },
     disconnect: async () => {
       if (!project) return;
@@ -311,6 +348,20 @@ export const createNativeBridge = (
     kind: 'native',
     fixedSurface,
     currentSession: () => snapshot,
+    takeProjectIntent: () => {
+      // Cache the once-delivered read so a StrictMode effect cleanup cannot consume and lose it.
+      startupIntent ??= withinTime(ipc.invoke<unknown>('take_project_intent').catch(() => null), scanTimeoutMs)
+        .then((value) => typeof value === 'string' && value.length > 0 ? value : null);
+      return startupIntent;
+    },
+    onProjectIntent: (listener) => ipc.onProjectIntent?.(listener) ?? Promise.resolve(() => {}),
+    selectProject: (root) => selectProject(root),
+    previewProjectMap: async (root) => {
+      const value = await withinTime(ipc.invoke<unknown>('preview_project_map', { root }).catch(() => null), scanTimeoutMs);
+      if (!value || typeof value !== 'object' || !('inventory' in value) || !('imports' in value) || !isProjectInventory(value.inventory) || !isProjectImports(value.imports)) return null;
+      const name = root.replaceAll('\\', '/').replace(/\/+$/, '').split('/').at(-1) || root;
+      return projectMap({ id: 'preview', name }, value.inventory, value.imports);
+    },
     projectHooksState: () => hooksState,
     currentProjectMap: () => projectSnapshot,
     subscribe: (listener) => {

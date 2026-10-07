@@ -8,6 +8,7 @@ import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
 import type { ConnectPreview, DesktopBridge, ProjectHooksState, SessionSnapshot } from './desktopBridge';
 import type { ProjectMapBridge } from './projectMapBridge';
 import { projectMap } from '../features/project/projectMap';
+import { isWindowsRoot, sameProjectRoot } from './projectIntent';
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
 export const demoSnapshot: SessionSnapshot = {
@@ -35,6 +36,10 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     kind: 'fixture',
     fixedSurface: null,
     currentSession: () => current,
+    takeProjectIntent: () => Promise.resolve(null),
+    onProjectIntent: () => Promise.resolve(() => {}),
+    selectProject: () => Promise.resolve(false),
+    previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
     subscribe: () => () => {},
     showSurface: showSurfaceInPlace,
@@ -65,6 +70,7 @@ export const createProjectFixtureBridge = (options: { hooksState?: ProjectHooksS
   return {
     ...createFixtureBridge(null),
     currentProjectMap: () => connected ? snapshot : null,
+    selectProject: (root) => Promise.resolve(connected && sameProjectRoot(project.root, root, isWindowsRoot(project.root))),
     projectHooksState: () => connected ? hooksState : 'unknown',
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     connector: {
@@ -160,6 +166,10 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     kind: 'fixture',
     fixedSurface: null,
     currentSession: () => (count > 0 ? snapshotFor(count) : null),
+    takeProjectIntent: () => Promise.resolve(null),
+    onProjectIntent: () => Promise.resolve(() => {}),
+    selectProject: () => Promise.resolve(false),
+    previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.split('/').at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
     subscribe: (listener) => {
       listeners.add(listener);

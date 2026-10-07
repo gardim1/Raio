@@ -463,6 +463,14 @@ svg text { font-family: var(--raio-font-ui); }
 .connect { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 24px; max-width: 760px; }
 .connect--review { align-items: stretch; text-align: left; padding: 22px 24px; border-radius: 20px; background: linear-gradient(180deg, var(--raio-color-surface-panel-top), var(--raio-color-surface-panel-bottom)); border: 1px solid var(--raio-color-border-panel); }
 .connect__review-content { display: contents; }
+.connect__flow { max-width: 760px; width: 100%; max-height: calc(100vh - 40px); display: flex; flex-direction: column; gap: 8px; }
+.connect__flow .connect--review { min-height: 0; }
+.connect__flow .connect__review-content { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.connect__flow .connect__actions { flex: none; }
+.connect__map { min-width: 0; }
+.connect__map .map__svg { width: 100%; max-height: 220px; }
+.replay__activity { display: flex; flex-direction: column; flex: none; font-size: 10.5px; color: var(--raio-color-text-secondary); }
+.replay__activity .link-btn { font-size: 11px; text-align: left; }
 .connect--sidebar-review { flex: none; padding: 12px; max-height: var(--reconnect-max-height, calc(100vh - 200px)); }
 .connect--sidebar-review .connect__review-content { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .connect--sidebar-review .connect__diff { grid-template-columns: minmax(0, 1fr); }

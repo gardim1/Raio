@@ -8,6 +8,8 @@ import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
 import { type Presence } from './presence';
 import { MiniSurface } from './MiniSurface';
+import { useSessionSnapshot } from '../../platform/BridgeContext';
+import { lastRecordedSession } from '../session/model/lastRecordedSession';
 
 export interface MiniPlayerProps {
   readonly script: ChoreographyScript;
@@ -31,8 +33,9 @@ export interface MiniPlayerProps {
  */
 export const MiniPlayer = ({ script, frame, graph, project, presence, pinned, replay, stateLabel, onTogglePin, onExpand, onCollapse, onViewChanges }: MiniPlayerProps) => {
   const { ui } = frame;
+  const recorded = useSessionSnapshot();
   return (
-    <MiniSurface project={project} status={ui.status} stateLabel={stateLabel ?? statusLabel(ui.status, script.agent)} pinned={pinned}
+    <MiniSurface project={project} projectTitle={lastRecordedSession(recorded?.log ?? null)} status={ui.status} stateLabel={stateLabel ?? statusLabel(ui.status, script.agent)} pinned={pinned}
       onTogglePin={onTogglePin} onExpand={onExpand} onCollapse={onCollapse} footer={replay ? (
         <div className="mini__foot mini__foot--replay">{replay}</div>
       ) : presence.cta !== 'hidden' ? (
