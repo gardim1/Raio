@@ -164,6 +164,14 @@ fn conservative_shell_results_and_quoted_checks_survive_hook_to_store() {
         ("PowerShell", "npm test # \"\nWrite-Output \"ok\" # \"\n", "npm", false, "compound command"),
         ("PowerShell", "npm test <# \" #>\nWrite-Output \"ok\" <# \" #>\n", "npm", false, "compound command"),
         ("Bash", r##"npm test "#""##, "npm", true, ""),
+        ("Bash", r#"node --test "a.test.cjs”; node -e “process.exit(0)""#, "node", false, "result not established"),
+        ("PowerShell", r#"node --test "a.test.cjs”; node -e “process.exit(0)""#, "node", false, "result not established"),
+        ("Bash", r#"npm test "a”; Write-Output “ok""#, "npm", false, "result not established"),
+        ("PowerShell", r#"npm test "a”; Write-Output “ok""#, "npm", false, "result not established"),
+        ("Bash", "npm test 'a’; Write-Output ‘ok'", "npm", false, "result not established"),
+        ("PowerShell", "npm test 'a’; Write-Output ‘ok'", "npm", false, "result not established"),
+        ("Bash", r#"npm test -- --grep "café""#, "npm", false, "result not established"),
+        ("PowerShell", r#"npm test -- --grep "café""#, "npm", false, "result not established"),
     ];
     let data = tempfile::tempdir().unwrap();
     let dirs = Dirs::new(data.path());

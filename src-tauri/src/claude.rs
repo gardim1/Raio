@@ -119,6 +119,10 @@ fn allowed_word(bytes: &[u8], i: &mut usize) -> bool {
 
 /// Trust shell status only for this deliberately small grammar, never by absence of known hazards.
 fn simple_command_allowed(command: &str, powershell: bool) -> bool {
+    // Keep the grammar ASCII-only: PowerShell also treats curly quotes as string delimiters.
+    if !command.is_ascii() {
+        return false;
+    }
     let bytes = command.trim_matches([' ', '\t']).as_bytes();
     if bytes.iter().any(|c| matches!(c, b'\n' | b'\r')) {
         return false;
@@ -559,6 +563,55 @@ mod tests {
                 assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{tool}: {command}");
                 assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
                     (None, None, Some(detail)), "{tool}: {command}");
+            }
+        }
+    }
+
+    #[test]
+    fn non_ascii_commands_never_establish_results() {
+        for tool in ["Bash", "PowerShell"] {
+            for (command, program) in [
+                (r#"node --test "a.test.cjs”; node -e “process.exit(0)""#, "node"),
+                (r#"npm test "a”; Write-Output “ok""#, "npm"),
+                ("npm test 'a’; Write-Output ‘ok'", "npm"),
+                (r#"npm test -- --grep "café""#, "npm"),
+                ("npm test café", "npm"),
+                ("npm test '🧪'", "npm"),
+                ("npm test > 'résultat.txt'", "npm"),
+            ] {
+                for hook in ["PostToolUse", "PostToolUseFailure"] {
+                    let p = serde_json::json!({ "hook_event_name": hook, "tool_name": tool,
+                        "tool_input": { "command": command }, "error": "Exit code 7\nfailed" });
+                    let e = normalize(&p, &ctx()).unwrap();
+                    assert_eq!(e.kind, "command.result");
+                    assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{tool}: {command}");
+                    assert_eq!(e.evidence.program.as_deref(), Some(program), "{tool}: {command}");
+                    assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                        (None, None, Some("result not established")), "{hook} {tool}: {command}");
+                    assert_eq!(e.validate(), Ok(()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_ascii_commands_preserve_stronger_contract_details() {
+        for tool in ["Bash", "PowerShell"] {
+            for (command, background, interrupted, detail) in [
+                ("npm test 'café'; echo ok", false, false, "compound command"),
+                ("npm test 'café' &", false, false, "background command"),
+                ("npm test 'café'", true, false, "background command"),
+                ("npm test 'café'; echo ok", true, true, "interrupted"),
+            ] {
+                for hook in ["PostToolUse", "PostToolUseFailure"] {
+                    let p = serde_json::json!({ "hook_event_name": hook, "tool_name": tool,
+                        "tool_input": { "command": command, "run_in_background": background },
+                        "is_interrupt": interrupted, "error": "Exit code 7\nfailed" });
+                    let e = normalize(&p, &ctx()).unwrap();
+                    assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                        (None, None, Some(detail)), "{hook} {tool}: {command}");
+                    assert_eq!(e.validate(), Ok(()));
+                }
             }
         }
     }
