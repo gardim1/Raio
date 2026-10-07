@@ -6,6 +6,7 @@ import { IconButton } from '../../shared/ui/Button';
 import { CollapseIcon, PinIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
 import { IdleIsland } from '../modes/IdleIsland';
+import { expandedWindowChrome } from '../modes/ExpandedWindow';
 import { MiniSurface } from '../modes/MiniSurface';
 import { ConnectionFooter } from '../panel/ConnectionFooter';
 import { TitleBar } from '../panel/TitleBar';
@@ -19,7 +20,7 @@ export const ProjectOnlyView = ({ snapshot, mode }: { readonly snapshot: Project
   const { pinned, togglePin, exitReplay } = useSessionUi();
   const frame = useMemo(() => projectMapFrame(snapshot.graph), [snapshot.graph]);
   useEffect(() => exitReplay(), [snapshot.project.id, exitReplay]);
-  const heading = snapshot.listing === 'pending' ? 'Mapping project' : snapshot.listing === 'unavailable' ? 'Project listing unavailable' : `${snapshot.graph.nodes.length} systems mapped`;
+  const heading = snapshot.listing === 'pending' ? 'Mapping project' : snapshot.listing === 'unavailable' ? 'Project listing unavailable' : `${snapshot.graph.nodes.length} ${snapshot.graph.nodes.length === 1 ? 'system' : 'systems'} mapped`;
   const problem = receptionProblem(snapshot.core, snapshot.provenance === 'fixture');
   const waiting = problem ?? 'Waiting for an agent session';
   const go = (surface: Surface) => bridge.showSurface(surface);
@@ -31,10 +32,11 @@ export const ProjectOnlyView = ({ snapshot, mode }: { readonly snapshot: Project
       <ArchitectureCanvas graph={snapshot.graph} frame={frame} variant="mini" camera={false} fit={snapshot.graph.nodes.length > 0 ? 'content' : 'world'} className="mini__svg" label="Project architecture map" />
     </MiniSurface>
   );
+  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
   return (
     <div className="expanded-dock">
       <div className="panel expanded" style={{ borderRadius: 28 }}>
-        <TitleBar project={snapshot.project.name} agent="unknown" task={waiting} taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
+        <TitleBar nativeWindow={nativeWindow} project={snapshot.project.name} agent="unknown" task={waiting} taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
           <IconButton label="Pin as mini player" onClick={() => go('mini')}><PinIcon /></IconButton>
           <IconButton label="Tuck into Island" onClick={() => go('island')}><CollapseIcon /></IconButton>
         </>} />

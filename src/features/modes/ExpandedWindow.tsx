@@ -83,7 +83,7 @@ export const ExpandedWindow = ({
   // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
   const overview =
     !isReplay && frame.ui.status === 'ready'
-      ? { eyebrow: project, title: `${graph.nodes.length} systems mapped`, meta: `Start ${agentFull} in this repository` }
+      ? { eyebrow: project, title: `${graph.nodes.length} ${graph.nodes.length === 1 ? 'system' : 'systems'} mapped`, meta: `Start ${agentFull} in this repository` }
       : {
           eyebrow: agentFull,
           title: script.task,

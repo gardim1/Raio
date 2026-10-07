@@ -1,5 +1,5 @@
 import { LayoutGroup } from 'motion/react';
-import { type ReactNode, useEffect, useMemo } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef } from 'react';
 import { ExpandedWindow } from '../features/modes/ExpandedWindow';
 import { IslandMode } from '../features/modes/IslandMode';
 import { MiniPlayer } from '../features/modes/MiniPlayer';
@@ -12,6 +12,7 @@ import { canonicalScript } from '../features/session/model/canonicalScript';
 import { compileReplay } from '../features/session/model/compileReplay';
 import { evaluateFrame } from '../features/session/model/evaluateFrame';
 import { useLiveFollow } from '../features/session/live/useLiveFollow';
+import { shouldReturnToLive, type ReplayActivitySnapshot } from '../features/session/live/replayActivity';
 import { deriveInsights } from '../features/session/model/insights';
 import type { ChoreographyScript, StoryEvent } from '../features/session/model/script';
 import { useSessionUi } from '../features/session/store/sessionStore';
@@ -118,6 +119,15 @@ const Surfaces = ({ snapshot }: { readonly snapshot: SessionSnapshot }) => {
   const t = isReplay ? replay.t : follow ? follow.t : live.t;
   const frame = evaluateFrame(script, graph, t);
   const presence = derivePresence(script, graph, frame, isReplay);
+
+  const connected = bridge.connector?.project();
+  const projectKey = connected ? JSON.stringify([connected.id, connected.root]) : project;
+  const lastActivity = useRef<ReplayActivitySnapshot | null>(null);
+  useEffect(() => {
+    const next = { projectKey, log, complete: isReplay && frame.ui.finished && !replay.playing };
+    if (shouldReturnToLive(lastActivity.current, next, { followsLive, isReplay, playing: replay.playing })) exitReplay();
+    lastActivity.current = next;
+  }, [projectKey, log, isReplay, frame.ui.finished, replay.playing, followsLive, exitReplay]);
 
   const onSelectEvent = (ev: StoryEvent) => {
     if (ev.nodeId) selectNode(ev.nodeId);
