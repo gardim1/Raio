@@ -10,10 +10,10 @@ for (const view of ['expanded', 'mini', 'island'] as const) {
     await expect(page.getByRole('button', { name: 'View changes' })).toHaveCount(0);
     await expect(page.getByText('Session started', { exact: false })).toHaveCount(0);
     if (view === 'island') {
-      await expect(page.getByText('Raio · no session')).toBeVisible();
+      await expect(page.getByText('Connected · quiet', { exact: true })).toBeVisible();
     } else {
       await expect(page.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
-      await expect(page.locator(view === 'expanded' ? '.status__label' : '.mini__state').filter({ hasText: 'No session yet' })).toBeVisible();
+      await expect(page.locator(view === 'expanded' ? '.status__label' : '.mini__state').filter({ hasText: view === 'mini' ? 'Connected · quiet' : 'No session yet' })).toBeVisible();
       await expect(page.locator('.arch-node')).not.toHaveCount(0);
     }
     await expect(page).toHaveScreenshot(`premap-${view}.png`);
