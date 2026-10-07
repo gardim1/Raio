@@ -462,6 +462,11 @@ svg text { font-family: var(--raio-font-ui); }
 .app__empty-note { font-size: 12.5px; color: var(--raio-color-text-muted); }
 .connect { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 24px; max-width: 760px; }
 .connect--review { align-items: stretch; text-align: left; padding: 22px 24px; border-radius: 20px; background: linear-gradient(180deg, var(--raio-color-surface-panel-top), var(--raio-color-surface-panel-bottom)); border: 1px solid var(--raio-color-border-panel); }
+.connect__review-content { display: contents; }
+.connect--sidebar-review { flex: none; padding: 12px; max-height: var(--reconnect-max-height, calc(100vh - 200px)); }
+.connect--sidebar-review .connect__review-content { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.connect--sidebar-review .connect__diff { grid-template-columns: minmax(0, 1fr); }
+.connect--sidebar-review .connect__actions { flex: none; }
 .connect__title { margin: 8px 0 0; font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; }
 .connect__body { margin: 0 0 8px; font-size: 13px; line-height: 1.45; color: var(--raio-color-text-muted); }
 .connect__body code { font-size: 12px; color: var(--raio-color-text-secondary); word-break: break-all; }

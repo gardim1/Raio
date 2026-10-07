@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBridge } from '../../platform/BridgeContext';
 import type { ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { Button } from '../../shared/ui/Button';
@@ -23,13 +23,33 @@ export const maskedSettings = (text: string | null): string => {
 type Step = { readonly kind: 'idle' } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview } | { readonly kind: 'error'; readonly message: string };
 
 /** The same explicit before/after review for initial connection and refreshing an existing connection. */
-export const ConnectReview = ({ preview, busy, onCancel, onConnect }: {
+export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = false }: {
   readonly preview: ConnectPreview;
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onConnect: () => void;
-}) => (
-  <div className="connect connect--review">
+  readonly sidebar?: boolean;
+}) => {
+  const review = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!sidebar) return;
+    const element = review.current;
+    const scroller = element?.closest<HTMLElement>('.sidebar__scroll');
+    if (!element || !scroller) return;
+    const fit = () => {
+      const style = getComputedStyle(scroller);
+      const height = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      element.style.setProperty('--reconnect-max-height', `${height}px`);
+      element.scrollIntoView({ block: 'start', behavior: 'instant' });
+    };
+    fit();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    observer?.observe(scroller);
+    return () => observer?.disconnect();
+  }, [sidebar, preview]);
+  return (
+  <div ref={review} className={`connect connect--review${sidebar ? ' connect--sidebar-review' : ''}`}>
+    <div className="connect__review-content">
     <p className="connect__title">Connect Claude Code in this project?</p>
     <p className="connect__body">
       Raio will add asynchronous hooks to <code>{preview.settingsPath}</code>. Existing settings and hooks are kept, the original is backed up, and
@@ -40,12 +60,14 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect }: {
       <div><span>Before</span><pre>{maskedSettings(preview.before)}</pre></div>
       <div><span>After</span><pre>{maskedSettings(preview.after)}</pre></div>
     </div>
+    </div>
     <div className="connect__actions">
       <Button onClick={onCancel} disabled={busy}>Cancel</Button>
       <Button onClick={onConnect} disabled={busy}>Connect</Button>
     </div>
   </div>
-);
+  );
+};
 
 /**
  * Empty state of the native app: connect a project (opt-in, previewed, reversible) or, once connected,

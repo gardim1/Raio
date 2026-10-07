@@ -46,6 +46,7 @@ export const takeSurfaceIntent = async (ipc: Pick<NativeIpc, 'invoke'> = tauriIp
 const SCAN_INTERVAL_MS = 10_000;
 /** A scan that has not answered by now is given up on, so a hung call never blocks the next one. */
 const SCAN_TIMEOUT_MS = 5_000;
+const HOOKS_REFRESH_INTERVAL_MS = 60_000;
 /** After a listing fails or times out it is tried again after each of these, even without file activity, and then left until the next activity. */
 const LISTING_RETRY_DELAYS_MS: readonly number[] = [30_000, 300_000];
 
@@ -88,6 +89,9 @@ export const createNativeBridge = (
   let project: ConnectedProject | null = null;
   let hooksState: ProjectHooksState = 'unknown';
   let hooksQuery = 0;
+  let hooksKey: string | null = null;
+  let hooksTimer: ReturnType<typeof setTimeout> | undefined;
+  let hooksRefreshRequested = false;
   let refreshing: Promise<void> | null = null;
   let dirty = false;
   // The latest accepted import scan, for the connected project it was taken from.
@@ -110,7 +114,12 @@ export const createNativeBridge = (
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Optional read-only IPC: a missing/failed/slow command must never block showing the project. */
-  const refreshHooks = (current: ConnectedProject | null): void => {
+  const refreshHooks = (current: ConnectedProject | null, force = false): void => {
+    const key = current ? `${current.id}|${current.root}` : null;
+    if (key === hooksKey && !force) return;
+    if (hooksTimer !== undefined) clearTimeout(hooksTimer);
+    hooksTimer = undefined;
+    hooksKey = key;
     const query = ++hooksQuery;
     if (!current) {
       hooksState = 'unknown';
@@ -119,9 +128,14 @@ export const createNativeBridge = (
     void withinTime(ipc.invoke<unknown>('project_hooks_state', { projectId: current.id }).catch(() => null), scanTimeoutMs).then((value) => {
       if (query !== hooksQuery || project?.id !== current.id || project.root !== current.root) return;
       const next: ProjectHooksState = value === 'current' || value === 'outdated' ? value : 'unknown';
-      if (next === hooksState) return;
-      hooksState = next;
-      listeners.forEach((l) => l());
+      if (next !== hooksState) {
+        hooksState = next;
+        listeners.forEach((l) => l());
+      }
+      hooksTimer = setTimeout(() => {
+        hooksTimer = undefined;
+        refreshHooks(project, true);
+      }, HOOKS_REFRESH_INTERVAL_MS);
     });
   };
 
@@ -246,7 +260,9 @@ export const createNativeBridge = (
         }
         const projected = current ? projectSessionDetailed(current, events, undefined, imports, importsStale, inventory, inventoryStale) : null;
         project = current && project?.id === current.id && project.root === current.root ? project : current;
-        refreshHooks(current);
+        const forceHooks = hooksRefreshRequested;
+        hooksRefreshRequested = false;
+        refreshHooks(current, forceHooks);
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
         projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null }) : null;
@@ -255,7 +271,6 @@ export const createNativeBridge = (
         report('refresh')(error);
         const hooksChanged = hooksState !== 'unknown';
         hooksState = 'unknown';
-        hooksQuery++;
         if (projectSnapshot) {
           projectSnapshot = { ...projectSnapshot, core: null };
         }
@@ -281,11 +296,13 @@ export const createNativeBridge = (
     preview: (root) => ipc.invoke<ConnectPreview>('preview_connect', { root }),
     connect: async (root, previewed) => {
       await ipc.invoke('connect_project', { root, previewed });
+      hooksRefreshRequested = true;
       await refresh();
     },
     disconnect: async () => {
       if (!project) return;
       await ipc.invoke('disconnect_project', { projectId: project.id });
+      hooksRefreshRequested = true;
       await refresh();
     },
   };

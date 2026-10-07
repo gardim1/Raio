@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
@@ -14,6 +14,7 @@ import { createFixtureBridge, createProjectFixtureBridge, createSimulatedFeedBri
 const OUTDATED = "Raio's hooks for this project are out of date — reconnect to capture PowerShell checks.";
 const project = { id: 'p1', name: 'acme', root: 'C:/work/acme' };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+afterEach(() => vi.useRealTimers());
 const feed = (read: () => Promise<unknown>) => {
   let current: typeof project | null = project;
   let notify: () => void = () => {};
@@ -58,25 +59,65 @@ describe('read-only project hook version', () => {
     expect(fake.calls.some(({ command }) => ['connect_project', 'disconnect_project', 'preview_connect'].includes(command))).toBe(false);
   });
 
-  it('refreshes on connector notifications and after explicit preview/connect', async () => {
+  it('refreshes on a coarse interval and after explicit preview/connect, not on event notifications', async () => {
+    vi.useFakeTimers();
     let state = 'outdated';
     const fake = feed(() => Promise.resolve(state));
     const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 1000, []);
-    await settle();
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
     const before = fake.calls.filter(({ command }) => command === 'project_hooks_state').length;
     state = 'current';
     fake.notify();
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bridge.projectHooksState?.()).toBe('outdated');
+    expect(fake.calls.filter(({ command }) => command === 'project_hooks_state')).toHaveLength(before);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(bridge.projectHooksState?.()).toBe('current');
     expect(render(bridge)).not.toContain(OUTDATED);
     expect(fake.calls.filter(({ command }) => command === 'project_hooks_state').length).toBeGreaterThan(before);
     const preview = await bridge.connector!.preview(project.root);
     expect(fake.calls.some(({ command }) => command === 'connect_project')).toBe(false);
     await bridge.connector!.connect(project.root, preview);
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fake.calls).toContainEqual({ command: 'connect_project', args: { root: project.root, previewed: preview } });
     expect(bridge.projectHooksState?.()).toBe('current');
+  });
+
+  it('reads once through an event burst, then forces a new read when connecting the same project', async () => {
+    const fake = feed(() => Promise.resolve('current'));
+    const bridge = createNativeBridge('island', fake.ipc, Date.now, 1000, []);
+    await settle();
+    for (let i = 0; i < 20; i++) { fake.notify(); await settle(); }
+    expect(fake.calls.filter(({ command }) => command === 'project_hooks_state')).toHaveLength(1);
+    const preview = await bridge.connector!.preview(project.root);
+    await bridge.connector!.connect(project.root, preview);
+    await settle();
+    expect(fake.calls.filter(({ command }) => command === 'project_hooks_state')).toHaveLength(2);
+  });
+
+  it('applies the pending current-project answer despite subsequent event bursts', async () => {
+    const replies: ((value: unknown) => void)[] = [];
+    const fake = feed(() => new Promise((resolve) => replies.push(resolve)));
+    const bridge = createNativeBridge('island', fake.ipc, Date.now, 1000, []);
+    await settle();
+    for (let i = 0; i < 8; i++) { fake.notify(); await settle(); }
+    replies[0]!('outdated');
+    await settle();
+    expect(bridge.projectHooksState?.()).toBe('outdated');
+    expect(render(bridge)).toContain(OUTDATED);
+  });
+
+  it('reads immediately when the connected project root changes', async () => {
+    let state = 'outdated';
+    const fake = feed(() => Promise.resolve(state));
+    const bridge = createNativeBridge('island', fake.ipc, Date.now, 1000, []);
+    await settle();
+    state = 'current';
+    fake.setProject({ ...project, root: 'C:/work/other' });
+    fake.notify();
+    await settle();
+    expect(bridge.projectHooksState?.()).toBe('current');
+    expect(fake.calls.filter(({ command }) => command === 'project_hooks_state')).toHaveLength(2);
   });
 
   it('does not read a disconnected project or retain its warning', async () => {
