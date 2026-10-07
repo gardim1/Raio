@@ -43,7 +43,76 @@ pub fn hook_command(hook_exe: &Path, project_id: &str, root: &Path) -> String {
 }
 
 fn is_raio_handler(h: &Value) -> bool {
-    h.get("command").and_then(Value::as_str).is_some_and(|c| c.contains(MARKER))
+    if h.get("type").and_then(Value::as_str) != Some("command") {
+        return false;
+    }
+    let Some(command) = h.get("command").and_then(Value::as_str) else { return false };
+    let command = command.trim();
+    if !command.ends_with(&format!(" {MARKER}")) {
+        return false;
+    }
+    let Some(words) = handler_words(command) else { return false };
+    let [exe, mode, project_flag, project, root_flag, root, marker] = words.as_slice() else { return false };
+    let executable = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    matches!(executable, "raio-hook" | "raio-hook.exe") && mode == "claude"
+        && project_flag == "--project" && !project.is_empty()
+        && project.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) && !project.starts_with('-')
+        && root_flag == "--root" && !root.is_empty() && marker == MARKER
+}
+
+/// Recognises only the generated argument shape, never executes shell text. Supports the original
+/// double-quoted paths (312479d) and POSIX single quotes/apostrophe escaping (d4f93d6 onward).
+fn handler_words(command: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            } else {
+                word.push(c);
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => {
+                quote = Some(c);
+                started = true;
+            }
+            '\\' => {
+                // The only unquoted escape Raio emits: an apostrophe between quoted path fragments.
+                if chars.next() != Some('\'') {
+                    return None;
+                }
+                word.push('\'');
+                started = true;
+            }
+            '\n' | '\r' | ';' | '&' | '|' | '<' | '>' | '$' | '`' | '(' | ')' => return None,
+            c if c.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    if words.len() >= 7 {
+                        return None;
+                    }
+                    started = false;
+                }
+            }
+            _ => {
+                word.push(c);
+                started = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if started {
+        words.push(word);
+    }
+    Some(words)
 }
 
 /// Removes Raio's handlers (and groups/events left empty by that) from a settings object.
@@ -234,6 +303,75 @@ mod tests {
         assert_eq!(with_raio(once.clone(), CMD).unwrap(), once);
         assert_eq!(without_raio(once), user_settings());
         assert_eq!(without_raio(with_raio(json!({}), CMD).unwrap()), json!({}));
+    }
+
+    #[test]
+    fn ownership_does_not_follow_a_marker_in_another_command() {
+        for command in [
+            "echo --raio-managed",
+            "echo 'raio-hook.exe claude --project p --root /work --raio-managed'",
+            "echo raio-hook.exe claude --project p --root /work --raio-managed",
+            "other.exe claude --project p --root /work --raio-managed",
+            "not-raio-hook.exe claude --project p --root /work --raio-managed",
+            "raio-hook.exe.extra claude --project p --root /work --raio-managed",
+            "raio-hook.exe --raio-managed",
+            "raio-hook.exe claude --project p --root /work --raio-managed-extra",
+            "raio-hook.exe claude --project p --root /work '--raio-managed'",
+            "raio-hook.exe claude --project p --root '/work/--raio-managed'",
+            "raio-hook.exe claude --project --raio-managed --root /work --raio-managed",
+            "raio-hook.exe claude --project p --root /work --raio-managed && echo user",
+            "raio-hook.exe claude --project p --root /work --raio-managed;",
+            "raio-hook.exe claude --project p --root /work --raio-managed extra",
+            "raio-hook.exe claude --project p --root '/work --raio-managed",
+        ] {
+            let handler = json!({ "type": "command", "command": command, "timeout": 12 });
+            assert!(!is_raio_handler(&handler), "{command}");
+            let user = json!({ "hooks": { "Stop": [{ "hooks": [handler] }] } });
+            assert_eq!(without_raio(user.clone()), user, "{command}");
+        }
+        assert!(!is_raio_handler(&json!({ "type": "prompt", "command": CMD })));
+    }
+
+    #[test]
+    fn ownership_removes_both_historical_raio_command_shapes() {
+        let current = hook_command(Path::new("C:/Program Files/Raio/raio-hook.exe"), "old-id", Path::new("C:/it's $HOME `x`"));
+        for command in [
+            CMD.to_string(), // 312479d: double-quoted executable and root.
+            current, // d4f93d6 onward: single quotes with POSIX apostrophe escaping.
+            hook_command(Path::new("/opt/Raio/raio-hook"), "project-id", Path::new("/work/app")),
+        ] {
+            let handler = json!({ "type": "command", "command": command, "async": true });
+            assert!(is_raio_handler(&handler), "{command}");
+            let mut original = user_settings();
+            original["hooks"]["PostToolUse"][0]["hooks"].as_array_mut().unwrap().push(handler);
+            assert_eq!(without_raio(original.clone()), user_settings(), "{command}");
+            let updated = with_raio(original, CMD).unwrap();
+            assert_eq!(updated, with_raio(user_settings(), CMD).unwrap(), "{command}");
+        }
+    }
+
+    #[test]
+    fn ownership_preserves_a_user_marker_hook_through_connect_reconnect_disconnect() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = tempfile::tempdir().unwrap();
+        let mut original = user_settings();
+        original["hooks"]["PostToolUse"][0]["hooks"].as_array_mut().unwrap()
+            .push(json!({ "type": "command", "command": "echo --raio-managed", "timeout": 12 }));
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        let original_text = serde_json::to_string_pretty(&original).unwrap();
+        fs::write(settings_path(dir.path()), &original_text).unwrap();
+        for now in [7, 8] {
+            let p = preview(dir.path(), CMD).unwrap();
+            let after: Value = serde_json::from_str(&p.after).unwrap();
+            assert_eq!(after["hooks"]["PostToolUse"][0], original["hooks"]["PostToolUse"][0]);
+            connect(dir.path(), CMD, &p, backups.path(), now).unwrap();
+        }
+        disconnect(dir.path(), backups.path(), 9).unwrap();
+        assert_eq!(fs::read_to_string(settings_path(dir.path())).unwrap(), original_text);
+        // A second disconnect must leave a user-only file byte-identical and create no backup.
+        disconnect(dir.path(), backups.path(), 10).unwrap();
+        assert_eq!(fs::read_to_string(settings_path(dir.path())).unwrap(), original_text);
+        assert_eq!(fs::read_dir(backups.path()).unwrap().count(), 3);
     }
 
     #[test]
