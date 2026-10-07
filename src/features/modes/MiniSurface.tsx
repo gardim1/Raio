@@ -17,6 +17,7 @@ const initialRect = (): Rect => ({
 
 export interface MiniSurfaceProps {
   readonly project: string;
+  readonly projectTitle?: string;
   readonly status: AgentStatusState;
   readonly stateLabel: string;
   readonly pinned: boolean;
@@ -28,7 +29,7 @@ export interface MiniSurfaceProps {
 }
 
 /** Shared Mini chrome and gestures, whether it displays a session or a project before telemetry. */
-export const MiniSurface = ({ project, status, stateLabel, pinned, onTogglePin, onExpand, onCollapse, children, footer }: MiniSurfaceProps) => {
+export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned, onTogglePin, onExpand, onCollapse, children, footer }: MiniSurfaceProps) => {
   const [rect, setRect] = useState<Rect>(initialRect);
   const gesture = useRef<{ kind: 'move' | 'resize'; startX: number; startY: number; origin: Rect } | null>(null);
   const begin = useCallback(
@@ -56,7 +57,7 @@ export const MiniSurface = ({ project, status, stateLabel, pinned, onTogglePin, 
       onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       <header className="mini__head" onPointerDown={begin('move')}>
         <span className={`mini__status mini__status--${status}`} />
-        <span className="mini__project">{project}</span>
+        <span className="mini__project" title={projectTitle}>{project}</span>
         <span className="mini__state">{stateLabel}</span>
         <span className="mini__spacer" />
         <IconButton label={pinned ? 'Unpin (stop floating on top)' : 'Keep on top'} active={pinned} onClick={onTogglePin}><PinIcon filled={pinned} /></IconButton>
