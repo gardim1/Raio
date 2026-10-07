@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../../../src/app/App';
 import { useSessionUi } from '../../../src/features/session/store/sessionStore';
 import { BridgeProvider } from '../../../src/platform/BridgeContext';
-import { createSimulatedFeedBridge } from '../../../src/platform/fixtureBridge';
+import { createFixtureBridge, createSimulatedFeedBridge } from '../../../src/platform/fixtureBridge';
 import type { DesktopBridge, Surface } from '../../../src/platform/desktopBridge';
 import type { PresenceFact, PresenceInput } from '../../../src/features/modes/companionPresence';
 import { setNativeSurfaceVisible } from '../../../src/shared/motion/surfaceVisibility';
@@ -17,9 +17,9 @@ export const finishSession = () => finish();
 export const setVisible = setNativeSurfaceVisible;
 export const setMode = (mode: Surface) => useSessionUi.getState().setMode(mode);
 
-export const mountPresenceFixture = () => {
+export const mountPresenceFixture = (options: { canonical?: boolean } = {}) => {
   setNativeSurfaceVisible(true);
-  const base = createSimulatedFeedBridge({ fixedNowMs: 8000 });
+  const base = options.canonical ? createFixtureBridge() : createSimulatedFeedBridge({ fixedNowMs: 8000 });
   let snapshot = base.currentSession()!;
   let presence: PresenceInput = { connected: true, available: true, facts: [] };
   const listeners = new Set<() => void>();
