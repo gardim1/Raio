@@ -124,6 +124,10 @@ fn simple_command_allowed(command: &str, powershell: bool) -> bool {
         return false;
     }
     let bytes = command.trim_matches([' ', '\t']).as_bytes();
+    // A leading PowerShell string expression is not an invocation without the call operator.
+    if powershell && bytes.first().is_some_and(|c| matches!(c, b'\'' | b'"')) {
+        return false;
+    }
     if bytes.iter().any(|c| matches!(c, b'\n' | b'\r')) {
         return false;
     }
@@ -232,8 +236,7 @@ fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool, bool) 
                 if redirection {
                     false
                 } else if powershell && command[start..i].trim().is_empty() {
-                    // `& 'exe'` starts a command. Remove it from classification, not from evidence.
-                    start = i + 1;
+                    // Keep the call operator so classification can distinguish invocation from a string.
                     false
                 } else {
                     background = true;
@@ -266,6 +269,10 @@ fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>
     let compound = segments.len() > 1 || command.contains(['\n', '\r']);
     let words = |s: &str| -> Vec<String> {
         let mut remaining = s.trim_start();
+        let called = powershell && remaining.starts_with('&');
+        if called {
+            remaining = remaining[1..].trim_start();
+        }
         // Skip simple environment prefixes, but keep a quoted executable (including spaces) whole.
         while !remaining.is_empty() && !remaining.starts_with(['\'', '"']) {
             let end = remaining.find(char::is_whitespace).unwrap_or(remaining.len());
@@ -275,7 +282,7 @@ fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>
             }
             remaining = remaining[end..].trim_start();
         }
-        if remaining.is_empty() {
+        if remaining.is_empty() || (powershell && !called && remaining.starts_with(['\'', '"'])) {
             return Vec::new();
         }
         let end = if remaining.starts_with(['\'', '"']) {
@@ -613,6 +620,63 @@ mod tests {
                     assert_eq!(e.validate(), Ok(()));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn powershell_leading_string_literals_are_not_checks_or_established_results() {
+        for command in [r#""pytest""#, "'pytest'", r#""npm test""#, "'npm test'", r#""cargo test""#, "'cargo test'",
+            r#" "pytest" -k "not slow" "#, "\t'npm' test", "'npm' test >file"] {
+            for hook in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+                let p = serde_json::json!({ "hook_event_name": hook, "tool_name": "PowerShell",
+                    "tool_input": { "command": command }, "error": "Exit code 7\nfailed" });
+                let e = normalize(&p, &ctx()).unwrap();
+                assert_eq!(e.evidence.command_class.as_deref(), Some("other"), "{hook}: {command}");
+                assert_eq!(e.evidence.program, None, "{hook}: {command}");
+                let detail = (hook != "PreToolUse").then_some("result not established");
+                assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                    (None, None, detail), "{hook}: {command}");
+                assert_eq!(e.validate(), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn quoted_powershell_invocations_and_arguments_and_bash_command_words_still_work() {
+        // In Bash a quoted first word IS an invocation; PowerShell requires `&` for that form.
+        for (tool, command, program) in [
+            ("PowerShell", r#"& "C:/x/node.exe" --test"#, "node"),
+            ("PowerShell", "& 'npm.cmd' test", "npm"),
+            ("PowerShell", r#"pytest -k "not slow""#, "pytest"),
+            ("PowerShell", "pytest -k 'not slow'", "pytest"),
+            ("Bash", r#""pytest""#, "pytest"),
+            ("Bash", "'pytest'", "pytest"),
+            ("Bash", r#""npm" test"#, "npm"),
+            ("Bash", "'cargo' test", "cargo"),
+        ] {
+            for (hook, code, source) in [("PostToolUse", 0, "tool-success"), ("PostToolUseFailure", 7, "failure-message")] {
+                let p = serde_json::json!({ "hook_event_name": hook, "tool_name": tool,
+                    "tool_input": { "command": command }, "error": "Exit code 7\nfailed" });
+                let e = normalize(&p, &ctx()).unwrap();
+                assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{tool}: {command}");
+                assert_eq!(e.evidence.program.as_deref(), Some(program), "{tool}: {command}");
+                assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                    (Some(code), Some(source), None), "{hook} {tool}: {command}");
+                assert_eq!(e.validate(), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn powershell_compound_segments_distinguish_string_literals_from_invocations() {
+        for (command, class) in [("echo done; 'pytest'", "other"), ("'npm test'; echo done", "other"),
+            ("echo done; & 'npm.cmd' test", "test"), ("'pytest'; cargo build", "build")] {
+            let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": "PowerShell",
+                "tool_input": { "command": command } });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!(e.evidence.command_class.as_deref(), Some(class), "{command}");
+            assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (None, Some("compound command")), "{command}");
+            assert_eq!(e.validate(), Ok(()));
         }
     }
 
