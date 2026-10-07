@@ -70,16 +70,17 @@ fn is_drop_counter(path: &Path) -> bool {
 }
 
 fn mark_at_least(dirs: &Dirs) {
-    // Sticky and never unlinked by housekeeping: a cleanup/write race must not erase uncertainty.
-    // Repeated contention consumes no additional files or bytes.
-    let _ = fs::File::options().write(true).create_new(true).open(dirs.dropped.join(DROP_AT_LEAST));
+    // Keep this bounded file in place: unlinking it could erase a concurrent producer's raise.
+    // Producers write only the first pair (latest raise); tidy writes only the second (retired
+    // raise). Retiring an old raise cannot overwrite a newer one. At most 32 bytes, one file.
+    if let Ok(mut file) = fs::File::options().write(true).create(true).truncate(false).open(dirs.dropped.join(DROP_AT_LEAST))
+        && let Ok(raised) = drop_timestamp(SystemTime::now()) {
+        let _ = write_pair(&mut file, 0, raised);
+    }
 }
 
-fn read_drop_counter(file: &mut fs::File) -> std::io::Result<u64> {
-    if file.metadata()?.len() != 16 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid drop counter size"));
-    }
-    file.seek(SeekFrom::Start(0))?;
+fn read_pair(file: &mut fs::File, offset: u64) -> std::io::Result<u64> {
+    file.seek(SeekFrom::Start(offset))?;
     let mut bytes = [0u8; 16];
     file.read_exact(&mut bytes)?;
     let count = u64::from_le_bytes(bytes[..8].try_into().unwrap());
@@ -90,11 +91,71 @@ fn read_drop_counter(file: &mut fs::File) -> std::io::Result<u64> {
     Ok(count)
 }
 
-fn write_drop_counter(file: &mut fs::File, count: u64) -> std::io::Result<()> {
+fn write_pair(file: &mut fs::File, offset: u64, count: u64) -> std::io::Result<()> {
     let bytes = [count.to_le_bytes(), (!count).to_le_bytes()].concat();
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&bytes)?;
+    file.seek(SeekFrom::Start(offset))?;
+    file.write_all(&bytes)
+}
+
+fn read_drop_counter(file: &mut fs::File) -> std::io::Result<u64> {
+    if file.metadata()?.len() != 16 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid drop counter size"));
+    }
+    read_pair(file, 0)
+}
+
+fn write_drop_counter(file: &mut fs::File, count: u64) -> std::io::Result<()> {
+    write_pair(file, 0, count)?;
     file.set_len(16)
+}
+
+fn drop_timestamp(time: SystemTime) -> std::io::Result<u64> {
+    let nanos = time.duration_since(SystemTime::UNIX_EPOCH).map_err(std::io::Error::other)?.as_nanos();
+    u64::try_from(nanos).map_err(std::io::Error::other)
+}
+
+fn read_drop_flag(file: &mut fs::File) -> std::io::Result<(u64, Option<u64>)> {
+    let metadata = file.metadata()?;
+    let len = metadata.len();
+    if len == 0 { return Ok((drop_timestamp(metadata.modified()?)?, None)); } // Legacy empty flag.
+    if !matches!(len, 16 | 32) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid drop flag size"));
+    }
+    let retired = if len == 32 { Some(read_pair(file, 16)?) } else { None };
+    // Retiring a legacy empty file writes only its second pair. Never initialise the first pair
+    // here: a concurrent producer may already be raising it. All-zero first pair is that sentinel.
+    file.seek(SeekFrom::Start(0))?;
+    let mut first = [0u8; 16];
+    file.read_exact(&mut first)?;
+    if first == [0; 16] && let Some(retired) = retired { return Ok((retired, Some(retired))); }
+    Ok((read_pair(file, 0)?, retired))
+}
+
+fn retire_drop_flag(dirs: &Dirs, now: SystemTime, policy: &Policy) -> std::io::Result<bool> {
+    let mut flag = match fs::File::options().read(true).write(true).open(dirs.dropped.join(DROP_AT_LEAST)) {
+        Ok(flag) => flag,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let (raised, retired) = read_drop_flag(&mut flag)?;
+    if retired.is_some_and(|retired| retired >= raised)
+        || !older_than(now, SystemTime::UNIX_EPOCH + Duration::from_nanos(raised), policy.marker_max_age) { return Ok(false); }
+    let mut locked = Vec::new();
+    for reason in DROP_REASONS {
+        let mut file = match fs::File::options().read(true).write(true).open(dirs.dropped.join(format!("count-{reason}"))) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        file.try_lock().map_err(std::io::Error::other)?;
+        if !older_than(now, file.metadata()?.modified()?, policy.marker_max_age)
+            || read_drop_counter(&mut file)? != 0 { return Ok(false); }
+        locked.push(file); // Hold every existing bucket until the retirement write completes.
+    }
+    // A producer losing a try_lock to this housekeeping pass raises a NEW first pair; writing
+    // this old watermark in the independent second pair preserves that real lost count.
+    write_pair(&mut flag, 16, raised)?;
+    Ok(true)
 }
 
 /// Counts exactly when a fixed reason counter can be locked immediately. Otherwise preserves a
@@ -114,7 +175,17 @@ pub fn mark_dropped(dirs: &Dirs, reason: &'static str) -> WriteOutcome {
             // Only this producer's newly created bucket is known to have no earlier drops.
             if !created { mark_at_least(dirs); }
             0
-        } else { read_drop_counter(&mut file)? };
+        } else {
+            match read_drop_counter(&mut file) {
+                Ok(count) => count,
+                Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof) => {
+                    // This drop is known; earlier counts in the torn record are not recoverable.
+                    mark_at_least(dirs);
+                    0
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let next = count.checked_add(1).ok_or_else(|| std::io::Error::other("drop count saturated"))?;
         write_drop_counter(&mut file, next)
         // Closing the handle releases its OS lock, including after an error/process exit.
@@ -231,14 +302,19 @@ pub fn drop_accounting(dirs: &Dirs) -> DropAccounting {
         let Ok(entry) = entry else { out.at_least = true; continue };
         let path = entry.path();
         if path.file_name().is_some_and(|n| n == DROP_AT_LEAST) {
-            out.at_least = true;
+            let read = fs::File::open(&path).and_then(|mut file| read_drop_flag(&mut file));
+            out.at_least |= match read {
+                Ok((raised, retired)) => retired.is_none_or(|retired| raised > retired),
+                Err(_) => true,
+            };
             continue;
         }
         if !path.is_file() { continue; }
         let count = if is_drop_counter(&path) {
             let read = || -> std::io::Result<u64> {
-                let mut file = fs::File::options().read(true).write(true).open(&path)?;
-                file.try_lock().map_err(std::io::Error::other)?;
+                // Status reads must not compete with producers for an exclusive lock. Validation
+                // detects inconsistent snapshots; their uncertainty is local to this read only.
+                let mut file = fs::File::open(&path)?;
                 read_drop_counter(&mut file)
             };
             match read() {
@@ -348,11 +424,14 @@ pub fn tidy(dirs: &Dirs, now: SystemTime, policy: &Policy) -> Report {
                         let mut file = fs::File::options().read(true).write(true).open(&path)?;
                         file.try_lock().map_err(std::io::Error::other)?;
                         // Recheck under the lock: a producer may have refreshed it since the directory scan.
-                        if !older_than(now, file.metadata()?.modified()?, policy.marker_max_age) { return Ok(false); }
+                        let modified = file.metadata()?.modified()?;
+                        if !older_than(now, modified, policy.marker_max_age) { return Ok(false); }
                         let count = read_drop_counter(&mut file).unwrap_or_else(|_| { mark_at_least(dirs); 1 });
                         if count == 0 { return Ok(false); }
                         // Never unlink a counter: a producer may already have opened this same inode.
                         write_drop_counter(&mut file, 0)?;
+                        // A cleanup reset is not a new drop; preserve age so old warnings can expire.
+                        file.set_modified(modified)?;
                         Ok(true)
                     };
                     match reset() {
@@ -369,6 +448,11 @@ pub fn tidy(dirs: &Dirs, now: SystemTime, policy: &Policy) -> Report {
                 kept += 1;
             }
         }
+    }
+    match retire_drop_flag(dirs, now, policy) {
+        Ok(true) => report.markers_removed += 1,
+        Ok(false) => {},
+        Err(_) => report.more = true,
     }
     let (files, more) = aged_files(&dirs.inbox, policy.budget, true);
     report.more |= more;
@@ -517,7 +601,122 @@ mod tests {
         assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
         for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
         tidy(&dirs, SystemTime::now(), &Policy::default());
-        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true }, "cleanup must not clear evidence of uncounted losses");
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default(), "the old warning expires with all old counts");
+    }
+
+    #[test]
+    fn drop_accounting_old_flag_waits_for_all_old_counters_to_reset() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        mark_dropped(&dirs, "panic");
+        mark_at_least(&dirs);
+        for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 2, at_least: true });
+        let locked = fs::File::options().read(true).write(true).open(dirs.dropped.join("count-panic")).unwrap();
+        locked.try_lock().unwrap();
+        let report = tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert!(report.more);
+        assert!(drop_accounting(&dirs).at_least, "a bucket still awaiting cleanup retains uncertainty");
+        drop(locked);
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+        assert!(dirs.dropped.join(DROP_AT_LEAST).exists(), "logical expiry avoids unlink/write races");
+    }
+
+    #[test]
+    fn drop_accounting_old_flag_remains_active_while_any_counter_is_young() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        mark_at_least(&dirs);
+        age(&dirs.dropped.join(DROP_AT_LEAST), 30 * DAY);
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        // Even a valid young zero counter cannot justify retiring an old flag.
+        let mut file = fs::File::options().write(true).open(dirs.dropped.join("count-expired")).unwrap();
+        write_drop_counter(&mut file, 0).unwrap();
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[test]
+    fn drop_accounting_flag_age_is_measured_from_the_latest_raise() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        mark_at_least(&dirs);
+        for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        mark_at_least(&dirs);
+        assert!(!older_than(SystemTime::now(), fs::metadata(&flag).unwrap().modified().unwrap(), DAY));
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        age(&flag, 30 * DAY);
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+    }
+
+    #[test]
+    fn drop_accounting_expired_warning_does_not_return_for_a_new_exact_drop() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        mark_at_least(&dirs);
+        for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+        mark_dropped(&dirs, "expired");
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: false });
+        mark_at_least(&dirs);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[test]
+    fn drop_accounting_legacy_empty_flag_expires_and_can_be_raised_again() {
+        let (_d, dirs) = fresh();
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        fs::write(&flag, []).unwrap();
+        age(&flag, 30 * DAY);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+        mark_at_least(&dirs);
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[test]
+    fn drop_accounting_retirement_uses_the_same_custom_age_as_counters() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        mark_at_least(&dirs);
+        for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 2 * HOUR); }
+        let policy = Policy { marker_max_age: HOUR, ..Policy::default() };
+        tidy(&dirs, SystemTime::now(), &policy);
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
+    }
+
+    #[test]
+    fn drop_accounting_retiring_an_old_raise_preserves_a_newer_raise() {
+        let (_d, dirs) = fresh();
+        mark_at_least(&dirs);
+        let flag = dirs.dropped.join(DROP_AT_LEAST);
+        age(&flag, 30 * DAY);
+        let mut cleaner = fs::File::options().read(true).write(true).open(&flag).unwrap();
+        let (old_raise, _) = read_drop_flag(&mut cleaner).unwrap();
+        // Producer raises after cleanup's snapshot, before its delayed retirement write.
+        mark_at_least(&dirs);
+        write_pair(&mut cleaner, 16, old_raise).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
+    }
+
+    #[test]
+    fn drop_accounting_all_buckets_and_retired_flag_stay_within_14_files_and_240_bytes() {
+        let (_d, dirs) = fresh();
+        for reason in DROP_REASONS { mark_dropped(&dirs, reason); }
+        mark_at_least(&dirs);
+        for entry in fs::read_dir(&dirs.dropped).unwrap() { age(&entry.unwrap().path(), 30 * DAY); }
+        tidy(&dirs, SystemTime::now(), &Policy::default());
+        let files: Vec<_> = fs::read_dir(&dirs.dropped).unwrap().map(Result::unwrap).collect();
+        assert_eq!(files.len(), 14);
+        assert_eq!(files.iter().map(|f| f.metadata().unwrap().len()).sum::<u64>(), 240);
+        assert_eq!(drop_accounting(&dirs), DropAccounting::default());
     }
 
     #[test]
@@ -541,6 +740,43 @@ mod tests {
         assert_eq!(drop_accounting(&dirs), DropAccounting { count: 1, at_least: true });
         mark_dropped(&dirs, "expired");
         assert!(dirs.dropped.join("at-least").exists());
+    }
+
+    #[test]
+    fn drop_accounting_readers_need_only_read_access_and_do_not_raise_the_flag() {
+        let (_d, dirs) = fresh();
+        mark_dropped(&dirs, "expired");
+        let path = dirs.dropped.join("count-expired");
+        let original = fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        let got = drop_accounting(&dirs);
+        fs::set_permissions(&path, original).unwrap();
+        assert_eq!(got, DropAccounting { count: 1, at_least: false });
+        assert!(!dirs.dropped.join(DROP_AT_LEAST).exists());
+        // An inconsistent snapshot affects only that read; the next valid snapshot is exact.
+        fs::write(&path, [1; 16]).unwrap();
+        assert!(drop_accounting(&dirs).at_least);
+        assert!(!dirs.dropped.join(DROP_AT_LEAST).exists());
+        let mut file = fs::File::options().write(true).open(&path).unwrap();
+        write_drop_counter(&mut file, 2).unwrap();
+        assert_eq!(drop_accounting(&dirs), DropAccounting { count: 2, at_least: false });
+    }
+
+    #[test]
+    fn drop_accounting_producers_repair_invalid_counters_and_keep_counting() {
+        let (_d, dirs) = fresh();
+        let path = dirs.dropped.join("count-expired");
+        for broken in [vec![255; 8], vec![1; 16]] {
+            fs::write(&path, broken).unwrap();
+            mark_dropped(&dirs, "expired");
+            let mut file = fs::File::open(&path).unwrap();
+            assert_eq!(read_drop_counter(&mut file).unwrap(), 1, "the current drop repairs the bucket");
+            assert!(dirs.dropped.join(DROP_AT_LEAST).exists());
+            mark_dropped(&dirs, "expired");
+            assert_eq!(drop_accounting(&dirs), DropAccounting { count: 2, at_least: true });
+        }
     }
 
     #[test]
@@ -599,7 +835,11 @@ mod tests {
 
     fn age(path: &Path, by: Duration) {
         let when = SystemTime::now() - by;
-        fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+        let mut file = fs::File::options().write(true).open(path).unwrap();
+        if path.file_name().is_some_and(|name| name == DROP_AT_LEAST) && file.metadata().unwrap().len() >= 16 {
+            write_pair(&mut file, 0, drop_timestamp(when).unwrap()).unwrap();
+        }
+        file.set_modified(when).unwrap();
     }
 
     const HOUR: Duration = Duration::from_secs(3600);
