@@ -50,10 +50,22 @@ export const shippedNpm = (lock) => {
   return [...seen.entries()].map(([path, p]) => ({ ...p, path })).sort((a, b) => a.name.localeCompare(b.name));
 };
 
-const section = (title, license, source, dir, files) => {
-  const texts = files.map((f) => `--- ${f} ---\n${readFileSync(join(dir, f), 'utf8').trim()}\n`);
+const NOTICES = join(ROOT, 'scripts', 'notices');
+
+/** Notice kept in this repository for a component that ships without its own license file (by name or crate family). */
+export const fallbackNotice = (name, dir = NOTICES) =>
+  [name, name.replace(/-(sys|macros)$/, '')].map((n) => join(dir, `${n}.txt`)).find((path) => existsSync(path)) ?? null;
+
+/** Every component carries its license text, from its own files or from scripts/notices; otherwise it is recorded as missing. */
+const section = (missing, name, title, license, source, dir, files) => {
+  let texts = files.map((f) => `--- ${f} ---\n${readFileSync(join(dir, f), 'utf8').trim()}\n`);
+  if (!texts.length) {
+    const fallback = fallbackNotice(name);
+    if (fallback) texts = [`--- notice kept by Raio (scripts/notices) ---\n${readFileSync(fallback, 'utf8').trim()}\n`];
+    else missing.push(title);
+  }
   return [`==== ${title}`, `License: ${license}`, source ? `Source: ${source}` : null,
-    texts.length ? texts.join('\n') : '(no license file shipped in the package; see the license identifier above)', ''].filter((l) => l !== null).join('\n');
+    texts.length ? texts.join('\n') : '(LICENSE TEXT MISSING)', ''].filter((l) => l !== null).join('\n');
 };
 
 const main = () => {
@@ -68,6 +80,7 @@ const main = () => {
   const crates = shippedCrates(metadata);
   const npm = shippedNpm(JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8')));
   const unknown = [...crates.filter((c) => !c.license), ...npm.filter((p) => p.license === 'UNKNOWN')].map((p) => `${p.name} ${p.version}`);
+  const missing = [];
 
   const parts = [
     'Raio - third-party notices',
@@ -77,18 +90,17 @@ const main = () => {
     'listed version and from the listed repository; npm packages from the npm registry at the listed version.',
     '',
     '#### Font',
-    section('Inter (InterVariable.woff2)', 'OFL-1.1', 'https://github.com/rsms/inter', join(ROOT, 'public', 'fonts'), ['Inter-LICENSE.txt']),
+    section(missing, 'inter', 'Inter (InterVariable.woff2)', 'OFL-1.1', 'https://github.com/rsms/inter', join(ROOT, 'public', 'fonts'), ['Inter-LICENSE.txt']),
     '#### npm packages bundled into the renderer',
-    ...npm.map((p) => section(`${p.name} ${p.version}`, p.license, null, join(ROOT, p.path), licenseFiles(join(ROOT, p.path)))),
+    ...npm.map((p) => section(missing, p.name, `${p.name} ${p.version}`, p.license, null, join(ROOT, p.path), licenseFiles(join(ROOT, p.path)))),
     '#### Rust crates compiled into raio.exe and raio-hook.exe',
-    ...crates.map((c) => section(`${c.name} ${c.version}`, c.license ?? c.license_file ?? 'UNKNOWN', c.repository, dirname(c.manifest_path), licenseFiles(dirname(c.manifest_path)))),
+    ...crates.map((c) => section(missing, c.name, `${c.name} ${c.version}`, c.license ?? c.license_file ?? 'UNKNOWN', c.repository, dirname(c.manifest_path), licenseFiles(dirname(c.manifest_path)))),
   ];
   writeFileSync(out, parts.join('\n'));
   console.log(`Wrote ${out}: ${crates.length} crates, ${npm.length} npm packages, 1 font.`);
-  if (unknown.length) {
-    console.error(`License identifier missing for: ${unknown.join(', ')}`);
-    process.exitCode = 1;
-  }
+  if (unknown.length) console.error(`License identifier missing for: ${unknown.join(', ')}`);
+  if (missing.length) console.error(`License text missing for: ${missing.join(', ')} (add scripts/notices/<name>.txt)`);
+  if (unknown.length || missing.length) process.exitCode = 1;
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
