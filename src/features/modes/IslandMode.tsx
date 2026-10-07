@@ -36,11 +36,12 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
   const agent = agentShortName(script.agent);
   const agentFull = agentFullName(script.agent);
   const working = ui.status === 'working';
+  const recentActivity = companion ? companion.activeUntil !== null : working;
   const finished = ui.finished;
   const ready = ui.status === 'ready' && !replaying;
-  const collapsedLabel = !replaying && !working && companion ? companion.label : replaying
+  const collapsedLabel = !replaying && !recentActivity && companion ? companion.label : replaying
     ? 'Replaying'
-    : working
+    : recentActivity
       ? `${agent} · ${presence.activeNodeLabel ?? 'starting'}`
       : presence.recentlyFinished
         ? `${agent} finished`

@@ -5,19 +5,24 @@ import { BridgeProvider } from '../../platform/BridgeContext';
 import { createFixtureBridge } from '../../platform/fixtureBridge';
 import { canonicalScript } from '../session/model/canonicalScript';
 import { evaluateFrame } from '../session/model/evaluateFrame';
-import { deriveCompanionPresence } from './companionPresence';
+import { deriveCompanionPresence, type PresenceInput } from './companionPresence';
+import { BOB_TOTAL_SECONDS } from '../raio/bob';
 import { IslandMode } from './IslandMode';
 import { MiniPlayer } from './MiniPlayer';
 import { derivePresence } from './presence';
 
 const bridge = createFixtureBridge();
 const snapshot = bridge.currentSession()!;
-const attention = deriveCompanionPresence({ connected: true, available: true, facts: [
+const attentionInput: PresenceInput = { connected: true, available: true, facts: [
   { id: 'migration', kind: 'change', change: 'added', paths: ['migrations/001_fixture.sql'], at: 0, source: 'Fixture watcher' },
-] }, 1000, 'UTC');
-const failure = deriveCompanionPresence({ connected: true, available: true, facts: [
+] };
+const failureInput: PresenceInput = { connected: true, available: true, facts: [
   { id: 'tests', kind: 'check', checkClass: 'tests', result: 'failed', at: 0, source: 'Fixture check' },
-] }, 1000, 'UTC');
+] };
+const attention = deriveCompanionPresence(attentionInput, 1000, 'UTC');
+const failure = deriveCompanionPresence(failureInput, 1000, 'UTC');
+const expiredAttention = deriveCompanionPresence(attentionInput, BOB_TOTAL_SECONDS * 1000, 'UTC');
+const expiredFailure = deriveCompanionPresence(failureInput, BOB_TOTAL_SECONDS * 1000, 'UTC');
 const noop = () => {};
 const compactText = (html: string, surface: 'island' | 'mini') =>
   html.match(new RegExp('class="' + (surface === 'island' ? 'island__label' : 'mini__state') + '"[^>]*>([^<]*)<'))?.[1];
@@ -41,8 +46,8 @@ for (const surface of ['island', 'mini'] as const) {
       expect(html).toContain('title="' + companion.description + '"');
     });
 
-    it.each([attention, failure])('shows $state presence copy when the agent is no longer working', companion => {
-      const html = render(11, companion);
+    it.each([expiredAttention, expiredFailure])('shows $state presence copy after activity expires, even with a working frame', companion => {
+      const html = render(4, companion);
       expect(compactText(html, surface)).toBe(companion.label);
       expect(html).toContain('data-presence="' + companion.state + '"');
       expect(html).toContain('title="' + companion.description + '"');

@@ -101,7 +101,7 @@ test('hidden surfaces pause graphics and keep rendered data frozen until latest-
   await page.evaluate(async path => { (await import(path)).setVisible(true); }, fixtureModule);
   await expect(fixture.locator('.mini')).toBeVisible();
   await expect(fixture.locator('.mini__status')).toHaveAttribute('data-presence', 'working');
-  await expect(fixture.locator('.mini__state')).toHaveText('Recent activity');
+  await expect(fixture.locator('.mini__state')).toHaveText('Claude working');
   expect(await fixture.locator('.mini').evaluate(el => { const s = (el as HTMLElement).style; return [s.left, s.top, s.width, s.height]; })).toEqual(rect);
 });
 

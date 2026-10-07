@@ -12,17 +12,19 @@ const mount = async (page: Page, time: number) => {
 };
 
 for (const surface of ['island', 'mini'] as const) {
-  for (const working of [true, false]) {
-    test(surface + ' retains ' + (working ? 'live activity' : 'presence copy at rest') + ' with attention/failure precedence', async ({ page }) => {
-      const fixture = await mount(page, working ? 4 : 11);
+  for (const recent of [true, false]) {
+    test(surface + ' retains ' + (recent ? 'recent activity' : 'presence copy after activity expiry') + ' with attention/failure precedence', async ({ page }) => {
+      await page.clock.install();
+      const fixture = await mount(page, 4); // The session remains working across recency expiry.
       await page.evaluate(async ({ path, surface }) => { (await import(path)).setMode(surface); }, { path: fixtureModule, surface });
       for (const [state, label, token] of [
         ['attention', 'Migration file added', '--raio-color-accent-warning'],
         ['failure', 'Tests failed', '--raio-color-accent-danger'],
       ] as const) {
         await page.evaluate(async ({ path, state }) => { (await import(path)).setPresence(state); }, { path: fixtureModule, state });
+        if (!recent) await page.clock.fastForward(31_000);
         const text = fixture.locator(surface === 'island' ? '.island__label' : '.mini__state');
-        await expect(text).toHaveText(working ? (surface === 'island' ? 'Claude · API' : 'Claude working') : new RegExp('^' + label + ' · \\d{2}:\\d{2}$'));
+        await expect(text).toHaveText(recent ? (surface === 'island' ? 'Claude · API' : 'Claude working') : new RegExp('^' + label + ' · \\d{2}:\\d{2}$'));
         const accessible = fixture.locator(surface === 'island' ? '.island' : '.mini__status');
         await expect(accessible).toHaveAttribute('aria-label', new RegExp(label));
         await expect(accessible).toHaveAttribute('title', new RegExp(label));
