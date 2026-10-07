@@ -34,6 +34,7 @@ pub struct Core {
     backups: PathBuf,
     pub store: Mutex<Store>,
     watches: Mutex<HashMap<String, ProjectWatch>>,
+    project_intents: Mutex<surfaces::Intents>,
 }
 
 fn now_ms() -> i64 {
@@ -98,9 +99,10 @@ impl Core {
         dirs.create().map_err(|e| e.to_string())?;
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
-        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default() };
+        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default() };
         // Before the first ingest pass, so events past the inbox TTL are dropped (and counted), not stored late.
         core.housekeeping(SystemTime::now(), &Limits::default());
+        core.refresh_connections();
         Ok(core)
     }
 
@@ -143,6 +145,51 @@ impl Core {
         projects.into_iter().find(|p| p.id == project_id).map(|p| PathBuf::from(p.root)).ok_or_else(|| "unknown project".to_string())
     }
 
+    pub(crate) fn record_project_intent(&self, root: &str) -> bool {
+        self.project_intents.lock().unwrap_or_else(|e| e.into_inner()).record(surfaces::EXPANDED, root)
+    }
+
+    fn take_project_intent(&self) -> Option<String> {
+        self.project_intents.lock().unwrap_or_else(|e| e.into_inner()).take(surfaces::EXPANDED)
+    }
+
+    fn refresh_connections(&self) {
+        let refresh = || -> Result<(), String> {
+            // Hold the database lock through replacement: concurrent connection changes must
+            // not publish an older snapshot after a newer one.
+            let store = self.store.lock().map_err(|e| e.to_string())?;
+            let projects = store.connected_projects().map_err(|e| e.to_string())?;
+            let mut connections = Vec::new();
+            for project in projects {
+                let root = PathBuf::from(project.root);
+                let root = if root.is_absolute() { root } else { std::env::current_dir().map_err(|e| e.to_string())?.join(root) };
+                connections.push(serde_json::json!({ "root": root, "settingsPath": connect::settings_path(&root) }));
+            }
+            let bytes = serde_json::to_vec(&connections).map_err(|e| e.to_string())?;
+            paths::write_atomic(&self.data.join("connections.json"), &bytes).map_err(|e| e.to_string())
+        };
+        if let Err(error) = refresh() { eprintln!("Raio could not update connections.json: {error}"); }
+    }
+
+    fn connect_at(&self, root: PathBuf, id: String, command: String, previewed: &connect::Preview) -> Result<Project, String> {
+        connect::connect(&root, &command, previewed, &self.backups, now_ms())?;
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
+        let project = Project { id, root: root.to_string_lossy().into_owned(), name, connected_at: now_ms() };
+        self.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
+        self.refresh_connections();
+        let _ = inbox::touch_heartbeat(&self.dirs);
+        Ok(project)
+    }
+
+    fn disconnect_id(&self, project_id: &str) -> Result<(), String> {
+        let root = self.connected_root(project_id)?;
+        connect::disconnect(&root, &self.backups, now_ms())?;
+        self.store.lock().map_err(|e| e.to_string())?.disconnect_project(project_id, now_ms()).map_err(|e| e.to_string())?;
+        self.refresh_connections();
+        if let Ok(mut watches) = self.watches.lock() { watches.remove(project_id); }
+        Ok(())
+    }
+
     fn store_events(&self, events: Vec<RaioEvent>) -> usize {
         let Ok(store) = self.store.lock() else { return 0 };
         events.iter().filter(|e| matches!(store.insert(e, now_ms()), Ok(Insert::Inserted(_)))).count()
@@ -179,8 +226,20 @@ pub fn start(app: &AppHandle) {
                 let _ = handle.emit(INGESTED_EVENT, ());
             }
             // A second `raio.exe` asked this instance to come forward.
-            if instance::take_show_request(&core.data) {
-                let _ = surfaces::show(&handle, surfaces::EXPANDED, None);
+            if let Some(request) = instance::take_launch_request(&core.data) {
+                let emit = if let Some(project) = &request.project {
+                    if handle.get_webview_window(surfaces::EXPANDED).is_none() {
+                        core.project_intents.lock().unwrap_or_else(|e| e.into_inner()).reset(surfaces::EXPANDED);
+                    }
+                    core.record_project_intent(project)
+                } else { false };
+                match surfaces::show(&handle, request.target_surface(), None) {
+                    Ok(()) if emit => {
+                        if let Some(project) = request.project { let _ = handle.emit_to(surfaces::EXPANDED, "project-intent", project); }
+                    }
+                    Err(error) => eprintln!("Raio could not show the requested surface: {error}"),
+                    _ => {},
+                }
             }
             since_heartbeat += INGEST_EVERY;
             if since_heartbeat >= HEARTBEAT_EVERY {
@@ -266,14 +325,35 @@ pub fn project_hooks_state(core: State<'_, Core>, project_id: String) -> Result<
 }
 
 fn root_and_command(root: &str) -> Result<(PathBuf, String, String), String> {
-    let root = PathBuf::from(root);
-    if !root.is_dir() {
-        return Err("not a folder".into());
-    }
+    let root = paths::project_root(Path::new(root))?;
     let hook = hook_binary().ok_or("raio-hook was not found next to the Raio app")?;
     let id = project_id(&root);
     let command = connect::hook_command(&hook, &id, &root);
     Ok((root, id, command))
+}
+
+#[derive(Serialize)]
+pub struct ProjectMap {
+    inventory: crate::inventory::Inventory,
+    imports: crate::imports::ImportScan,
+}
+
+fn scan_project_map(root: &str) -> Result<ProjectMap, String> {
+    let root = paths::project_root(Path::new(root))?;
+    Ok(ProjectMap {
+        inventory: crate::inventory::scan(&root, &crate::inventory::Limits::default())?,
+        imports: crate::imports::scan(&root, &crate::imports::Limits::default())?,
+    })
+}
+
+#[tauri::command]
+pub async fn preview_project_map(root: String) -> Result<ProjectMap, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_project_map(&root)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn take_project_intent(core: State<'_, Core>) -> Option<String> {
+    core.take_project_intent()
 }
 
 /// Async so the `git check-ignore` probe never blocks the UI thread.
@@ -286,11 +366,7 @@ pub async fn preview_connect(root: String) -> Result<connect::Preview, String> {
 #[tauri::command(async)]
 pub fn connect_project(app: AppHandle, core: State<'_, Core>, root: String, previewed: connect::Preview) -> Result<Project, String> {
     let (root_path, id, command) = root_and_command(&root)?;
-    connect::connect(&root_path, &command, &previewed, &core.backups, now_ms())?;
-    let name = root_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
-    let project = Project { id, root: root_path.to_string_lossy().into_owned(), name, connected_at: now_ms() };
-    core.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
-    let _ = inbox::touch_heartbeat(&core.dirs);
+    let project = core.connect_at(root_path, id, command, &previewed)?;
     core.start_watch(&app, &project);
     let _ = app.emit(INGESTED_EVENT, ());
     Ok(project)
@@ -298,15 +374,7 @@ pub fn connect_project(app: AppHandle, core: State<'_, Core>, root: String, prev
 
 #[tauri::command(async)]
 pub fn disconnect_project(app: AppHandle, core: State<'_, Core>, project_id: String) -> Result<(), String> {
-    let project = {
-        let store = core.store.lock().map_err(|e| e.to_string())?;
-        store.connected_projects().map_err(|e| e.to_string())?.into_iter().find(|p| p.id == project_id).ok_or("unknown project")?
-    };
-    connect::disconnect(Path::new(&project.root), &core.backups, now_ms())?;
-    core.store.lock().map_err(|e| e.to_string())?.disconnect_project(&project_id, now_ms()).map_err(|e| e.to_string())?;
-    if let Ok(mut w) = core.watches.lock() {
-        w.remove(&project_id);
-    }
+    core.disconnect_id(&project_id)?;
     let _ = app.emit(INGESTED_EVENT, ());
     Ok(())
 }
@@ -341,6 +409,101 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open_at(dir.path()).unwrap();
         (dir, core)
+    }
+
+    #[test]
+    fn alpha_project_intent_is_pulled_once_or_delivered_live_without_connecting() {
+        let (_d, core) = open();
+        assert!(!core.record_project_intent("superseded"));
+        assert!(!core.record_project_intent("first"));
+        assert_eq!(core.take_project_intent(), Some("first".into()));
+        assert_eq!(core.take_project_intent(), None);
+        assert!(core.record_project_intent("second"));
+        assert_eq!(core.take_project_intent(), None, "a delivered event is not replayed on mount");
+        assert!(core.store.lock().unwrap().connected_projects().unwrap().is_empty());
+    }
+
+    #[test]
+    fn alpha_map_preview_uses_real_scans_without_connecting_writing_or_reading_env() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), r#"{"dependencies":{"react":"1"}}"#).unwrap();
+        fs::write(dir.path().join("app.ts"), "import app from './model';\n").unwrap();
+        fs::write(dir.path().join(".env"), "PRIVATE_VALUE=synthetic-do-not-leak").unwrap();
+        let env = fs::File::options().read(true).write(true).open(dir.path().join(".env")).unwrap();
+        env.try_lock().unwrap();
+        let snapshot = || {
+            let mut files: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|e| {
+                let e = e.unwrap(); let m = e.metadata().unwrap(); (e.file_name(), m.len(), m.modified().unwrap())
+            }).collect();
+            files.sort(); files
+        };
+        let before = snapshot();
+        let map = scan_project_map(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(snapshot(), before);
+        assert_eq!(map.imports.files.len(), 1);
+        assert_eq!(map.imports.files[0].specifiers, ["./model"]);
+        assert!(!map.inventory.manifests.is_empty());
+        let value = serde_json::to_value(&map).unwrap();
+        assert_eq!(value.as_object().unwrap().len(), 2);
+        assert!(value["inventory"]["scannedAtMs"].is_number());
+        assert!(value["imports"]["scannedAtMs"].is_number());
+        assert!(!value.to_string().contains("synthetic-do-not-leak"));
+        assert!(!dir.path().join(".claude").exists());
+    }
+
+    #[test]
+    fn alpha_map_preview_rejects_a_file_or_missing_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file"); fs::write(&file, []).unwrap();
+        assert!(scan_project_map(file.to_str().unwrap()).is_err());
+        assert!(scan_project_map(dir.path().join("gone").to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn alpha_connections_manifest_tracks_connect_disconnect_and_startup() {
+        let (data, core) = open();
+        let root = tempfile::tempdir().unwrap();
+        let root = paths::project_root(root.path()).unwrap();
+        let id = project_id(&root);
+        let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), &id, &root);
+        let preview = connect::preview(&root, &command).unwrap();
+        let project = core.connect_at(root.clone(), id.clone(), command, &preview).unwrap();
+        let manifest = || serde_json::from_slice::<serde_json::Value>(&fs::read(data.path().join("connections.json")).unwrap()).unwrap();
+        assert_eq!(manifest(), serde_json::json!([{ "root": project.root, "settingsPath": connect::settings_path(&root).to_string_lossy() }]));
+        fs::write(data.path().join("connections.json"), b"stale").unwrap();
+        drop(core);
+        let core = Core::open_at(data.path()).unwrap();
+        assert_eq!(manifest().as_array().unwrap().len(), 1, "startup rebuilds from the database");
+        let other = tempfile::tempdir().unwrap();
+        let other_root = paths::project_root(other.path()).unwrap();
+        let other_id = project_id(&other_root);
+        let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), &other_id, &other_root);
+        let preview = connect::preview(&other_root, &command).unwrap();
+        core.connect_at(other_root.clone(), other_id.clone(), command, &preview).unwrap();
+        assert_eq!(manifest().as_array().unwrap().len(), 2);
+        core.disconnect_id(&id).unwrap();
+        assert_eq!(manifest(), serde_json::json!([{ "root": other_root, "settingsPath": connect::settings_path(&other_root) }]));
+        core.disconnect_id(&other_id).unwrap();
+        assert_eq!(manifest(), serde_json::json!([]));
+        assert!(core.store.lock().unwrap().connected_projects().unwrap().is_empty());
+        assert!(!fs::read_dir(data.path()).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    fn alpha_connections_manifest_write_failure_never_fails_connection_changes() {
+        let (data, core) = open();
+        let path = data.path().join("connections.json");
+        let _ = fs::remove_file(&path); fs::create_dir(&path).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let root = paths::project_root(root.path()).unwrap();
+        let id = project_id(&root);
+        let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), &id, &root);
+        let preview = connect::preview(&root, &command).unwrap();
+        core.connect_at(root, id.clone(), command, &preview).unwrap();
+        core.disconnect_id(&id).unwrap();
+        assert!(core.store.lock().unwrap().connected_projects().unwrap().is_empty());
+        drop(core);
+        assert!(Core::open_at(data.path()).is_ok(), "startup manifest failure is also best effort");
     }
 
     #[test]

@@ -32,12 +32,22 @@ pub fn run() {
         eprintln!("Raio could not find its per-user data directory");
         std::process::exit(1);
     };
+    let args: Vec<String> = std::env::args().collect();
+    let mut launch = surfaces::launch_surface(args.clone());
+    let project = match instance::launch_project(args) {
+        Some(Ok(project)) => Some(project),
+        Some(Err(error)) => { eprintln!("Raio ignores --project: {error}"); None }
+        None => None,
+    };
     // One Raio per user: a second launch asks the running one to come forward and exits. The lock lives
     // until the process ends (the OS also releases it if Raio crashes).
     let _instance = match instance::acquire(&data) {
         Ok(instance::Acquire::First(lock)) => lock,
         Ok(instance::Acquire::AlreadyRunning) => {
-            let _ = instance::request_show(&data);
+            let surface = launch.as_ref().and_then(|l| l.as_ref().ok()).map(|s| (*s).to_string());
+            if let Err(error) = instance::request_show_with(&data, &instance::ShowRequest { project, surface }) {
+                eprintln!("Raio could not send its launch request: {error}");
+            }
             return;
         }
         Err(e) => {
@@ -52,11 +62,14 @@ pub fn run() {
             std::process::exit(1);
         }
     };
+    if let Some(project) = project {
+        core.record_project_intent(&project);
+        launch = Some(Ok(surfaces::EXPANDED));
+    }
     let mut context = tauri::generate_context!();
     surfaces::configure_expanded_chrome(context.config_mut());
     // Launched straight into the Island or the Mini Player: the Expanded window is created when first shown,
     // so neither a hidden webview nor a flash of it comes before the surface that was asked for.
-    let launch = surfaces::launch_surface(std::env::args());
     let deferred_expanded = if defers_expanded(&launch) { surfaces::defer_expanded(context.config_mut()) } else { None };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -73,6 +86,8 @@ pub fn run() {
             core::project_events,
             core::project_hooks_state,
             core::preview_connect,
+            core::preview_project_map,
+            core::take_project_intent,
             core::connect_project,
             core::disconnect_project,
             imports::project_imports,
