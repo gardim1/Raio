@@ -150,6 +150,58 @@ fn session_lifecycle_resume_keeps_four_occurrences_and_inbox_retries_dedupe() {
 }
 
 #[test]
+fn conservative_shell_results_and_quoted_checks_survive_hook_to_store() {
+    // Synthetic review regressions: the hook consumes these as data; no shell commands execute.
+    let cases = [
+        ("Bash", r#"npm test "$(printf '"')" & wait"#, "npm", false),
+        ("Bash", r"npm test $'it\'s' & wait", "npm", false),
+        ("PowerShell", "npm test $(Write-Output argument)", "npm", false),
+        ("PowerShell", r#"& "C:/x/node.exe" --test"#, "node", true),
+        ("PowerShell", r#"& "C:/Program Files/nodejs/node.exe" --test"#, "node", true),
+        ("PowerShell", r"& 'C:\x\npm.cmd' test", "npm", true),
+        ("Bash", "npm test 2>&1", "npm", true),
+    ];
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let store = Store::open(&data.path().join("raio.db"), 0).unwrap();
+    for (i, (tool, command, _, _)) in cases.iter().enumerate() {
+        for hook in ["PostToolUse", "PostToolUseFailure"] {
+            let payload = serde_json::json!({ "hook_event_name": hook, "tool_name": tool,
+                "tool_use_id": format!("review-{i}"), "session_id": "fixture-session",
+                "tool_input": { "command": command }, "error": "Exit code 7\nSENTINEL_PRIVATE_OUTPUT",
+                "tool_response": { "stdout": "SENTINEL_PRIVATE_OUTPUT" } });
+            assert_eq!(run_hook(data.path(), &serde_json::to_vec(&payload).unwrap()).0, 0, "{tool}: {command}");
+            let pending = inbox::pending(&dirs, 10);
+            assert_eq!(pending.len(), 1);
+            assert!(matches!(store.insert(pending[0].event.as_ref().unwrap(), 1).unwrap(), Insert::Inserted(_)));
+            fs::remove_file(&pending[0].path).unwrap();
+        }
+    }
+    let events = store.project_events("fixtureproject").unwrap();
+    assert_eq!(events.len(), cases.len() * 2);
+    let (pairs, remainder) = events.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    for ((tool, command, program, established), pair) in cases.iter().zip(pairs) {
+        for (event, code, source) in [(&pair[0], 0, "tool-success"), (&pair[1], 7, "failure-message")] {
+            assert_eq!(event.kind, "command.result");
+            assert_eq!(event.evidence.tool_name.as_deref(), Some(*tool));
+            assert_eq!(event.evidence.command_class.as_deref(), Some("test"), "{command}");
+            assert_eq!(event.evidence.program.as_deref(), Some(*program), "{command}");
+            let expected = if *established { (Some(code), Some(source), None) } else { (None, None, Some("result not established")) };
+            assert_eq!((event.evidence.exit_code, event.evidence.exit_code_source.as_deref(), event.evidence.detail.as_deref()), expected, "{command}");
+        }
+    }
+    drop(store);
+    let everything = all_bytes_under(data.path());
+    let text = String::from_utf8_lossy(&everything);
+    for forbidden in ["SENTINEL_", "npm test", "printf", "node.exe", "npm.cmd", "C:/Program Files"] {
+        assert!(!text.contains(forbidden), "retained {forbidden} on disk");
+    }
+}
+
+#[test]
 fn captured_powershell_checks_flow_from_hook_to_store_without_raw_content() {
     let data = tempfile::tempdir().unwrap();
     let dirs = Dirs::new(data.path());

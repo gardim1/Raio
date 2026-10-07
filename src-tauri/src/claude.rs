@@ -86,10 +86,12 @@ pub fn relative_path(root: &Path, cwd: Option<&str>, raw: &str) -> String {
 
 /// Small lexical scan, not a shell parser: separates unquoted control operators without treating
 /// quoted/escaped arguments, descriptor redirections or PowerShell's call operator as background.
-fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool) {
+/// Unsupported constructs stop the scan: their nested syntax could desynchronise the quote state.
+fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool, bool) {
     let bytes = command.as_bytes();
     let mut segments = Vec::new();
     let (mut start, mut i, mut quote, mut background) = (0, 0, None, false);
+    let mut unmodelled = false;
     let mut previous_redirection = false;
     while i < bytes.len() {
         let c = bytes[i];
@@ -103,6 +105,20 @@ fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool) {
                 i += 2;
                 continue;
             }
+        }
+        let next = bytes.get(i + 1).copied();
+        let expansion = quote != Some(b'\'')
+            && ((c == b'$' && next == Some(b'(')) || (!powershell && c == b'`'));
+        let unquoted_construct = quote.is_none() && if powershell {
+            matches!(c, b'{' | b'}') || (c == b'@' && matches!(next, Some(b'(' | b'"' | b'\'')))
+        } else {
+            (c == b'$' && next == Some(b'\''))
+                || (matches!(c, b'<' | b'>') && next == Some(b'('))
+                || (c == b'<' && next == Some(b'<'))
+        };
+        if expansion || unquoted_construct {
+            unmodelled = true;
+            break;
         }
         if let Some(q) = quote {
             if c == q {
@@ -152,23 +168,47 @@ fn command_segments(command: &str, powershell: bool) -> (Vec<&str>, bool) {
     }
     segments.push(command[start..].trim());
     segments.retain(|s| !s.is_empty());
-    (segments, background)
+    (segments, background, unmodelled || quote.is_some())
 }
 
 /// Command class and program from a Bash command line. The command line itself is never kept.
 pub fn classify_command(command: &str) -> (String, Option<String>, bool) {
-    let (class, program, compound, background) = classify_for_tool(command, false);
-    (class, program, compound || background)
+    let (class, program, compound, background, unmodelled) = classify_for_tool(command, false);
+    (class, program, compound || background || unmodelled)
 }
 
-fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>, bool, bool) {
-    let (segments, background) = command_segments(command, powershell);
+fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>, bool, bool, bool) {
+    let (segments, background, unmodelled) = command_segments(command, powershell);
     let compound = segments.len() > 1;
     let words = |s: &str| -> Vec<String> {
-        s.split_whitespace()
-            .skip_while(|w| w.contains('=') && !w.starts_with('-'))
-            .map(|w| w.trim_matches(|c| c == '"' || c == '\'').to_lowercase())
-            .collect()
+        let mut remaining = s.trim_start();
+        // Skip simple environment prefixes, but keep a quoted executable (including spaces) whole.
+        while !remaining.is_empty() && !remaining.starts_with(['\'', '"']) {
+            let end = remaining.find(char::is_whitespace).unwrap_or(remaining.len());
+            let word = &remaining[..end];
+            if !word.contains('=') || word.starts_with('-') {
+                break;
+            }
+            remaining = remaining[end..].trim_start();
+        }
+        if remaining.is_empty() {
+            return Vec::new();
+        }
+        let end = if remaining.starts_with(['\'', '"']) {
+            // An unmatched quote is already marked unmodelled by the scan above.
+            remaining[1..].find(char::from(remaining.as_bytes()[0])).map(|i| i + 2).unwrap_or(remaining.len())
+        } else {
+            remaining.find(char::is_whitespace).unwrap_or(remaining.len())
+        };
+        let clean = |w: &str| w.trim_matches(['\'', '"']).to_lowercase();
+        let mut first = clean(&remaining[..end]);
+        if powershell {
+            let name = first.rsplit(['/', '\\']).next().unwrap_or(&first);
+            first = name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()).map(|(stem, _)| stem).unwrap_or(name).into();
+        }
+        let mut words = vec![first];
+        words.extend(remaining[end..].split_whitespace().map(clean));
+        words
     };
     let class_of = |w: &[String]| -> &'static str {
         let j = w.join(" ");
@@ -202,7 +242,7 @@ fn classify_for_tool(command: &str, powershell: bool) -> (String, Option<String>
         let name = p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string();
         name.trim_end_matches(".exe").chars().take(32).collect()
     });
-    (best.into(), program, compound, background)
+    (best.into(), program, compound, background, unmodelled)
 }
 
 /// "Exit code N" at the start of a command tool failure message.
@@ -245,14 +285,14 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
         ("PreToolUse", Some(t)) if EDIT_TOOLS.contains(&t) => ("file.edit.attempted", paths_of(file_path()), String::new()),
         ("PreToolUse" | "PostToolUse" | "PostToolUseFailure", Some(t @ ("Bash" | "PowerShell"))) => {
             let powershell = t == "PowerShell";
-            let (class, program, compound, syntax_background) = classify_for_tool(text(&input, "command").unwrap_or(""), powershell);
+            let (class, program, compound, syntax_background, unmodelled) = classify_for_tool(text(&input, "command").unwrap_or(""), powershell);
             evidence.command_class = Some(class);
             evidence.program = program;
             let background = syntax_background || input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
             let interrupted = payload.get("tool_response").and_then(|r| r.get("interrupted")).and_then(Value::as_bool).unwrap_or(false)
                 || payload.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false);
             // The tool's success/failure only reflects the check itself for a single, foreground, completed command.
-            let result_reflects_command = !compound && !background && !interrupted;
+            let result_reflects_command = !compound && !background && !interrupted && !unmodelled;
             evidence.detail = match (compound, background, interrupted) {
                 (_, _, true) => Some("interrupted".into()),
                 (_, true, _) => Some("background command".into()),
@@ -263,7 +303,7 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
                 ("command.observed", vec![], String::new())
             } else {
                 if !result_reflects_command {
-                    // Pipes, `|| true`, `; echo`, background runs and interruptions hide the check's own result.
+                    // Compound, background, interrupted or unmodelled syntax cannot establish the check's result.
                 } else if event == "PostToolUse" {
                     // Captured Bash (2.1.286) and PowerShell (2.1.292): non-zero exits arrive as PostToolUseFailure.
                     evidence.exit_code = Some(0);
@@ -274,7 +314,7 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
                     evidence.exit_code_source = Some("failure-message".into());
                 }
                 if evidence.exit_code.is_none() && evidence.detail.is_none() {
-                    // A failure without a parseable exit code establishes no numeric result.
+                    // Unsupported syntax or a failure without a parseable code establishes no numeric result.
                     evidence.detail = Some("result not established".into());
                 }
                 ("command.result", vec![], String::new())
@@ -519,10 +559,82 @@ mod tests {
     }
 
     #[test]
+    fn unmodelled_shell_syntax_never_establishes_a_check_result() {
+        for (tool, command) in [
+            ("Bash", r#"npm test "$(printf '"')" & wait"#),
+            ("Bash", r"npm test $'it\'s' & wait"),
+            ("Bash", "npm test $(printf argument)"),
+            ("Bash", "npm test `printf argument`"),
+            ("Bash", r#"npm test "`printf argument`""#),
+            ("Bash", "npm test $'argument'"),
+            ("Bash", "npm test <(printf argument)"),
+            ("Bash", "npm test >(cat)"),
+            ("Bash", "npm test <<EOF\nargument\nEOF"),
+            ("Bash", "npm test 'unfinished"),
+            ("Bash", "npm test \"unfinished"),
+            ("PowerShell", "npm test $(Write-Output argument)"),
+            ("PowerShell", r#"npm test "$(Write-Output 'argument')""#),
+            ("PowerShell", "npm test @(1, 2)"),
+            ("PowerShell", "npm test { Write-Output argument }"),
+            ("PowerShell", "npm test }"),
+            ("PowerShell", "npm test @\"\nargument\n\"@"),
+            ("PowerShell", "npm test @'\nargument\n'@"),
+            ("PowerShell", "npm test 'unfinished"),
+            ("PowerShell", "npm test \"unfinished"),
+        ] {
+            for hook in ["PostToolUse", "PostToolUseFailure"] {
+                let p = serde_json::json!({ "hook_event_name": hook, "tool_name": tool,
+                    "tool_input": { "command": command }, "error": "Exit code 7\nfailed" });
+                let e = normalize(&p, &ctx()).unwrap();
+                assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{tool}: {command}");
+                assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                    (None, None, Some("result not established")), "{hook} {tool}: {command}");
+                assert_eq!(e.validate(), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn unmodelled_syntax_preserves_previously_established_contract_details() {
+        for (command, background, interrupted, detail) in [
+            ("npm test & echo $(argument)", false, false, "background command"),
+            ("npm test; echo $(argument)", false, false, "compound command"),
+            ("npm test $(argument)", true, false, "background command"),
+            ("npm test $(argument)", true, true, "interrupted"),
+        ] {
+            let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": "Bash",
+                "tool_input": { "command": command, "run_in_background": background }, "is_interrupt": interrupted });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                (None, None, Some(detail)), "{command}");
+        }
+    }
+
+    #[test]
+    fn literal_unmodelled_syntax_remains_a_single_completed_check() {
+        for (tool, command) in [
+            ("Bash", "npm test '$(x) `x` <(x) >(x) <<EOF'"),
+            ("Bash", r#"npm test "\$(x) \`x\` $'literal' <(x) >(x) <<EOF""#),
+            ("Bash", r"npm test \$literal \`literal\` \$\'literal\' \<literal \>literal \<\<EOF"),
+            ("PowerShell", r#"npm test '$(x) @(x) {x} @"'"#),
+            ("PowerShell", r#"npm test "`$(x) @(x) {x} @'""#),
+        ] {
+            let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": tool,
+                "tool_input": { "command": command } });
+            let e = normalize(&p, &ctx()).unwrap();
+            assert_eq!((e.evidence.exit_code, e.evidence.exit_code_source.as_deref(), e.evidence.detail.as_deref()),
+                (Some(0), Some("tool-success"), None), "{tool}: {command}");
+        }
+    }
+
+    #[test]
     fn powershell_call_operator_quotes_and_backticks_are_not_background() {
         for (command, program) in [
             (r#"& "C:/x/node.exe" --test"#, "node"),
             ("& 'C:/x/node.exe' --test", "node"),
+            (r#"& "C:/Program Files/nodejs/node.exe" --test"#, "node"),
+            (r"& 'C:\x\npm.cmd' test", "npm"),
+            (r"& 'C:\Program Files\nodejs\npm.cmd' test", "npm"),
             (r#"npm test "a;b" 'x & y'"#, "npm"),
             ("npm test a`;b x`&y a`|b", "npm"),
             (r#"npm test "a`";b""#, "npm"),
@@ -534,6 +646,7 @@ mod tests {
             let e = normalize(&p, &ctx()).unwrap();
             assert_eq!((e.evidence.exit_code, e.evidence.detail.as_deref()), (Some(7), None), "{command}");
             assert_eq!(e.evidence.program.as_deref(), Some(program), "{command}");
+            assert_eq!(e.evidence.command_class.as_deref(), Some("test"), "{command}");
         }
         let p = serde_json::json!({ "hook_event_name": "PostToolUse", "tool_name": "PowerShell",
             "tool_input": { "command": "& 'C:/x/node.exe' --test &" } });
