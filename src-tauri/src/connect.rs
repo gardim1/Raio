@@ -29,6 +29,8 @@ pub struct Preview {
     pub after: String,
     /// `Some(false)`: git does not ignore the file, so it could be committed with a personal path.
     pub git_ignored: Option<bool>,
+    #[serde(default)]
+    pub usage: Option<crate::usage_connect::Preview>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -51,6 +53,8 @@ pub fn hooks_state(settings: &Value, command: &str) -> HooksState {
         let Some(index) = expected.iter().position(|h| *h == handler) else { return HooksState::Outdated };
         expected.swap_remove(index);
     }
+    if settings.get("statusLine").is_some_and(crate::usage_connect::owned)
+        && settings["statusLine"]["command"] != crate::usage_connect::command(command) { return HooksState::Outdated; }
     HooksState::Current
 }
 
@@ -93,6 +97,10 @@ fn is_raio_handler(h: &Value) -> bool {
         return false;
     }
     let Some(command) = h.get("command").and_then(Value::as_str) else { return false };
+    owned_command(command, "claude")
+}
+
+pub(crate) fn owned_command(command: &str, expected_mode: &str) -> bool {
     let command = command.trim();
     if !command.ends_with(&format!(" {MARKER}")) {
         return false;
@@ -100,7 +108,7 @@ fn is_raio_handler(h: &Value) -> bool {
     let Some(words) = handler_words(command) else { return false };
     let [exe, mode, project_flag, project, root_flag, root, marker] = words.as_slice() else { return false };
     let executable = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    matches!(executable, "raio-hook" | "raio-hook.exe") && mode == "claude"
+    matches!(executable, "raio-hook" | "raio-hook.exe") && mode == expected_mode
         && project_flag == "--project" && !project.is_empty()
         && project.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) && !project.starts_with('-')
         && root_flag == "--root" && !root.is_empty() && marker == MARKER
@@ -222,10 +230,18 @@ fn git_ignored(root: &Path, file: &Path) -> Option<bool> {
 }
 
 pub fn preview(root: &Path, command: &str) -> Result<Preview, String> {
+    preview_usage(root, command, None, &crate::usage_connect::Layers::default())
+}
+
+pub fn preview_usage(root: &Path, command: &str, options: Option<crate::usage_connect::Options>, layers: &crate::usage_connect::Layers) -> Result<Preview, String> {
     let path = settings_path(root);
     let (before, value) = read_settings(&path)?;
-    let after = serde_json::to_string_pretty(&with_raio(value, command)?).map_err(|e| e.to_string())?;
-    Ok(Preview { settings_path: path.to_string_lossy().into_owned(), before, after, git_ignored: git_ignored(root, &path) })
+    let usage = crate::usage_connect::preview(root, &value, command, options, layers);
+    let mut after_value = with_raio(value, command)?;
+    // A blocked opt-in still produces a reviewable diff, but apply refuses it until consent is explicit.
+    if usage.reason.is_none() || !usage.enabled { crate::usage_connect::apply(&mut after_value, &usage)?; }
+    let after = serde_json::to_string_pretty(&after_value).map_err(|e| e.to_string())?;
+    Ok(Preview { settings_path: path.to_string_lossy().into_owned(), before, after, git_ignored: git_ignored(root, &path), usage: Some(usage) })
 }
 
 /// Writes through a temp file and rename, after checking the file did not change since the preview.
@@ -253,18 +269,35 @@ fn backup(backup_dir: &Path, original: &str, now_ms: i64) -> Result<PathBuf, Str
 /// (outside the repository, so it cannot be committed by accident). Returns the backup path when an
 /// original existed.
 pub fn connect(root: &Path, command: &str, previewed: &Preview, backup_dir: &Path, now_ms: i64) -> Result<Option<PathBuf>, String> {
+    connect_usage(root, command, previewed, backup_dir, now_ms, &crate::usage_connect::Layers::discover())
+}
+
+pub fn connect_usage(root: &Path, command: &str, previewed: &Preview, backup_dir: &Path, now_ms: i64, layers: &crate::usage_connect::Layers) -> Result<Option<PathBuf>, String> {
     let path = settings_path(root);
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let (current, value) = read_settings(&path)?;
     if current != previewed.before {
         return Err("settings.local.json changed since the preview; review the new diff".into());
     }
-    let after = serde_json::to_string_pretty(&with_raio(value, command)?).map_err(|e| e.to_string())?;
+    let mut updated = with_raio(value.clone(), command)?;
+    if let Some(approved) = &previewed.usage {
+        let options = crate::usage_connect::Options { enabled: approved.enabled, replace_existing: approved.replace_existing };
+        let current_usage = crate::usage_connect::preview(root, &value, command, Some(options), layers);
+        if current_usage != *approved { return Err("Status line settings changed since the preview; review the new diff".into()) }
+        crate::usage_connect::apply(&mut updated, &current_usage)?;
+    } else if value.get("statusLine").is_some_and(crate::usage_connect::owned) {
+        return Err("Review the usage opt-in before reconnecting this project".into());
+    }
+    let after = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
     if after != previewed.after {
         return Err("settings.local.json changed since the preview; review the new diff".into());
     }
     let saved = current.as_deref().map(|original| backup(backup_dir, original, now_ms)).transpose()?;
     write_checked(&path, &current, &after)?;
+    if previewed.usage.is_some() {
+        crate::usage_connect::save_receipt(root, backup_dir, updated.get("statusLine").filter(|_| previewed.usage.as_ref().is_some_and(|p| p.enabled)))
+            .map_err(|reason| format!("Project settings were saved, but {reason}. Review the connection again."))?;
+    }
     Ok(saved)
 }
 
@@ -274,18 +307,83 @@ pub fn disconnect(root: &Path, backup_dir: &Path, now_ms: i64) -> Result<(), Str
     let path = settings_path(root);
     let (before, value) = read_settings(&path)?;
     let Some(original) = before.clone() else { return Ok(()) };
-    let cleaned = without_raio(value.clone());
+    let mut cleaned = without_raio(value.clone());
+    if value.get("statusLine").is_some_and(|v| crate::usage_connect::receipt_matches(root, backup_dir, v)) {
+        crate::usage_connect::remove_owned(&mut cleaned);
+    }
     if cleaned == value {
-        return Ok(());
+        return crate::usage_connect::save_receipt(root, backup_dir, None);
     }
     backup(backup_dir, &original, now_ms)?;
     let after = serde_json::to_string_pretty(&cleaned).map_err(|e| e.to_string())?;
-    write_checked(&path, &before, &after)
+    write_checked(&path, &before, &after)?;
+    crate::usage_connect::save_receipt(root, backup_dir, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_exposes_a_separate_disabled_usage_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = preview(dir.path(), CMD).unwrap();
+        let value = serde_json::to_value(p).unwrap();
+        assert_eq!(value["usage"]["enabled"], false);
+        assert_eq!(value["usage"]["effective"], "none");
+        assert!(value["after"].as_str().unwrap().find("statusLine").is_none());
+    }
+
+    #[test]
+    fn usage_apply_rechecks_inherited_line_and_exact_diff_then_backs_up_only_local_settings() {
+        use crate::usage_connect::{Layers, Options};
+        let project = tempfile::tempdir().unwrap(); let private = tempfile::tempdir().unwrap();
+        let user = private.path().join("user.json"); let backups = private.path().join("backups");
+        let layers = Layers { user:Some(user.clone()), managed:None, receipts:None };
+        fs::write(&user, r#"{"env":{"secret":"PRIVATE"},"statusLine":{"type":"command","command":"mine"}}"#).unwrap();
+        let original = fs::read(&user).unwrap();
+        let options = Some(Options { enabled:true, replace_existing:false });
+        let blocked = preview_usage(project.path(), CMD, options, &layers).unwrap();
+        assert!(connect_usage(project.path(), CMD, &blocked, &backups, 1, &layers).is_err());
+        assert!(!settings_path(project.path()).exists());
+        let options = Some(Options { enabled:true, replace_existing:true });
+        let p = preview_usage(project.path(), CMD, options, &layers).unwrap();
+        fs::write(&user, r#"{"statusLine":{"type":"command","command":"newer"}}"#).unwrap();
+        assert!(connect_usage(project.path(), CMD, &p, &backups, 2, &layers).is_err());
+        fs::write(&user, &original).unwrap();
+        let mut forged = preview_usage(project.path(), CMD, options, &layers).unwrap(); forged.after = "{}".into();
+        assert!(connect_usage(project.path(), CMD, &forged, &backups, 3, &layers).is_err());
+        connect_usage(project.path(), CMD, &p, &backups, 4, &layers).unwrap();
+        let current: Value = serde_json::from_str(&fs::read_to_string(settings_path(project.path())).unwrap()).unwrap();
+        assert_eq!(hooks_state(&current, CMD), HooksState::Current);
+        assert_eq!(hooks_state(&current, &CMD.replace("C:/Raio", "C:/NewRaio")), HooksState::Outdated);
+        let p = preview_usage(project.path(), &CMD.replace("C:/Raio", "C:/NewRaio"), None, &layers).unwrap();
+        connect_usage(project.path(), &CMD.replace("C:/Raio", "C:/NewRaio"), &p, &backups, 5, &layers).unwrap();
+        assert_eq!(fs::read_dir(&backups).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|ext| ext == "bak")).count(), 1);
+        assert_eq!(fs::read(&user).unwrap(), original);
+        disconnect(project.path(), &backups, 6).unwrap();
+        assert_eq!(fs::read(&user).unwrap(), original);
+    }
+
+    #[test]
+    fn disconnect_removes_only_the_exact_generated_statusline_shape() {
+        let dir = tempfile::tempdir().unwrap(); let backups = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        let ours = json!({"type":"command","command":CMD.replacen(" claude ", " statusline ", 1)});
+        fs::write(settings_path(dir.path()), json!({"statusLine":ours}).to_string()).unwrap();
+        crate::usage_connect::save_receipt(dir.path(), backups.path(), Some(&ours)).unwrap();
+        disconnect(dir.path(), backups.path(), 1).unwrap();
+        let restored: Value = serde_json::from_str(&fs::read_to_string(settings_path(dir.path())).unwrap()).unwrap();
+        assert!(restored.get("statusLine").is_none());
+        for user in [json!({"type":"command","command":"echo --raio-managed"}),
+            json!({"type":"command","command":ours["command"],"padding":0}),
+            json!({"type":"command","command":ours["command"].as_str().unwrap().replace("--project p", "--project changed")})] {
+            crate::usage_connect::save_receipt(dir.path(), backups.path(), Some(&ours)).unwrap();
+            let text = json!({"statusLine":user}).to_string(); fs::write(settings_path(dir.path()), &text).unwrap();
+            disconnect(dir.path(), backups.path(), 2).unwrap();
+            assert_eq!(fs::read_to_string(settings_path(dir.path())).unwrap(), text);
+        }
+    }
 
     const CMD: &str = "\"C:/Raio/raio-hook.exe\" claude --project p --root \"C:/work/app\" --raio-managed";
 

@@ -47,7 +47,18 @@ export interface ConnectPreview {
   readonly after: string;
   /** false: git would not ignore the file, so it could be committed with a personal path. null: unknown. */
   readonly gitIgnored: boolean | null;
+  readonly usage?: {
+    readonly enabled: boolean;
+    readonly replaceExisting: boolean;
+    readonly effective: 'none' | 'raio' | 'user' | 'shared-project' | 'project-local' | 'managed' | 'unavailable';
+    readonly fingerprint: string;
+    readonly before: unknown | null;
+    readonly after: unknown | null;
+    readonly reason: string | null;
+  };
 }
+
+export interface UsageOptIn { readonly enabled: boolean; readonly replaceExisting: boolean }
 
 export interface ConnectedProject {
   readonly id: string;
@@ -60,7 +71,7 @@ export interface Connector {
   /** The connected project, or null. Stable between notifications of `subscribe`. */
   project(): ConnectedProject | null;
   chooseFolder(): Promise<string | null>;
-  preview(root: string): Promise<ConnectPreview>;
+  preview(root: string, usage?: UsageOptIn): Promise<ConnectPreview>;
   connect(root: string, preview: ConnectPreview): Promise<void>;
   disconnect(): Promise<void>;
 }

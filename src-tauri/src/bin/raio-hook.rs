@@ -102,6 +102,35 @@ fn run(dirs: &inbox::Dirs, guard: &Guard) {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "statusline") {
+        std::panic::set_hook(Box::new(|_| {}));
+        // Usage is not an event: timeout, malformed input and panic never create drop markers.
+        thread::spawn(|| { thread::sleep(hard_deadline()); std::process::exit(0); });
+        let _ = std::panic::catch_unwind(|| {
+            let Some((project, root)) = raio_lib::usage::arguments(&args) else { return };
+            let Some(data) = paths::data_dir() else { return };
+            stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
+            if !inbox::heartbeat_fresh(&inbox::Dirs::new(&data), SystemTime::now()) { return }
+            let Ok(exe) = std::env::current_exe() else { return };
+            let root = PathBuf::from(root);
+            let command = raio_lib::connect::hook_command(&exe, project, &root);
+            if !raio_lib::usage_connect::reader_enabled(&root, &command) { return }
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if std::io::stdin().take(raio_lib::usage::MAX_INPUT + 1).read_to_end(&mut bytes).is_ok() { let _ = tx.send(bytes); }
+            });
+            if let Ok(bytes) = rx.recv_timeout(READ_DEADLINE)
+                && let Some(snapshot) = raio_lib::usage::parse(&bytes, project, raio_lib::usage::clock_ms()) {
+                stall("RAIO_HOOK_STALL_WRITE_MS");
+                if raio_lib::usage_connect::reader_enabled(&root, &command) {
+                    let _ = raio_lib::usage::write(&data, &snapshot);
+                }
+            }
+        });
+        std::process::exit(0);
+    }
     // Built before the watchdog starts, so the watchdog can leave a marker without touching anything else.
     let dirs = Arc::new(paths::data_dir().map(|data| inbox::Dirs::new(&data)));
     let guard = Arc::new(Guard::default());
