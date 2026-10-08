@@ -6,6 +6,7 @@ import type { ProjectHooksState } from '../platform/desktopBridge';
 import { freezeClock } from '../shared/motion/frozenClock';
 import { applyTokens } from '../tokens/applyTokens';
 import { HarnessApp } from './HarnessApp';
+import { setCharacterFrozenTime, setCharacterRandom } from '../features/raio/character/runtime';
 import '../app/styles/raio.css';
 import './harness.css';
 
@@ -15,6 +16,7 @@ applyTokens();
 const params = new URLSearchParams(window.location.search);
 const t = params.get('t');
 freezeClock(t === null ? null : Number(t));
+if (t !== null) { setCharacterRandom(() => .5); setCharacterFrozenTime(Number(t)); }
 
 // ?feed=steady|burst serves the demo session as a simulated live feed (events appended over time) so the
 // live director can be exercised without an agent. With ?t= the feed clock is frozen at that many seconds.

@@ -5,6 +5,17 @@ import { factsFromEvents, factsFromLog } from './presenceFacts';
 
 const event = (seq: number, kind: RaioEvent['kind'], extra: Partial<RaioEvent> = {}): RaioEvent => ({ schema: 1, id: String(seq), projectId: 'p', sessionId: 's', agent: 'claude', source: 'claude-hook', provenance: 'agent-reported', attribution: 'session', observedAt: seq * 1000, seq, kind, paths: [], evidence: {}, ...extra });
 describe('presence at the recorded-event boundary', () => {
+  it('distinguishes a hook or fixture turn end without changing activity recency or ending the session', () => {
+    for (const source of ['claude-hook', 'fixture'] as const) {
+      const facts = factsFromEvents([event(1, 'session.started'), event(2, 'turn.ended', { source })], 'p');
+      expect(facts.map(f => f.kind)).toEqual(['start', 'turn-end']);
+      const input = { connected: true, available: true, facts };
+      const original = { ...input, facts: facts.map(f => f.kind === 'turn-end' ? { ...f, kind: 'activity' as const } : f) };
+      expect(deriveCompanionPresence(input, 2001)).toEqual(deriveCompanionPresence(original, 2001));
+      expect(deriveCompanionPresence(input, 2001).activeUntil).toBe(32_000);
+      expect(deriveCompanionPresence(input, 32_000).state).toBe('connected');
+    }
+  });
   it('pairs a failure-message result to its observed check without inventing a numeric result', () => {
     const facts = factsFromEvents([event(1, 'command.observed', { evidence: { commandClass: 'test', toolUseId: 't' } }), event(2, 'command.result', { evidence: { toolUseId: 't', exitCode: 7, exitCodeSource: 'failure-message' } })], 'p');
     const presence = deriveCompanionPresence({ connected: true, available: true, facts }, 60_000, 'UTC');

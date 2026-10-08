@@ -15,35 +15,41 @@ const rule = (selector: string): string => {
   return match[1] ?? '';
 };
 
-describe('bounded idle float (BOB-1)', () => {
-  it('plays about 30 s: 10 iterations of the original 3 s period', () => {
+describe('quiet rest replaces BOB-1 drawing, without changing presence recency', () => {
+  it('preserves the legacy 30 s exports used by companion activity', () => {
     expect(BOB_PERIOD_SECONDS).toBe(3);
     expect(BOB_ITERATIONS).toBe(10);
     expect(BOB_TOTAL_SECONDS).toBe(30);
   });
 
-  it('keeps keyframes, easing and period, only bounding the iteration count', () => {
-    const body = rule('.mini-orb--bob');
-    expect(body).toContain(`animation: raio-bob ${BOB_PERIOD_SECONDS}s ease-in-out ${BOB_ITERATIONS}`);
-    expect(body).not.toMatch(/infinite/);
-    expect(css).toMatch(/@keyframes raio-bob \{ 50% \{ transform: translateY\(-3px\); \} \}/);
+  it('removes the CSS float drawing and leaves the wrapper without an animation', () => {
+    expect(rule('.mini-orb')).not.toMatch(/animation|gradient/);
+    expect(css).not.toContain('@keyframes raio-bob');
+    expect(css).not.toMatch(/\.mini-orb--bob\s*\{/);
   });
 
-  it('still has no float under reduced motion', () => {
-    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-    expect(reduced).toMatch(/\.mini-orb--bob[^{]*\{[^}]*animation: none/);
+  it('uses no CSS animation for the shared SVG, including reduced motion', () => {
+    expect(rule('.raio-char')).not.toMatch(/animation/);
+    expect(rule('.mini-orb > .raio-char')).not.toMatch(/animation/);
   });
 });
 
 describe('MiniOrb', () => {
-  it('bobs only when asked', () => {
-    expect(renderToStaticMarkup(createElement(MiniOrb, { bob: true }))).toContain('mini-orb--bob');
-    expect(renderToStaticMarkup(createElement(MiniOrb, {}))).not.toContain('mini-orb--bob');
+  it('keeps its drag exclusion wrapper and accepts old props without starting a float', () => {
+    const markup = renderToStaticMarkup(createElement(MiniOrb, { bob: true, size: 14, glow: 1, warm: 1, restartKey: 'old' }));
+    expect(markup).toContain('class="mini-orb"');
+    expect(markup).toContain('width:14px;height:14px;--raio-char-box:28px');
+    expect(markup).toContain('raio-char--island');
+    expect(markup).toContain('data-character-mode="idle"');
+    expect(markup).not.toContain('mini-orb--bob');
   });
 });
 
-it.each(['connected', 'attention', 'failure', 'unknown', 'disconnected'] as const)('bounded float respects bob alone for %s presence', state => {
+it.each(['connected', 'attention', 'failure', 'unknown', 'disconnected', 'working'] as const)('character follows %s presence independently of legacy bob', state => {
   const companion = { state, label: state, description: state, records: [], activeUntil: null };
-  expect(renderToStaticMarkup(createElement(MiniOrb, { bob: true, companion }))).toContain('mini-orb--bob');
-  expect(renderToStaticMarkup(createElement(MiniOrb, { bob: false, companion }))).not.toContain('mini-orb--bob');
+  const markup = renderToStaticMarkup(createElement(MiniOrb, { bob: true, companion }));
+  expect(markup).not.toContain('mini-orb--bob');
+  expect(markup).toContain(`data-presence="${state}"`);
+  expect(markup).toContain(`data-character-mode="${state === 'connected' || state === 'unknown' || state === 'disconnected' ? 'idle' : state}"`);
+  expect(markup).toBe(renderToStaticMarkup(createElement(MiniOrb, { bob: false, companion })));
 });

@@ -5,9 +5,10 @@ import { DesktopBackdrop } from './DesktopBackdrop';
 import { FilmMode } from './FilmMode';
 import { type HarnessView, MODES, ModeDock } from './ModeDock';
 import { StatesGallery } from './StatesGallery';
+import { CharacterBench } from './CharacterBench';
 
 /** Development-only review harness around the product app. Never shipped. */
-const VIEWS: readonly HarnessView[] = ['film', 'island', 'mini', 'expanded', 'states'];
+const VIEWS: readonly HarnessView[] = ['film', 'island', 'mini', 'expanded', 'states', 'character'];
 const initialView = (): HarnessView => {
   const v = new URLSearchParams(window.location.search).get('view');
   return VIEWS.find((x) => x === v) ?? 'expanded';
@@ -39,7 +40,7 @@ export const HarnessApp = () => {
 
   // Keep the dock in sync when the product itself changes surface (e.g. "Pin as mini player").
   useEffect(() => {
-    setView((v) => (v === 'film' || v === 'states' ? v : mode));
+    setView((v) => (v === 'film' || v === 'states' || v === 'character' ? v : mode));
   }, [mode]);
 
   useEffect(() => {
@@ -65,7 +66,8 @@ export const HarnessApp = () => {
           <StatesGallery />
         </div>
       )}
-      {view !== 'film' && view !== 'states' && <App underlay={<DesktopBackdrop />} />}
+      {view === 'character' && <CharacterBench />}
+      {view !== 'film' && view !== 'states' && view !== 'character' && <App underlay={<DesktopBackdrop />} />}
       {showChrome && <ModeDock mode={view} onMode={show} onRunLive={simulatedFeed ? () => window.location.reload() : restartLive} onViewChanges={startReplay} />}
     </>
   );

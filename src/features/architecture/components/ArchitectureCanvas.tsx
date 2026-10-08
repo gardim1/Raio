@@ -57,7 +57,8 @@ export const ArchitectureCanvas = ({
   const riskByNode = new Map(frame.risks.map((r) => [r.cue.nodeId, r]));
   const orbSize = variant === 'mini' ? 1.5 : 1;
   const behind = frame.orb.behindNodeId !== null;
-  const orb = <RaioOrb frame={frame.orb} idPrefix={idPrefix} sizeMultiplier={orbSize} />;
+  // A stable sibling key preserves the engine when it moves behind/in front of nodes.
+  const orb = <RaioOrb key="raio-character" frame={frame.orb} ui={frame.ui} idPrefix={idPrefix} sizeMultiplier={orbSize} />;
 
   return (
     <svg className={className} viewBox={fit === 'content' ? contentViewBox(graph) : `0 0 ${width} ${height}`} role="img" aria-label={label}>

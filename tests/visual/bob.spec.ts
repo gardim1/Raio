@@ -1,24 +1,39 @@
 import { expect, test } from '@playwright/test';
 
-/** BOB-1: the idle float is a finite ~30 s animation (10 x 3 s) and rests at its base position afterwards. */
-test('idle orb float is bounded to 10 iterations of 3 s, then rests', async ({ page }) => {
-  await page.goto('/harness.html?view=island&t=11'); // finished session: collapsed Island, orb idle
+/** C-CHAR supersedes the finite BOB-1 float: rest is quiet immediately. */
+test('idle Island character retains connected presence with no CSS float', async ({ page }) => {
+  await page.goto('/harness.html?view=island&t=11');
   await page.evaluate(() => document.fonts.ready);
-  const orb = page.locator('.island__closed .mini-orb--bob');
+  const orb = page.locator('.island .mini-orb');
   await expect(orb).toHaveCount(1);
-
-  const timing = await orb.evaluate((el) => {
-    const a = el.getAnimations().find((x) => (x as CSSAnimation).animationName === 'raio-bob');
-    const t = a?.effect?.getComputedTiming();
-    return { found: !!a, iterations: t?.iterations, duration: t?.duration, endTime: t?.endTime };
-  });
-  expect(timing).toEqual({ found: true, iterations: 10, duration: 3000, endTime: 30000 });
-
-  // Jump to the end instead of waiting 30 s: no running float, transform back at rest.
+  await expect(orb).toHaveAttribute('data-presence', 'connected');
+  await expect(orb.locator('[data-character-mode]')).toHaveAttribute('data-character-mode', 'idle');
+  await expect(page.locator('.mini-orb--bob')).toHaveCount(0);
   const rest = await orb.evaluate((el) => {
-    el.getAnimations().forEach((a) => a.finish());
-    return { running: el.getAnimations().length, transform: getComputedStyle(el).transform };
+    return { running: el.getAnimations().length, transform: getComputedStyle(el).transform, animation: getComputedStyle(el).animationName };
   });
   expect(rest.running).toBe(0);
+  expect(rest.animation).toBe('none');
   expect(['none', 'matrix(1, 0, 0, 1, 0, 0)']).toContain(rest.transform);
+});
+
+test('live idle character bench settles all sizes and stops requesting frames', async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as Window & { characterFrameRequests?: number };
+    target.characterFrameRequests = 0;
+    const request = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = callback => { target.characterFrameRequests = (target.characterFrameRequests ?? 0) + 1; return request(callback); };
+  });
+  // Deliberately no ?t= or capture: this verifies the live loop's idle behavior.
+  await page.goto('/harness.html?view=character&chrome=0');
+  await page.evaluate(() => document.fonts.ready);
+  const bodies = page.locator('.character-bench .raio-char__body');
+  await expect(bodies).toHaveCount(3);
+  const poses = () => bodies.evaluateAll(elements => elements.map(element => element.getAttribute('transform')));
+  const requests = () => page.evaluate(() => (window as Window & { characterFrameRequests?: number }).characterFrameRequests ?? 0);
+  const before = await poses(), frames = await requests();
+  await page.waitForTimeout(250);
+  expect(await poses()).toEqual(before);
+  expect(await requests()).toBe(frames);
+  await expect(page.locator('[data-character-mode="idle"]')).toHaveCount(3);
 });
