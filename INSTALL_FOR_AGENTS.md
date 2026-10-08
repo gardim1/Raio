@@ -28,10 +28,13 @@ entirely on the user's computer. No account, no cloud service, no telemetry, no 
 1. Ask the user for the folder they want to open (or use the current working folder **only if the user said so**).
    Do not look through their disk, shell history, windows or other repositories to guess a project.
 2. Find the release to install. Open `https://github.com/gardim1/Raio/releases` (or `gh release list -R gardim1/Raio`)
-   and use an explicit version tag such as `v0.1.0-alpha.1`; do not rely on "latest" (alphas are pre-releases).
+   and use an explicit version tag; do not rely on "latest" (alphas are pre-releases). The current release is the
+   experimental pre-release **v0.1.0-alpha.1** (https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.1), built
+   from commit 6190276; its assets are `raio-v0.1.0-alpha.1-windows-x64.zip`, `install-raio.ps1` and
+   `SHA256SUMS-v0.1.0-alpha.1.txt`.
    **If no release is listed yet**, stop and tell the user; offer to build from source instead (needs Node 20.19+,
    Rust stable with MSVC and Git): `git clone https://github.com/gardim1/Raio.git`, `npm ci`, `npm run app:build`, then
-   `src-tauri	argeteleaseaio.exe --project "<folder>"`.
+   `src-tauri\target\release\raio.exe --project "<folder>"`.
 3. Download the installer script of that release and show it to the user before running it:
 
    ```powershell
@@ -46,7 +49,7 @@ entirely on the user's computer. No account, no cloud service, no telemetry, no 
 4. Run it for this process only (it never changes the machine's execution policy):
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\install-raio.ps1" -Version $v -Project "C:\path	o\project"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\install-raio.ps1" -Version $v -Project "C:\path\to\project"
    ```
 
    The script downloads the release zip and its SHA256 manifest from the same release, checks the hash before

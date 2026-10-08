@@ -1,20 +1,63 @@
 # Raio
 
+**Experimental Windows alpha · Claude Code**
+
 **See where your AI coding agent worked.** Raio is a small Windows companion that follows a Claude Code session in
 your project and shows it as a calm, animated map: which areas the agent read and changed, factual notices, what Raio
-could actually observe about the checks it ran, and a short replay when it finishes.
+could actually observe about the checks it ran, and a short replay when it finishes. Everything stays on your
+computer: no account, no cloud service, no telemetry, no model API of its own.
 
-![Raio's expanded view after a Claude Code session in a synthetic demo project: the project's areas, the two that were
-changed highlighted, a failed command shown in red with its source, and the session timeline](docs/images/raio-expanded.png)
+**Download:** [Raio 0.1.0-alpha.1 pre-release](https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.1) ·
+[installer `install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/install-raio.ps1) ·
+[portable zip](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/raio-v0.1.0-alpha.1-windows-x64.zip)
+(unsigned; Windows may warn)
 
-*Real app, synthetic demo project.*
+![Raio's expanded view after a Claude Code session in a synthetic demo project: the areas the agent touched, a
+migration file flagged for review, build and test results it observed, and the session timeline](docs/images/raio-expanded.png)
 
-Everything stays on your computer: no account, no cloud service, no telemetry, no model API of its own.
+*Current build with a synthetic demo project, rendered in the development preview (the Windows app shows its — □ ×
+window controls where this preview draws three dots).*
 
-> **Alpha, in development.** Windows 10/11 x64 only, unsigned. Raio follows **Claude Code** sessions. Codex (or any
-> other agent) can install and open Raio, but Raio does **not** observe Codex sessions. macOS and Linux have not been
-> tested. **Status: source code available; the Windows alpha download is being prepared** — until a release is listed
-> on the [Releases page](https://github.com/gardim1/Raio/releases), build it from source (below).
+> **Experimental alpha.** Windows 10/11 x64 only, unsigned, not stable. Raio observes **Claude Code** sessions only
+> (Codex or other agents can install and open Raio, but their sessions are not observed). The optional Claude plan
+> usage display depends on Claude Code's status line and can be unavailable or out of date. The "fixed check"
+> celebration exists only in the developer preview. macOS and Linux are not validated.
+
+## Install (Windows)
+
+Requirements: Windows 10/11 x64 and the Microsoft WebView2 runtime (present on current Windows); Claude Code for
+monitoring. Per user, no administrator rights:
+
+1. Download [`install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/install-raio.ps1)
+   and read it.
+2. In PowerShell, from the folder where you saved it:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-raio.ps1 -Version 0.1.0-alpha.1 -Project "C:\path\to\project"
+   ```
+
+   It downloads the zip and `SHA256SUMS-v0.1.0-alpha.1.txt` from the release, checks the zip's SHA256 before
+   extracting (integrity against that manifest, not a signature), installs to `%LOCALAPPDATA%\Programs\Raio` and opens
+   Raio's Connect preview for that folder. Without `-Project` it only installs.
+
+Portable alternative: extract the zip anywhere and run `raio.exe` (keep `raio-hook.exe` next to it).
+
+**Ask your local coding agent to do it** (Claude Code or Codex running on your own Windows machine, not in the cloud):
+
+> Install Raio from https://github.com/gardim1/Raio following its INSTALL_FOR_AGENTS.md and open it on this folder.
+> Show me which hooks it will add before anything is connected.
+
+### Build from source (contributors)
+
+Node 20.19+, Rust stable with MSVC, WebView2 runtime:
+
+```powershell
+git clone https://github.com/gardim1/Raio.git
+cd Raio
+npm ci
+npm run app:build          # src-tauri\target\release\raio.exe and raio-hook.exe
+npm run app                # opens the release build
+```
 
 ## What it shows
 
@@ -36,26 +79,6 @@ Everything stays on your computer: no account, no cloud service, no telemetry, n
 Colour always comes with a label: neutral when connected and quiet, blue while the agent works, amber for something
 worth a look (a migration file added, a dependency manifest changed), red for an observed failure, and its own
 "unknown" / "not connected" state when Raio has no data. "No checks observed" means Raio saw none, not that none ran.
-
-## Install (Windows)
-
-**Download: being prepared.** When the alpha release exists, it will include `install-raio.ps1`, a versioned zip and a
-`SHA256SUMS` file; the steps will be published here and in [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
-
-Until then, build it from source (Node 20.19+, Rust stable with MSVC, WebView2 runtime):
-
-```powershell
-git clone https://github.com/gardim1/Raio.git
-cd Raio
-npm ci
-npm run app:build          # src-tauri\target\release\raio.exe and raio-hook.exe
-npm run app                # opens the release build
-```
-
-**Ask your local coding agent to do it** (Claude Code or Codex running on your own Windows machine, not in the cloud):
-
-> Install Raio from https://github.com/gardim1/Raio following its INSTALL_FOR_AGENTS.md and open it on this folder.
-> Show me which hooks it will add before anything is connected.
 
 ## First use
 
@@ -117,8 +140,9 @@ else from the status line input is stored or logged.
 
 ## Known limitations (alpha)
 
-- Windows only, tested on one Windows 11 machine (96 dpi, one monitor). No other machine, scaling or multi-monitor
-  setup was tested for this alpha.
+- Windows only, tested on one Windows 11 machine. For this build the native checks with a real mouse (Island hover
+  and click-through, tray, close-to-tray and restore, window borders), other display scalings, multiple monitors or a
+  top taskbar were not exercised; automated browser and Rust tests pass.
 - Follows Claude Code only. Edits are shown as "reported and consistent on disk", never as proven authorship; changes
   you make at the same time may be mixed in and are marked "author unknown".
 - A command's result is trusted only for a single simple command; pipes, chains and background commands show
@@ -126,7 +150,9 @@ else from the status line input is stored or logged.
   failed" while the check summary can still say "No checks observed".
 - Area grouping, technology hints and notices (e.g. "migration file added") are path-name heuristics; a migration
   file added is not a migration that ran.
-- Resource use is measured, not guaranteed: on the test machine idle CPU was about 1.2–2.2% of one core and the app
+- Plan usage (optional) is verified once on Claude Code 2.1.294 with a Team plan; it is as fresh as the last Claude
+  Code response and may be unavailable. The "fixed check" celebration is developer-preview only.
+- Resource use is measured, not guaranteed: on an earlier build idle CPU was about 1.2–2.2% of one core and the app
   plus its WebView2 processes used about 375–400 MB working set (90–107 MB private), above the project's own target of
   under 1% and 150 MB. Details in [`docs/STATUS.md`](docs/STATUS.md).
 - Unsigned build, no auto-update, no installer UI.
