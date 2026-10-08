@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 import { HEURISTIC_NOTE } from '../features/project/classifyPath';
 import type { RaioEvent } from '../features/ingest/raioEvent';
 import { createNativeBridge, type NativeIpc } from './nativeBridge';
+import { deriveSidebarState } from '../features/panel/sidebarState';
 
 const project = { id: 'p1', name: 'acme-mini', root: 'C:/work/acme-mini' };
 
@@ -307,5 +308,124 @@ describe('native bridge: relisting the project', () => {
     fake.ingest();
     await advance(600_000);
     expect(calls).toBe(1);
+  });
+});
+
+describe('native bridge: listing failure reasons', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => vi.useRealTimers());
+  const advance = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+  const failures = [
+    { error: '  Access is denied. (os error 5)  ', expected: 'Access is denied. (os error 5)' },
+    { error: new Error('permission denied (os error 13)'), expected: 'permission denied (os error 13)' },
+    { error: 'os error 5', expected: 'os error 5' },
+    { error: '  Inventory command unavailable  ', expected: 'Inventory command unavailable' },
+    { error: 'Read/write failure for relative/path.ts', expected: 'Read/write failure for relative/path.ts' },
+    { error: 'Cannot list "C:\\Users\\Fixture Person\\ação project": Access is denied. (os error 5)', expected: 'Cannot list "[folder]": Access is denied. (os error 5)' },
+    { error: 'Cannot read C:/Users/Other Person/private: device offline', expected: 'Cannot read [folder]: device offline' },
+    { error: 'Cannot read "/home/other person/private": permission denied', expected: 'Cannot read "[folder]": permission denied' },
+    { error: 'Cannot read \\\\server\\personal share\\private: device offline', expected: 'Cannot read [folder]: device offline' },
+    { error: 'Cannot read file:///C:/Users/Other%20Person/private: device offline', expected: 'Cannot read [folder]: device offline' },
+    { error: 'Cannot read /Users/Other Person/private: device offline', expected: 'Cannot read [folder]: device offline' },
+    { error: 'Cannot read /home/Private:Secret/data: device offline', expected: 'Cannot read [folder]: device offline' },
+    { error: 'Cannot read \\\\?\\C:\\Users\\Private\\data: device offline', expected: 'Cannot read [folder]: device offline' },
+    ...["O'Connor", 'Personal, private', 'Personal (private)', 'Personal;private'].map(folder => ({
+      error: `Cannot list C:\\Users\\${folder}\\Private Project: Access is denied. (os error 5)`,
+      expected: 'Cannot list [folder]: Access is denied. (os error 5)',
+    })),
+    { error: 'Cannot list "C:\\Users\\O\'Connor\\Private Project": Access is denied', expected: 'Cannot list "[folder]": Access is denied' },
+    { error: "Cannot list '/home/O'Connor/Private Project': permission denied", expected: "Cannot list '[folder]': permission denied" },
+    { error: "Cannot list '/home/O' Connor/Private Project': permission denied", expected: "Cannot list '[folder]': permission denied" },
+    { error: "Cannot list '/home/O',Connor/Private Project': permission denied", expected: "Cannot list '[folder]': permission denied" },
+    { error: '', expected: null }, { error: ' \n\t ', expected: null }, { error: new Error(''), expected: null },
+    { error: { message: 'private data must not be stringified' }, expected: null },
+  ];
+  it.each(failures)('forwards a trimmed, path-free reason: $expected', async ({ error, expected }) => {
+    const connected = { ...project, root: 'C:/Users/Fixture Person/ação project' };
+    const fake = fakeIpc({ events: () => [], projects: () => [connected], inventory: () => Promise.reject(error) });
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 5_000, []);
+    await advance();
+    const map = bridge.currentProjectMap()!;
+    expect(map.listing).toBe('unavailable');
+    expect(map.listingDetails?.unavailableReason).toBe(expected);
+    expect(deriveSidebarState({ snapshot: map }).message).toBe(expected ?? 'The project listing is unavailable.');
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(/Fixture Person|Other Person|personal share/);
+  });
+
+  it('bounds long reasons after redacting paths, without inventing access denial', async () => {
+    const fake = fakeIpc({ events: () => [], inventory: () => Promise.reject('Device unavailable: ' + 'x'.repeat(1_000) + ' C:/Users/Private/data') });
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 5_000, []);
+    await advance();
+    const reason = bridge.currentProjectMap()!.listingDetails!.unavailableReason!;
+    expect(reason.length).toBeLessThanOrEqual(240);
+    expect(reason).toMatch(/^Device unavailable: x/);
+    expect(reason).not.toMatch(/denied|Users|Private/);
+  });
+
+  it('clears the reason when a retry succeeds and retains stale-listing semantics on later failure', async () => {
+    let attempt = 0, now = 0;
+    const events: RaioEvent[] = [];
+    const fake = fakeIpc({ events: () => events, inventory: () => ++attempt === 2 ? Promise.resolve(INVENTORY) : Promise.reject('Access is denied. (os error 5)') });
+    const bridge = createNativeBridge('expanded', fake.ipc, () => now, 5_000, [30_000]);
+    await advance();
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toContain('Access is denied');
+    await advance(30_000);
+    expect(bridge.currentProjectMap()?.listing).toBe('ready');
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBeNull();
+    now = 40_000;
+    events.push(event(1, 'file.changed', { sessionId: undefined, source: 'fs-watch', attribution: 'unassigned' }));
+    fake.ingest(); await advance();
+    expect(bridge.currentProjectMap()?.listingDetails).toMatchObject({ stale: true, unavailableReason: null });
+    expect(deriveSidebarState({ snapshot: bridge.currentProjectMap()! }).warnings.join(' ')).toContain('latest relisting failed');
+  });
+
+  it('ignores a timed-out rejection after a newer retry has failed differently', async () => {
+    let rejectFirst!: (error: unknown) => void, attempt = 0;
+    const fake = fakeIpc({ events: () => [], inventory: () => ++attempt === 1 ? new Promise((_resolve, reject) => { rejectFirst = reject; }) : Promise.reject('Device offline') });
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 5_000, [30_000]);
+    await advance(5_000);
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBeNull();
+    await advance(30_000);
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBe('Device offline');
+    rejectFirst('Access is denied. (os error 5)'); await advance();
+    fake.ingest(); await advance();
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBe('Device offline');
+  });
+
+  it('clears the old reason on project switch and ignores the previous project rejection', async () => {
+    let projects = [project], rejectOld!: (error: unknown) => void;
+    const fake = fakeIpc({ events: () => [], projects: () => projects, inventory: () => projects[0] === project
+      ? new Promise((_resolve, reject) => { rejectOld = reject; }) : Promise.reject('Device offline') });
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 5_000, []);
+    await advance();
+    projects = [{ id: 'other', name: 'Other', root: '/home/synthetic/other' }];
+    fake.ingest(); await advance();
+    expect(bridge.currentProjectMap()?.project.id).toBe('other');
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBe('Device offline');
+    rejectOld('Access is denied. (os error 5)'); await advance();
+    fake.ingest(); await advance();
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBe('Device offline');
+  });
+
+  it('retires a listing even when selection returns to the same project before its error arrives', async () => {
+    let projects = [project], originalAttempts = 0;
+    let rejectOld!: (error: unknown) => void, rejectCurrent!: (error: unknown) => void;
+    const fake = fakeIpc({ events: () => [], projects: () => projects, inventory: () => projects[0] !== project
+      ? Promise.reject('Other folder offline')
+      : new Promise((_resolve, reject) => { if (++originalAttempts === 1) rejectOld = reject; else rejectCurrent = reject; }) });
+    const bridge = createNativeBridge('expanded', fake.ipc, Date.now, 5_000, []);
+    await advance();
+    projects = [{ id: 'other', name: 'Other', root: '/home/synthetic/other' }];
+    fake.ingest(); await advance();
+    projects = [project]; fake.ingest(); await advance();
+    expect(bridge.currentProjectMap()?.listing).toBe('pending');
+    rejectOld('Access is denied. (os error 5)'); await advance();
+    expect(bridge.currentProjectMap()?.listing).toBe('pending');
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBeNull();
+    rejectCurrent('Device offline'); await advance();
+    expect(bridge.currentProjectMap()?.listingDetails?.unavailableReason).toBe('Device offline');
   });
 });

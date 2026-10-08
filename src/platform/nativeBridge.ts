@@ -96,6 +96,34 @@ const HOOKS_REFRESH_INTERVAL_MS = 60_000;
 /** After a listing fails or times out it is tried again after each of these, even without file activity, and then left until the next activity. */
 const LISTING_RETRY_DELAYS_MS: readonly number[] = [30_000, 300_000];
 
+/** IPC messages are display data, not stacks/objects. Redact paths before bounding or logging them.
+ * Spaces and punctuation are valid in filenames: retain a quoted path's closing quote, otherwise
+ * conservatively redact through the next message colon (followed by whitespace), newline or end. */
+const listingFailureReason = (error: unknown): string | undefined => {
+  const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+  const starts = /file:\/\/\/?(?:[a-z]:)?|[a-z]:[\\/]|\\\\|(?<![\p{L}\p{N}_/\\])[\\/]/giu;
+  let redacted = '', cursor = 0;
+  for (const match of text.matchAll(starts)) {
+    const start = match.index;
+    if (start < cursor) continue;
+    const bodyStart = start + match[0].length;
+    const delimiter = text.slice(bodyStart).search(/:(?=\s|$)|[\r\n]/);
+    let end = delimiter < 0 ? text.length : bodyStart + delimiter;
+    const quote = text[start - 1];
+    if (quote === '"' || quote === "'") {
+      for (let at = bodyStart; at < text.length; at++) {
+        // Apostrophes, commas and spaces may be filename characters (O' Connor).
+        // Treat a quote as a boundary only before the message colon or the end.
+        if (text[at] === quote && /^\s*(?::(?:\s|$)|$)/.test(text.slice(at + 1))) { end = at; break; }
+      }
+    }
+    redacted += text.slice(cursor, start) + '[folder]';
+    cursor = end;
+  }
+  const reason = (redacted + text.slice(cursor)).trim();
+  return !reason ? undefined : reason.length <= 240 ? reason : `${reason.slice(0, 239).trimEnd()}…`;
+};
+
 const isFileActivity = (event: RaioEvent): boolean => event.kind === 'file.changed' || event.kind === 'file.edit.reported';
 
 /** Resolves `null` when `work` has not settled within `ms` (its late answer is the caller's to ignore). */
@@ -159,7 +187,9 @@ export const createNativeBridge = (
   // The latest accepted project listing, for the same connected project, asked for together with the import scan.
   let inventory: ProjectInventory | null = null;
   let listing = false;
+  let listingToken = 0;
   let inventoryStale = false;
+  let unavailableReason: string | undefined;
   let listingFailureReported = false;
   let retryStep = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -204,16 +234,17 @@ export const createNativeBridge = (
     }
   };
 
-  const listProject = async (projectId: string): Promise<ProjectInventory | null> => {
+  const listProject = async (projectId: string): Promise<{ inventory: ProjectInventory | null; reason?: string }> => {
     try {
       const value = await ipc.invoke<unknown>('project_inventory', { projectId });
-      return isProjectInventory(value) ? value : null;
+      return { inventory: isProjectInventory(value) ? value : null };
     } catch (error) {
+      const reason = listingFailureReason(error);
       if (!listingFailureReported) {
         listingFailureReported = true;
-        report('project_inventory')(error);
+        report('project_inventory')(reason ?? 'Project listing unavailable');
       }
-      return null;
+      return { inventory: null, reason };
     }
   };
 
@@ -233,12 +264,14 @@ export const createNativeBridge = (
     if (fresh) stopRetrying();
     listing = true;
     const key = scanKey;
+    const token = ++listingToken;
     void withinTime(listProject(current.id), scanTimeoutMs).then((result) => {
-      if (key !== scanKey) return; // the project changed meanwhile; `listing` was already released
+      if (key !== scanKey || token !== listingToken) return; // also retires A's old request after A → B → A
       listing = false;
-      if (result) {
+      unavailableReason = result?.reason;
+      if (result?.inventory) {
         stopRetrying();
-        inventory = result;
+        inventory = result.inventory;
         inventoryStale = false;
         void refresh();
         return;
@@ -312,7 +345,9 @@ export const createNativeBridge = (
           scanning = false;
           inventory = null;
           inventoryStale = false;
+          unavailableReason = undefined;
           listing = false;
+          listingToken++;
           stopRetrying();
           scanToken++; // an answer still on its way belongs to the previous project
         }
@@ -324,7 +359,7 @@ export const createNativeBridge = (
         presenceInput = { connected: current !== null, available: health !== undefined, facts: current ? factsFromEvents(events, current.id) : [], core: health ?? null, hooks: hooksState };
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
-        projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null }) : null;
+        projectSnapshot = current && !projected ? projectMap(current, inventory, imports, { pending: listing, inventoryStale, importsStale, core: health ?? null, unavailableReason }) : null;
         listeners.forEach((l) => l());
       } catch (error) {
         report('refresh')(error);
