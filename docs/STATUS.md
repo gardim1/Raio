@@ -1,6 +1,49 @@
 # Raio status
 
-Last updated: 2026-10-07 (alpha preparation). Earlier sections keep their own dates.
+Last updated: 2026-10-08 (sidebar, Island, approved character). Earlier sections keep their own dates.
+
+## Sidebar, Island and the approved character (2026-10-08)
+
+Windows 11 (10.0.26200), browser checks in Edge (Playwright); the native desktop checks listed under "Not exercised"
+were not run for this round. Nothing run on macOS or Linux.
+
+- **Sidebar without activity**: project name once (ellipsis + full name on hover), one factual indicator
+  ("Connected · no activity yet", "Hooks out of date", ...), one short message and one action. Distinct states for
+  mapping, empty folder ("No code to map yet" + "Choose another folder", preview first), files with no recognised areas,
+  partial/stale listing, listing unavailable (the core's reason, with paths replaced by `[folder]`; "access denied"
+  only when the error says so), and connected without a session ("Waiting for activity" + start a new Claude Code
+  session). Heuristic notes and technology hints sit under a collapsed **About this map**; warnings stay visible.
+- **Island**: placed on the primary display's work area (taskbar respected), 10 logical px below its top. Hovering the
+  collapsed capsule opens its own 340x124 preview in every state (also with no session or no project); it stays open
+  while the pointer or keyboard focus is inside and closes 260 ms after the pointer leaves; Esc closes. Natively the
+  hover truth is the core's cursor poll (`island-pointer`), not DOM events of a click-through window. Clicking the
+  character only makes it react; **Open Mini Player** and **Open window** are the only surface switches. The
+  preview shows the latest observed fact with its time and source; a Claude Code `Stop` reads "Turn ended", never a
+  check result. The capsule is a disclosure button with a separately named preview.
+- **Approved character** (local design reference, not published): a TypeScript port of the approved design's engine
+  (springs, eyes, sparks, gaze, click, dizzy after four clicks, cookie, turn ended, celebration) replaces the old orb in
+  the Island, Mini, title bar and map. One loop per window runs only while something moves and stops when the surface
+  is hidden; rest is quiet (the old idle float is gone); reduced motion follows the design. Mood comes from existing
+  presence: failure > attention > working > idle. "Turn ended" reacts once, live, after the window opened, never in a
+  replay. The **celebration for a fixed check is not triggered live**: events carry only the command class, program and
+  exit code, which cannot prove that the same check failed and then passed; it exists only in the dev harness.
+  **Give Raio a cookie** in the Island preview is a free manual gesture (no balance, reward or counter).
+- **Windows**: Expanded's X (and Alt+F4) now hides the window to the tray (taskbar entry removed); the tray's Open Raio,
+  a second launch or `--project` bring it back as it was; — still minimises; only **Quit Raio** exits. The character in
+  the title bar is not a drag or maximise handle. The native Expanded no longer draws a CSS 1 px outline next to the
+  Windows border (two adjacent lines were observed; the Windows border itself follows the user's accent setting).
+- Known deviations from the approved design: product copy in English; the Island's failure dot uses the app's danger
+  token (#ff8f86) instead of the design's #ff7b72; after a reaction the character returns to its functional pose
+  (attention/failure gaze) where the reference briefly lost it.
+
+Tests on `8dac01e`: vitest 1067 (80 files), tsc + build + bundle check 0, cargo 234 unit + 13 integration (+3 ignored),
+clippy 0 with 2 existing warnings, Playwright 63 passed / 21 screenshot differences (the new sidebar, Island and
+character; goldens not re-blessed, awaiting the owner's visual approval). Independent reviews found 3 P2 issues in the
+sidebar/Island work (fixed) and none above P3 in the character work.
+
+Not exercised: native hover/click-through/focus with a real mouse, X-to-tray and every restore path on the desktop,
+work-area placement with a top taskbar, DPI other than this machine's, multiple monitors, screen readers, and CPU/memory
+of the new release (the previous measurement is in the alpha section below).
 
 ## Alpha preparation (2026-10-07): open on a folder, presence states, installer
 

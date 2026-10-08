@@ -60,8 +60,9 @@ npm run app                # opens the release build
    `raio-hook.exe`. Existing settings and hooks are kept and the original file is backed up. **Nothing is written until
    you click Connect.** Raio warns you if git does not ignore that settings file.
 3. Start a **new** Claude Code session in that folder (hooks apply to sessions started after connecting). Raio follows
-   it live and keeps a local history; **View changes** plays the replay. Closing Raio's windows keeps it in the tray;
-   it keeps recording while hidden and shows the current state when you open it again.
+   it live and keeps a local history; **View changes** plays the replay. Closing Raio's windows keeps it in the tray
+   (the taskbar entry goes away; **Quit Raio** in the tray menu exits); it keeps recording while hidden and shows the
+   current state when you open it again.
 
 ## What Raio records
 
