@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -49,6 +49,8 @@ pub struct Core {
     /// clear the pending marker while another is still in flight.
     connection_changes: Mutex<()>,
     usage: Mutex<Result<usage::Reader, String>>,
+    /// Configuration/clear invalidations are independent of whether any snapshot remains.
+    usage_invalidated: AtomicBool,
 }
 
 fn now_ms() -> i64 {
@@ -115,7 +117,7 @@ impl Core {
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
         let usage = Mutex::new(usage::Reader::open(&data, now_ms()));
-        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default(), connection_changes: Mutex::default(), usage };
+        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default(), connection_changes: Mutex::default(), usage, usage_invalidated: AtomicBool::new(false) };
         // Before the first ingest pass, so events past the inbox TTL are dropped (and counted), not stored late.
         core.housekeeping(SystemTime::now(), &Limits::default());
         core.refresh_connections();
@@ -219,6 +221,8 @@ impl Core {
             self.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
             Ok(project)
         })();
+        // Also invalidate after partial failures: settings may have been saved before a later step failed.
+        self.usage_invalidated.store(true, Ordering::Release);
         self.refresh_connections();
         if result.is_ok() { let _ = inbox::touch_heartbeat(&self.dirs); }
         result
@@ -232,6 +236,7 @@ impl Core {
             connect::disconnect(&root, &self.backups, now_ms())?;
             self.store.lock().map_err(|e| e.to_string())?.disconnect_project(project_id, now_ms()).map_err(|e| e.to_string())
         })();
+        self.usage_invalidated.store(true, Ordering::Release);
         self.refresh_connections();
         result?;
         self.clear_usage(project_id);
@@ -246,10 +251,13 @@ impl Core {
 
     fn clear_usage(&self, project: &str) {
         if let Ok(mut usage) = self.usage.lock() && let Ok(reader) = usage.as_mut() { reader.clear(&self.data, project); }
+        self.usage_invalidated.store(true, Ordering::Release);
     }
 
     fn ingest_usage(&self) -> bool {
-        self.usage.lock().ok().and_then(|mut usage| usage.as_mut().ok().map(|r| r.ingest(&self.data, now_ms()))).unwrap_or(false)
+        let invalidated = self.usage_invalidated.swap(false, Ordering::AcqRel);
+        let changed = self.usage.lock().ok().and_then(|mut usage| usage.as_mut().ok().map(|r| r.ingest(&self.data, now_ms()))).unwrap_or(false);
+        invalidated || changed
     }
 
     fn usage_for(&self, project: &str, hook: Option<&Path>, layers: &usage_connect::Layers) -> Result<usage::State, String> {
@@ -459,15 +467,36 @@ mod tests {
     use crate::store::RETENTION_MS;
 
     #[test]
+    fn usage_configuration_changes_and_empty_clears_invalidate_all_webviews() {
+        let data = tempfile::tempdir().unwrap(); let project = tempfile::tempdir().unwrap();
+        let root = project.path().to_path_buf();
+        let command = connect::hook_command(Path::new("C:/Raio/raio-hook.exe"), "p", &root);
+        let core = Core::open_at(data.path()).unwrap();
+        for enabled in [false, true, true, false] {
+            let preview = connect::preview_usage(&root, &command, Some(usage_connect::Options { enabled, replace_existing:false }), &usage_connect::Layers::default()).unwrap();
+            core.connect_at(root.clone(), "p".into(), command.clone(), &preview).unwrap();
+            assert!(core.ingest_usage(), "a configuration invalidation must emit even without a snapshot");
+            assert!(!core.ingest_usage(), "unchanged usage does not emit periodically");
+        }
+        core.clear_usage("p");
+        assert!(core.ingest_usage(), "clear must invalidate even when already empty");
+        assert!(!core.ingest_usage());
+        core.disconnect_id("p").unwrap();
+        assert!(core.ingest_usage(), "disconnect must invalidate the cleared reading");
+    }
+
+    #[test]
     fn usage_is_opt_in_watch_driven_persistent_and_never_a_history_event() {
         let data = tempfile::tempdir().unwrap(); let project = tempfile::tempdir().unwrap();
         let root = project.path().to_path_buf(); let hook = Path::new("C:/Raio/raio-hook.exe");
         let command = connect::hook_command(hook, "p", &root); let layers = usage_connect::Layers::default();
         let core = Core::open_at(data.path()).unwrap();
         let p = connect::preview(&root, &command).unwrap(); core.connect_at(root.clone(), "p".into(), command.clone(), &p).unwrap();
+        assert!(core.ingest_usage()); // Configuration notification is independent of a reading.
         assert_eq!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Disabled);
         let p = connect::preview_usage(&root, &command, Some(usage_connect::Options { enabled:true, replace_existing:false }), &layers).unwrap();
         core.connect_at(root.clone(), "p".into(), command.clone(), &p).unwrap();
+        assert!(core.ingest_usage());
         assert_eq!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Waiting);
         let snapshot = usage::parse(br#"{"session_id":"synthetic","rate_limits":{"five_hour":{"used_percentage":0}}}"#, "p", now_ms()).unwrap();
         usage::write(data.path(), &snapshot).unwrap();

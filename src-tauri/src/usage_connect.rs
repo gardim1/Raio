@@ -141,11 +141,18 @@ fn owned_local(root: &Path, value: &Value, layers: &Layers) -> bool {
             .as_ref()
             .is_none_or(|dir| receipt_matches(root, dir, value))
 }
-pub fn command(hook_command: &str) -> String {
-    hook_command.replacen(" claude ", " statusline ", 1)
+pub fn command(hook_command: &str) -> Option<String> {
+    // Connection APIs carry the generated hook command. Decode its exact argument shape;
+    // the mode is a separate builder argument, never a replacement in quoted path text.
+    if !connect::owned_command(hook_command, "claude") {
+        return None;
+    }
+    let words = connect::handler_words(hook_command)?;
+    let [exe, _, _, project, _, root, _] = words.as_slice() else { return None };
+    Some(connect::managed_command(Path::new(exe), project, Path::new(root), "statusline"))
 }
-fn entry(hook_command: &str) -> Value {
-    json!({"type":"command", "command":command(hook_command)})
+fn entry(hook_command: &str) -> Option<Value> {
+    command(hook_command).map(|command| json!({"type":"command", "command":command}))
 }
 /// A previously started Claude session may still invoke its saved command after Disconnect.
 /// Only inspect its project-local key here; the hook never reads user or managed settings.
@@ -153,7 +160,8 @@ pub fn reader_enabled(root: &Path, expected_hook: &str) -> bool {
     read_key(&connect::settings_path(root))
         .ok()
         .flatten()
-        .is_some_and(|v| v == entry(expected_hook))
+        .zip(entry(expected_hook))
+        .is_some_and(|(value, expected)| value == expected)
 }
 pub fn remove_owned(settings: &mut Value) {
     if settings.get("statusLine").is_some_and(owned)
@@ -211,7 +219,9 @@ pub fn preview(
         replace_existing: false,
     });
     let conflict = !matches!(effective.as_str(), "none" | "raio");
+    let wanted = entry(hook);
     let reason = inspection_error
+        .or_else(|| (options.enabled && wanted.is_none()).then(|| "Raio's status line command is unavailable.".into()))
         .or_else(|| {
             (effective == "managed")
                 .then(|| "Managed Claude settings prevent a project status line override.".into())
@@ -224,7 +234,7 @@ pub fn preview(
     let install = options.enabled && reason.is_none();
     let before = local.get("statusLine").cloned();
     let after = if install {
-        Some(entry(hook))
+        wanted
     } else if before
         .as_ref()
         .is_some_and(|v| owned_local(root, v, layers))
@@ -280,7 +290,7 @@ pub fn configuration(root: &Path, expected_hook: &str, layers: &Layers) -> State
     if p.effective != "raio" {
         return State::Disabled;
     }
-    if p.before != Some(entry(expected_hook)) {
+    if p.before != entry(expected_hook) {
         return State::Incompatible {
             reason: "Raio's status line command is outdated. Reconnect this project.".into(),
         };
@@ -296,6 +306,58 @@ mod tests {
     fn put(path: &Path, value: Value) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, value.to_string()).unwrap();
+    }
+    #[test]
+    fn statusline_mode_never_rewrites_quoted_executable_or_root_paths() {
+        for (exe, root, expected) in [
+            ("C:/Tools/my claude builds/raio-hook.exe", "C:/work/my claude project", "'C:/Tools/my claude builds/raio-hook.exe' statusline --project p --root 'C:/work/my claude project' --raio-managed"),
+            ("C:/it's claude builds/raio-hook.exe", "C:/work/it's claude project", "'C:/it'\\''s claude builds/raio-hook.exe' statusline --project p --root 'C:/work/it'\\''s claude project' --raio-managed"),
+        ] {
+            let hook = connect::hook_command(Path::new(exe), "p", Path::new(root));
+            assert_eq!(command(&hook).as_deref(), Some(expected));
+            assert!(owned(&json!({"type":"command","command":expected})));
+        }
+    }
+    #[test]
+    fn existing_installed_statusline_from_this_build_remains_enabled_and_owned() {
+        let root = tempfile::tempdir().unwrap();
+        // The old builder produced this format for the ordinary install used by this build.
+        let installed = "'C:/Program Files/Raio/raio-hook.exe' statusline --project p --root 'C:/work/app' --raio-managed";
+        let value = json!({"type":"command","command":installed});
+        let hook = "'C:/Program Files/Raio/raio-hook.exe' claude --project p --root 'C:/work/app' --raio-managed";
+        put(&connect::settings_path(root.path()), json!({"statusLine":value}));
+        assert!(reader_enabled(root.path(), hook));
+        let backups = root.path().join("backups");
+        save_receipt(root.path(), &backups, Some(&value)).unwrap();
+        assert!(receipt_matches(root.path(), &backups, &value));
+        assert_eq!(configuration(root.path(), hook, &Layers { receipts:Some(backups), ..Layers::default() }), State::Waiting);
+    }
+    #[test]
+    fn quoted_paths_round_trip_through_preview_apply_reader_receipt_and_disconnect() {
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("it's claude project");
+        fs::create_dir(&root).unwrap();
+        let hook = connect::hook_command(Path::new("C:/it's claude builds/raio-hook.exe"), "p", &root);
+        let backups = data.path().join("backups");
+        let layers = Layers { receipts:Some(backups.clone()), ..Layers::default() };
+        let p = connect::preview_usage(&root, &hook, Some(Options { enabled:true, replace_existing:false }), &layers).unwrap();
+        connect::connect_usage(&root, &hook, &p, &backups, 1, &layers).unwrap();
+        assert!(reader_enabled(&root, &hook));
+        assert_eq!(configuration(&root, &hook, &layers), State::Waiting);
+        assert_eq!(connect::read_hooks_state(&root, &hook), connect::HooksState::Current);
+        let installed = read_key(&connect::settings_path(&root)).unwrap().unwrap();
+        assert!(receipt_matches(&root, &backups, &installed));
+        connect::disconnect(&root, &backups, 2).unwrap();
+        assert!(!reader_enabled(&root, &hook));
+        assert_eq!(read_key(&connect::settings_path(&root)).unwrap(), None);
+    }
+    #[test]
+    fn malformed_hook_command_cannot_enable_a_statusline_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let p = preview(root.path(), &json!({}), "unrelated claude text", Some(Options { enabled:true, replace_existing:false }), &Layers::default());
+        assert!(p.reason.is_some()); assert_eq!(p.after, None);
+        assert!(command("unrelated claude text").is_none());
+        assert!(!reader_enabled(root.path(), "unrelated claude text"));
     }
     #[test]
     fn precedence_default_no_replacement_and_only_statusline_key_is_retained() {
@@ -345,7 +407,7 @@ mod tests {
                 &layers,
             );
             assert!(p.reason.is_none());
-            assert_eq!(p.after, Some(entry(CMD)));
+            assert_eq!(p.after, entry(CMD));
             assert!(!serde_json::to_string(&p).unwrap().contains("do-not-retain"));
         }
         put(
@@ -383,13 +445,13 @@ mod tests {
         let p = preview(dir.path(), &old, &new, None, &Layers::default());
         assert!(p.enabled);
         assert_eq!(p.effective, "raio");
-        assert_eq!(p.after, Some(entry(&new)));
+        assert_eq!(p.after, entry(&new));
         let mut settings = old.clone();
         apply(&mut settings, &p).unwrap();
         remove_owned(&mut settings);
         assert_eq!(settings, json!({}));
         let mut changed = old;
-        changed["statusLine"]["command"] = json!(format!("{} extra", command(CMD)));
+        changed["statusLine"]["command"] = json!(format!("{} extra", command(CMD).unwrap()));
         let original = changed.clone();
         remove_owned(&mut changed);
         assert_eq!(changed, original);

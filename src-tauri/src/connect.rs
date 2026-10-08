@@ -54,7 +54,7 @@ pub fn hooks_state(settings: &Value, command: &str) -> HooksState {
         expected.swap_remove(index);
     }
     if settings.get("statusLine").is_some_and(crate::usage_connect::owned)
-        && settings["statusLine"]["command"] != crate::usage_connect::command(command) { return HooksState::Outdated; }
+        && settings["statusLine"]["command"].as_str() != crate::usage_connect::command(command).as_deref() { return HooksState::Outdated; }
     HooksState::Current
 }
 
@@ -87,9 +87,13 @@ pub fn settings_path(root: &Path) -> PathBuf {
 
 /// Hook command as Claude Code runs it (through Git Bash on Windows): forward slashes, quoted.
 pub fn hook_command(hook_exe: &Path, project_id: &str, root: &Path) -> String {
+    managed_command(hook_exe, project_id, root, "claude")
+}
+
+pub(crate) fn managed_command(hook_exe: &Path, project_id: &str, root: &Path, mode: &str) -> String {
     // POSIX single quotes: nothing inside is expanded by Git Bash or sh ($, backticks, double quotes).
     let q = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\\', "/").replace('\'', "'\\''"));
-    format!("{} claude --project {project_id} --root {} {MARKER}", q(hook_exe), q(root))
+    format!("{} {mode} --project {project_id} --root {} {MARKER}", q(hook_exe), q(root))
 }
 
 fn is_raio_handler(h: &Value) -> bool {
@@ -116,7 +120,7 @@ pub(crate) fn owned_command(command: &str, expected_mode: &str) -> bool {
 
 /// Recognises only the generated argument shape, never executes shell text. Supports the original
 /// double-quoted paths (312479d) and POSIX single quotes/apostrophe escaping (d4f93d6 onward).
-fn handler_words(command: &str) -> Option<Vec<String>> {
+pub(crate) fn handler_words(command: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quote = None;

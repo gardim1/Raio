@@ -36,12 +36,12 @@ fn connect_fixture(data: &Path) {
     let root = data.join("project");
     let settings = root.join(".claude/settings.local.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    let command = raio_lib::connect::hook_command(
+    let hook = raio_lib::connect::hook_command(
         Path::new(env!("CARGO_BIN_EXE_raio-hook")),
         "fixtureproject",
         &root,
-    )
-    .replacen(" claude ", " statusline ", 1);
+    );
+    let command = raio_lib::usage_connect::command(&hook).unwrap();
     fs::write(
         settings,
         serde_json::json!({"statusLine":{"type":"command","command":command}}).to_string(),

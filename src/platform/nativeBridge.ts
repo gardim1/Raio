@@ -425,6 +425,7 @@ export const createNativeBridge = (
     return refreshing;
   };
   ipc.onIngested(() => void refresh());
+  // Snapshot, configuration and clear invalidations all bypass the same-project cache in every webview.
   ipc.onUsageChanged?.(() => refreshUsage(project, true));
   void refresh();
 
