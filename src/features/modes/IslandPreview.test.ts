@@ -31,11 +31,11 @@ it.each([
   const child = createElement(IdleIsland, { companion, onOpen: () => {} });
   const html = render(bridge, child);
   expect(html).toContain('aria-expanded="true"');
-  expect(html).toContain('Open full view'); expect(html).toContain('Open Mini Player');
+  expect(html).toContain('Open window'); expect(html).toContain('Open Mini Player');
   if (companion.state !== 'working') expect(html).not.toContain('working');
   if (!state.connected) expect(html).toContain('Choose a project');
   else if (!state.available) expect(html).toContain('Activity status unavailable');
-  else if (companion.state === 'connected') expect(html).toContain('Waiting for activity');
+  else if (companion.state === 'connected') expect(html).toContain('No agent active right now.');
   else if (companion.state === 'working') { expect(html).toContain('Recent observed activity'); expect(html).toContain('Agent unknown'); expect(html).toContain('Fixture watcher'); }
   else { expect(html).toContain(companion.label); expect(html).toContain(companion.description); }
 });
@@ -88,8 +88,28 @@ it('idle actions invoke only their explicit callbacks', () => {
     const shell = IdleIsland({ onOpen: open });
     const actions = shell.props.children.at(-1).props.children;
     expect(open).not.toHaveBeenCalled(); expect(show).not.toHaveBeenCalled();
-    actions[0].props.onClick(); expect(open).toHaveBeenCalledTimes(1); expect(show).not.toHaveBeenCalled();
-    actions.at(-2).props.onClick(); expect(show.mock.calls).toEqual([['mini']]);
-    actions.at(-1).props.onClick(); expect(open).toHaveBeenCalledTimes(2);
+    expect(actions).toHaveLength(2);
+    actions[0].props.onClick(); expect(show.mock.calls).toEqual([['mini']]); expect(open).not.toHaveBeenCalled();
+    actions[1].props.onClick(); expect(open).toHaveBeenCalledTimes(1);
   } finally { context.mockRestore(); map.mockRestore(); }
+});
+it('quiet preview uses the approved waiting copy and two text actions', () => {
+  const bridge = createProjectFixtureBridge();
+  const companion = deriveCompanionPresence(input, 0, 'UTC');
+  const html = render(bridge, createElement(IdleIsland, { companion, onOpen: () => {} }));
+  expect(html).toContain('<span class="island__label">Waiting</span>');
+  expect(html).toContain('No agent active right now.');
+  expect(html).toContain('>Open Mini Player</button>');
+  expect(html).toContain('>Open window</button>');
+});
+it('a relevant failure keeps a short failure caption and its full reason despite recent activity', () => {
+  const bridge = createFixtureBridge(); const snapshot = bridge.currentSession()!;
+  const frame = evaluateFrame(canonicalScript, snapshot.graph, 4);
+  const companion = { state: 'failure' as const, label: 'Tests failed · 14:02', description: 'Tests failed · 14:02 · Claude hook', records: [], activeUntil: Date.now() + 1000 };
+  const html = render(bridge, createElement(IslandMode, { script: canonicalScript, frame, companion,
+    presence: derivePresence(canonicalScript, snapshot.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} }));
+  expect(html).toContain('<span class="island__label">Tests failed</span>');
+  expect(html).toContain(companion.description);
+  expect(html).toContain('Last replay event · Turn ended');
+  expect(html).toContain('data-presence="failure"');
 });

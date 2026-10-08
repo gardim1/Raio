@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-// Accessible-role queries complement the existing, unchanged geometry/hover spec.
+// Accessible-role queries complement the geometry/hover spec.
 for (const projectOnly of [false, true]) {
   test(`Island exposes a disclosure button and separate named preview (${projectOnly ? 'quiet' : 'session'})`, async ({ page }) => {
     await page.goto(`/harness.html?view=island&t=4&chrome=0${projectOnly ? '&project-only=1' : ''}`);
@@ -19,7 +19,7 @@ for (const projectOnly of [false, true]) {
     await expect(disclosure).toBeFocused(); // The same button survives the geometry change.
     await expect(disclosure.getByRole('group')).toHaveCount(0);
     await expect(preview.getByRole('button', { name: 'Open Mini Player', exact: true })).toBeVisible();
-    const full = preview.getByRole('button', { name: 'Open full view', exact: true });
+    const full = preview.getByRole('button', { name: 'Open window', exact: true });
     await expect(full).toBeVisible();
 
     await disclosure.press('Enter');

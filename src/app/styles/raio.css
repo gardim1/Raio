@@ -309,47 +309,44 @@ svg text { font-family: var(--raio-font-ui); }
 .icon-btn svg { width: 13px; height: 13px; }
 
 /* ---------- Island ---------- */
-.island-dock { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: 0; right: 0; display: flex; justify-content: center; z-index: 50; pointer-events: none; }
+.island-dock { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 0; right: 0; display: flex; justify-content: center; z-index: 50; pointer-events: none; }
 .island {
+  position: relative;
   pointer-events: auto;
-  max-width: 384px;
+  width: var(--island-width, 150px);
+  min-width: 150px;
+  max-width: 340px;
+  height: 34px;
+  border-radius: 17px;
   overflow: hidden;
-  background: var(--raio-color-surface-island);
-  border: 1px solid var(--raio-color-border-panel);
-  box-shadow: var(--raio-shadow-island);
-  backdrop-filter: blur(30px) saturate(140%);
-  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  color: #f3f5f8;
+  background: rgba(20,21,26,.92);
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 14px 30px -12px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.06);
+  transition: width .42s cubic-bezier(.2,1.15,.3,1), height .42s cubic-bezier(.2,1.15,.3,1), border-radius .42s cubic-bezier(.2,1.15,.3,1);
   outline: none;
 }
-.island--open { width: 384px; height: 156px; }
+.island--open { width: 340px; height: 124px; border-radius: 24px; }
 .island:has(.island__trigger:focus-visible) { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
-.island__trigger { appearance: none; border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; outline: none; }
-.island__heading { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
-.island__collapsed-content, .island__heading-content { display: contents; }
-.island__collapsed-content[hidden] { display: none; }
-.island__preview { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
-.island__preview[hidden] { display: none; }
-.island__closed { height: 34px; min-width: 148px; max-width: 382px; display: flex; align-items: center; gap: 9px; padding: 0 14px 0 11px; white-space: nowrap; }
-.island__label { font-size: 12.5px; font-weight: 500; color: var(--raio-color-text-status); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.island__dot { width: 6px; height: 6px; border-radius: 50%; margin-left: auto; flex: none; background: rgba(255, 255, 255, 0.3); }
-.island__dot--cool { background: var(--raio-color-accent-cool); box-shadow: var(--raio-shadow-cool-dot); }
-.island__dot--success { background: var(--raio-color-accent-success); box-shadow: 0 0 8px rgba(127, 216, 166, 0.6); }
-.island__dot--warning { background: var(--raio-color-accent-warning); box-shadow: var(--raio-shadow-warning-dot); }
-.island__open { width: 100%; height: 100%; padding: 13px 14px 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-.island__row { display: flex; align-items: center; gap: 9px; min-height: 28px; }
+.island__trigger { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; outline: none; }
+.island__collapsed-content { display: contents; }
+.island__closed { position: absolute; left: 0; top: 0; width: 100%; max-width: 340px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 6px; white-space: nowrap; }
+.island__character { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex: none; }
+.island__label { font-size: 12.5px; font-weight: 500; color: rgba(240,244,250,.85); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.island__dot { width: 6px; height: 6px; border-radius: 50%; margin-left: auto; flex: none; background: var(--raio-color-text-primary); }
+.island .island__dot[data-presence] { background: var(--raio-color-text-primary); }
+.island .island__dot[data-presence="working"] { background: var(--raio-color-accent-cool); box-shadow: 0 0 6px var(--raio-color-accent-cool); }
+.island .island__dot[data-presence="attention"] { background: var(--raio-color-accent-warning); }
+.island .island__dot[data-presence="failure"] { background: var(--raio-color-accent-danger); }
+.island__preview { position: absolute; left: 14px; right: 14px; top: 40px; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .3s; pointer-events: none; }
+.island--open .island__preview { opacity: 1; transform: none; transition-delay: .1s; pointer-events: auto; }
 .island .mini-orb { flex: none; }
-.island__row .status { min-width: 0; max-width: 240px; overflow: hidden; flex-shrink: 1; }
-.island__row--meta { min-height: 28px; gap: 8px; }
-.island__row--actions { margin-top: auto; gap: 6px; }
-.island__title { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.island__spacer { flex: 1; }
-.island__task { font-size: 13px; color: var(--raio-color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: -4px; }
-.island__task--muted { color: var(--raio-color-text-muted); }
-.island__area { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 10px; border-radius: 14px; background: var(--raio-color-pill-cool-fill); border: 1px solid var(--raio-color-pill-cool-stroke); font-size: 12.5px; font-weight: 500; color: #dce8ff; white-space: nowrap; }
-.island__area i { width: 6px; height: 6px; border-radius: 50%; background: var(--raio-color-accent-cool); }
-.island__area i.warn { background: var(--raio-color-accent-warning); }
-.island__hint { font-size: 12px; color: var(--raio-color-text-subtle); }
-.island__reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.island__activity { font-size: 12.5px; color: rgba(240,244,250,.8); margin: 0 0 10px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.island__actions { display: flex; gap: 6px; }
+.island__actions button { height: 28px; padding: 0 12px; border-radius: 14px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.05); color: #e3ecff; font: 500 12px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+.island__actions button:hover { background: rgba(255,255,255,.09); }
+.island__actions button:focus-visible { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .island, .island__preview { transition: none; } }
 
 /* ---------- Mini player ---------- */
 .mini {

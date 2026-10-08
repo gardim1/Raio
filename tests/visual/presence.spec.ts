@@ -116,7 +116,7 @@ test('recent activity expires to neutral with reduced-motion graphics at rest', 
   await mode(page, 'island');
   expect(await fixture.locator('.mini-orb').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
   expect(await fixture.locator('.island__dot').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
-  await expect(fixture.locator('.island__label')).toContainText('Connected · quiet');
+  await expect(fixture.locator('.island__label')).toHaveText('Waiting');
 });
 
 test('Activity reveal preserves a paused replay position and a new request still restarts it', async ({ page }) => {

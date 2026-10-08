@@ -36,13 +36,14 @@ for (const surface of ['island', 'mini'] as const) {
     try {
       expect(seen[0]!.presence.state).toBe(state === 'connected' ? 'working' : state);
       expect(seen[0]!.presence.activeUntil).toBe(1000 + BOB_TOTAL_SECONDS * 1000);
-      expect(seen[0]!.text).toBe(surface === 'island' ? 'Claude · Frontend' : 'Claude working');
+      expect(seen[0]!.text).toBe(surface === 'island' ? state === 'failure' ? 'Tests failed' : 'Claude · Frontend' : 'Claude working');
       expect(vi.getTimerCount()).toBe(1);
       vi.advanceTimersByTime(BOB_TOTAL_SECONDS * 1000);
       expect(seen).toHaveLength(2);
       expect(seen[1]!.presence.activeUntil).toBeNull();
       expect(seen[1]!.presence.state).toBe(state);
-      expect(seen[1]!.text).toBe(seen[1]!.presence.label);
+      const expiredCaption = state === 'connected' ? 'Waiting' : seen[1]!.presence.label.replace(/ · \d{2}:\d{2}$/, '');
+      expect(seen[1]!.text).toBe(surface === 'island' ? expiredCaption : seen[1]!.presence.label);
       expect(seen[1]!.html).toContain('data-presence="' + state + '"');
       expect(seen[1]!.html).toContain('title="' + seen[1]!.presence.description + '"');
       if (surface === 'mini') expect(seen[1]!.html).toContain('mini__status--working');

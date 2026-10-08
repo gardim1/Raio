@@ -10,7 +10,7 @@ export const createIslandHover = (setOpen: (open: boolean) => void) => {
       cancel();
       if (!previous) setOpen(true);
     } else if (previous && !pointer && !focused && timer === undefined) {
-      timer = setTimeout(() => { timer = undefined; if (!disposed) setOpen(false); }, 250);
+      timer = setTimeout(() => { timer = undefined; if (!disposed) setOpen(false); }, 260);
     }
   };
   return {

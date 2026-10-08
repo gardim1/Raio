@@ -43,16 +43,16 @@ for (const surface of ['island', 'mini'] as const) {
 
     it.each([attention, failure])('keeps the original working text with $state precedence and accessible evidence', companion => {
       const html = render(4, companion);
-      expect(compactText(html, surface)).toBe(surface === 'island' ? 'Claude · API' : 'Claude working');
+      expect(compactText(html, surface)).toBe(surface === 'island' ? companion.state === 'failure' ? 'Tests failed' : 'Claude · API' : 'Claude working');
       expect(html).toContain('data-presence="' + companion.state + '"');
-      const description = surface === 'island' ? 'Claude · API · ' + companion.description : companion.description;
+      const description = surface === 'island' && companion.state !== 'failure' ? 'Claude · API · ' + companion.description : companion.description;
       expect(html).toContain('aria-label="' + (surface === 'island' ? 'Raio: ' : '') + description + '"');
       expect(html).toContain('title="' + description + '"');
     });
 
     it.each([expiredAttention, expiredFailure])('shows $state presence copy after activity expires, even with a working frame', companion => {
       const html = render(4, companion);
-      expect(compactText(html, surface)).toBe(companion.label);
+      expect(compactText(html, surface)).toBe(surface === 'island' ? companion.label.replace(/ · \d{2}:\d{2}$/, '') : companion.label);
       expect(html).toContain('data-presence="' + companion.state + '"');
       expect(html).toContain('title="' + companion.description + '"');
     });
@@ -79,7 +79,8 @@ describe('Island activity without a mapped area', () => {
   };
   it.each([recent, quiet, attention, failure, expiredAttention, expiredFailure])('uses current $state evidence instead of an indefinite starting label', companion => {
     const html = render(companion);
-    expect(compactText(html, 'island')).toBe(companion.label);
+    const caption = companion.state === 'connected' ? 'Waiting' : companion.label.replace(/ · \d{2}:\d{2}$/, '');
+    expect(compactText(html, 'island')).toBe(caption);
     expect(html).toContain('aria-label="Raio: ' + companion.description + '"');
     expect(html).toContain('title="' + companion.description + '"');
     expect(html).not.toContain('Claude · starting');

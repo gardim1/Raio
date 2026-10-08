@@ -13,9 +13,9 @@ it('disconnected Island has a disclosure button and a separate preview with expl
   expect(html).toContain('<button type="button" class="island__trigger island__closed" aria-label="Raio: Disconnected · no project"');
   expect(html).toMatch(/aria-controls="[^"]+"/);
   expect(html).toContain('role="group" aria-label="Island preview"');
-  expect(html).toContain('class="island__preview" hidden=""');
+  expect(html).toContain('class="island__preview" aria-hidden="true" inert=""');
   const triggerEnd = html.indexOf('</button>');
-  expect(html.indexOf('Choose a project</button>')).toBeGreaterThan(triggerEnd);
+  expect(html).toContain('Choose a project to connect');
   expect(html.indexOf('aria-label="Open Mini Player"')).toBeGreaterThan(triggerEnd);
-  expect(html.indexOf('aria-label="Open full view"')).toBeGreaterThan(triggerEnd);
+  expect(html.indexOf('aria-label="Open window"')).toBeGreaterThan(triggerEnd);
 });

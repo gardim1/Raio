@@ -1,6 +1,15 @@
 import { RISK_LABEL, type SessionLog } from '../session/model/events';
 import { formatClockTime } from './sessionMeta';
-import type { PresenceFact } from './companionPresence';
+import type { CompanionPresence, PresenceFact } from './companionPresence';
+
+/** Short functional caption; time/source/reason remain in the activity line and accessible description. */
+export const islandCaption = (companion: CompanionPresence, area?: string | null, agent?: string): string => {
+  if (companion.state === 'unknown' || companion.state === 'disconnected') return companion.label;
+  if (companion.state === 'failure') return companion.label.replace(/ · \d{2}:\d{2}$/, '');
+  if (companion.activeUntil !== null && area && agent) return `${agent} · ${area}`;
+  if (companion.state === 'attention') return companion.label.replace(/ · \d{2}:\d{2}$/, '');
+  return companion.label === 'Connected · quiet' ? 'Waiting' : companion.label;
+};
 
 /** The final recorded fact, independent of the animation's progress or its generated task. */
 export const islandActivity = (log: SessionLog | null, timeZone?: string): string => {
