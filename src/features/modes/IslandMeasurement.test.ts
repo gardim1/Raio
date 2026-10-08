@@ -21,7 +21,7 @@ it('refits after fonts settle and releases observation without a late hidden upd
     observe = observe; disconnect = disconnect;
   });
   const label = { scrollWidth: 40 };
-  const shell = IslandShell({ description: 'Fixture', collapsed: 'Label', children: 'Preview' }).props.children;
+  const shell = IslandShell({ description: 'Fixture', collapsed: 'Label', children: 'Preview', onPinMini: () => {}, onExpand: () => {} }).props.children;
   shell.props.ref.current = { querySelector: () => label };
   const stop = hooks.measure!()!;
   expect(hooks.width).toHaveBeenLastCalledWith(150); expect(observe).toHaveBeenCalledWith(label);
@@ -37,7 +37,7 @@ it('refits after fonts settle and releases observation without a late hidden upd
 it('does no label measurement or observer registration while hidden', () => {
   hooks.visible = false;
   const querySelector = vi.fn();
-  const shell = IslandShell({ description: 'Fixture', collapsed: 'Label', children: 'Preview' }).props.children;
+  const shell = IslandShell({ description: 'Fixture', collapsed: 'Label', children: 'Preview', onPinMini: () => {}, onExpand: () => {} }).props.children;
   shell.props.ref.current = { querySelector };
   expect(hooks.measure!()).toBeUndefined();
   expect(querySelector).not.toHaveBeenCalled(); expect(hooks.width).not.toHaveBeenCalled();

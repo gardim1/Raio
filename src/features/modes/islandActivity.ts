@@ -37,8 +37,9 @@ export const islandPresenceActivity = (facts: readonly PresenceFact[], now: numb
 export const islandObservedActivity = (facts: readonly PresenceFact[], now: number, timeZone?: string): string => {
   const latest = facts.reduce<PresenceFact | null>((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at >= last.at) ? fact : last, null);
   if (!latest) return 'No activity observed';
-  // The shared facts deliberately group commands and turn boundaries as activity; do not infer a result.
+  // Ordinary commands are activity; the distinct turn boundary never establishes a check result.
   const label = latest.kind === 'activity' ? 'Activity observed'
+    : latest.kind === 'turn-end' ? 'Turn ended'
     : latest.kind === 'change' ? 'File change observed'
       : latest.kind === 'edit-failed' ? 'Edit failed'
         : latest.kind === 'start' ? 'Session started'

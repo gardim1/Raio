@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { IslandShell } from './IslandShell';
 import { createFixtureBridge } from '../../platform/fixtureBridge';
 import { createElement } from 'react';
+import { mountCharacter } from '../raio/character/runtime';
+import type { CharacterEngine } from '../raio/character/engine';
 
 // Exercise the real shell handlers/effect with native IPC injected, without a webview or DOM.
 const hooks = vi.hoisted(() => ({ open: false, visible: true, setup: null as (() => (() => void) | undefined) | null, ref: { current: null as unknown }, bridge: {} as ReturnType<typeof createFixtureBridge> }));
@@ -13,10 +15,11 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
   useId: () => 'island-preview-test',
 }));
 vi.mock('../../platform/BridgeContext', () => ({ useBridge: () => hooks.bridge }));
-vi.mock('../../shared/motion/surfaceVisibility', () => ({ useSurfaceVisible: () => hooks.visible }));
-const capsule = () => IslandShell({ description: 'Fixture state', collapsed: 'Capsule', children: 'Preview' }).props.children;
+vi.mock('../../shared/motion/surfaceVisibility', async original => ({ ...await original<typeof import('../../shared/motion/surfaceVisibility')>(), useSurfaceVisible: () => hooks.visible }));
+const actions = { onPinMini: vi.fn(), onExpand: vi.fn() };
+const capsule = () => IslandShell({ description: 'Fixture state', collapsed: 'Capsule', children: 'Preview', ...actions }).props.children;
 beforeEach(() => { hooks.open = false; hooks.visible = true; hooks.ref.current = null; hooks.setup = null; hooks.bridge = createFixtureBridge(null); vi.useFakeTimers(); });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 it('native Island opens only from core pointer truth, never asks to switch a surface or focus a window', async () => {
   let send!: (inside: boolean) => void; let stops = 0; const show = vi.fn();
@@ -65,7 +68,7 @@ it('capsule disclosure is a real button beside its named preview, and activation
 });
 it('hover and Escape keep the same visible header label in the same child slot', () => {
   const label = createElement('span', { className: 'island__label' }, 'projeto com espaços e acentos — ' + 'long folder name '.repeat(8));
-  const button = () => IslandShell({ description: 'Fixture', collapsed: label, children: 'Preview' })
+  const button = () => IslandShell({ description: 'Fixture', collapsed: label, children: 'Preview', ...actions })
     .props.children.props.children[0];
   const closed = button(); const stop = hooks.setup!()!;
   expect(closed.props.children.props.children).toBe(label);
@@ -89,4 +92,46 @@ it('double-click is consumed without switching a surface or asking for window fo
   el.props.onDoubleClick({ preventDefault, stopPropagation });
   expect(preventDefault).toHaveBeenCalledOnce(); expect(stopPropagation).toHaveBeenCalledOnce();
   expect(show).not.toHaveBeenCalled();
+});
+const cookie = () => capsule().props.children[1].props.children[1]?.props?.children?.[2];
+it('cookie exists only in the visible open preview as a keyboard-reachable icon button', () => {
+  expect(cookie()).toBeFalsy();
+  hooks.open = true;
+  const button = cookie();
+  expect(button?.type).toBe('button');
+  expect(button.props.type).toBe('button'); expect(button.props.tabIndex).toBeUndefined();
+  expect(button.props['aria-label']).toBe('Give Raio a cookie');
+  expect(button.props.title).toBe('Give Raio a cookie');
+  expect(button.props.children.type).toBe('svg'); expect(button.props.children.props['aria-hidden']).toBe(true);
+  hooks.visible = false; expect(cookie()).toBeFalsy();
+});
+it('cookie activation sends exactly one real window-bus reaction without changing disclosure or surfaces', () => {
+  hooks.open = true;
+  const button = cookie(); expect(button).toBeDefined();
+  const show = vi.fn(); hooks.bridge.showSurface = show;
+  vi.stubGlobal('window', new EventTarget());
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', documentElement: { classList: { toggle: () => {} } } }));
+  vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {});
+  const react = vi.fn();
+  const stop = mountCharacter({ update: () => false, sense: () => {}, leave: () => {}, react, dispose: () => {} } as unknown as CharacterEngine);
+  try {
+    const stopPropagation = vi.fn();
+    button.props.onClick({ stopPropagation });
+    expect(react).toHaveBeenCalledExactlyOnceWith('cookie');
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(actions.onPinMini).not.toHaveBeenCalled(); expect(actions.onExpand).not.toHaveBeenCalled(); expect(show).not.toHaveBeenCalled();
+    expect(hooks.open).toBe(true);
+  } finally { stop(); }
+});
+it('Escape from the cookie returns focus to the persistent disclosure before removing the focused button', () => {
+  const el = capsule(); const stop = hooks.setup!()!;
+  el.props.onFocus(); expect(hooks.open).toBe(true);
+  const focus = vi.fn(() => el.props.onFocus());
+  el.props.onKeyDown({ key: 'Escape', stopPropagation: () => {},
+    target: { closest: (selector: string) => selector === '.island__cookie' },
+    currentTarget: { querySelector: (selector: string) => selector === '.island__trigger' ? { focus } : null },
+  });
+  expect(focus).toHaveBeenCalledOnce();
+  expect(hooks.open).toBe(false); expect(cookie()).toBeFalsy();
+  stop();
 });

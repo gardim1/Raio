@@ -14,6 +14,7 @@ it('disconnected Island has a disclosure button and a separate preview with expl
   expect(html).toMatch(/aria-controls="[^"]+"/);
   expect(html).toContain('role="group" aria-label="Island preview"');
   expect(html).toContain('class="island__preview" aria-hidden="true" inert=""');
+  expect(html).not.toContain('Give Raio a cookie');
   const triggerEnd = html.indexOf('</button>');
   expect(html).toContain('Choose a project to connect');
   expect(html.indexOf('aria-label="Open Mini Player"')).toBeGreaterThan(triggerEnd);

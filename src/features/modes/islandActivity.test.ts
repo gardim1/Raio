@@ -34,3 +34,14 @@ it.each([
 it('no available presence facts never falls back to claiming newer activity or check success', () => {
   expect(islandObservedActivity([], 0, 'UTC')).toBe('No activity observed');
 });
+it('a distinct turn end never becomes a command or a check result', () => {
+  const at = Date.parse('2026-10-08T14:03:00Z');
+  const facts: PresenceFact[] = [
+    { id: 'command', kind: 'activity', at: at - 60_000, source: 'Claude hook' },
+    { id: 'stop', kind: 'turn-end', at, source: 'Claude hook' },
+  ];
+  expect(islandObservedActivity(facts, at - 60_000, 'UTC')).toBe('Activity observed · 14:02 · Claude hook');
+  const ended = islandObservedActivity(facts, at, 'UTC');
+  expect(ended).toBe('Turn ended · 14:03 · Claude hook');
+  expect(ended).not.toMatch(/command|check|test|passed|failed|unknown/i);
+});

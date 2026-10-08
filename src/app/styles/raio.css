@@ -345,6 +345,7 @@ svg text { font-family: var(--raio-font-ui); }
 .island__actions button { height: 28px; padding: 0 12px; border-radius: 14px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.05); color: #e3ecff; font: 500 12px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
 .island__actions button:hover { background: rgba(255,255,255,.09); }
 .island__actions button:focus-visible { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
+.island__actions .island__cookie { width: 28px; min-width: 28px; padding: 0; border-radius: 50%; display: grid; place-items: center; flex: none; }
 @media (prefers-reduced-motion: reduce) { .island, .island__preview { transition: none; } }
 
 /* ---------- Mini player ---------- */

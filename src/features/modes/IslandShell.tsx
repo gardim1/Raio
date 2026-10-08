@@ -2,16 +2,19 @@ import { type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, 
 import { useBridge } from '../../platform/BridgeContext';
 import { useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { createIslandHover, followIslandPointer } from './islandHover';
+import { requestCharacterReaction } from '../raio/character';
 
 /** Prototype fitIsland formula, capped so the collapsed hit rect stays inside the preview. */
 export const fitIslandWidth = (labelWidth: number): number =>
   Math.min(340, Math.max(150, Math.ceil(Number.isFinite(labelWidth) ? labelWidth : 0) + 28 + 16 + 6 + 40));
 
 /** One capsule and hover lifetime for session, quiet, unavailable and disconnected states. */
-export const IslandShell = ({ description, collapsed, children }: {
+export const IslandShell = ({ description, collapsed, children, onPinMini, onExpand }: {
   readonly description: string;
   readonly collapsed: ReactNode;
   readonly children: ReactNode;
+  readonly onPinMini: () => void;
+  readonly onExpand: () => void;
 }) => {
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState(150);
@@ -49,7 +52,15 @@ export const IslandShell = ({ description, collapsed, children }: {
       onPointerLeave={native ? undefined : () => hover.current?.pointer(false)}
       onFocus={() => hover.current?.focus(true)}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hover.current?.focus(false); }}
-      onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); hover.current?.escape(); } }}
+      onKeyDown={event => {
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        // The cookie unmounts on collapse; return its keyboard focus before removing it.
+        if ((event.target as HTMLElement | null)?.closest?.('.island__cookie')) {
+          event.currentTarget.querySelector<HTMLButtonElement>('.island__trigger')?.focus();
+        }
+        hover.current?.escape();
+      }}
       onClick={event => event.stopPropagation()}
       onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); }}
       title={description} aria-label={`Raio: ${description}`} aria-expanded={shown}>
@@ -62,6 +73,19 @@ export const IslandShell = ({ description, collapsed, children }: {
       <div id={previewId} role="group" aria-label="Island preview" className="island__preview"
         aria-hidden={!shown} inert={!shown}>
         {children}
+        <div className="island__actions">
+          <button type="button" title="Open Mini Player" aria-label="Open Mini Player" onClick={onPinMini}>Open Mini Player</button>
+          <button type="button" title="Open window" aria-label="Open window" onClick={onExpand}>Open window</button>
+          {shown && <button type="button" className="island__cookie" title="Give Raio a cookie" aria-label="Give Raio a cookie"
+            onClick={event => { event.stopPropagation(); requestCharacterReaction('cookie'); }}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden focusable="false">
+              <path d="M12.5 7.5A5.5 5.5 0 1 1 7 2a2 2 0 0 0 2 2 2 2 0 0 0 3.5 3.5Z" />
+              <circle cx="4.5" cy="6" r=".6" fill="currentColor" stroke="none" />
+              <circle cx="6" cy="9.5" r=".6" fill="currentColor" stroke="none" />
+              <circle cx="9.5" cy="9" r=".6" fill="currentColor" stroke="none" />
+            </svg>
+          </button>}
+        </div>
       </div>
     </div>
   </div>;

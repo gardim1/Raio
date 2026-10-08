@@ -68,9 +68,11 @@ it('session preview advances beyond the last replay file read to command and Sto
       clock.mockReturnValue(start + minute * 60_000);
       const bridge = { ...createFixtureBridge(), currentSession: () => snapshot, projectPresence: () => state };
       const html = render(bridge, child);
-      expect(html).toContain(`Activity observed · 14:0${minute} · Claude hook`);
+      // C-CHAR now preserves Stop as a distinct turn-end fact; a command remains ordinary activity.
+      expect(html).toContain(`${minute === 3 ? 'Turn ended' : 'Activity observed'} · 14:0${minute} · Claude hook`);
       expect(html).not.toContain('Read src/api/a.ts');
       expect(html).not.toContain('Checks passed');
+      expect(html).not.toContain('Command unknown (recorded)');
     }
   } finally { clock.mockRestore(); }
 });
@@ -86,11 +88,9 @@ it('idle actions invoke only their explicit callbacks', () => {
   const map = vi.spyOn(bridgeContext, 'useProjectMapSnapshot').mockReturnValue(null);
   try {
     const shell = IdleIsland({ onOpen: open });
-    const actions = shell.props.children.at(-1).props.children;
     expect(open).not.toHaveBeenCalled(); expect(show).not.toHaveBeenCalled();
-    expect(actions).toHaveLength(2);
-    actions[0].props.onClick(); expect(show.mock.calls).toEqual([['mini']]); expect(open).not.toHaveBeenCalled();
-    actions[1].props.onClick(); expect(open).toHaveBeenCalledTimes(1);
+    shell.props.onPinMini(); expect(show.mock.calls).toEqual([['mini']]); expect(open).not.toHaveBeenCalled();
+    shell.props.onExpand(); expect(open).toHaveBeenCalledTimes(1);
   } finally { context.mockRestore(); map.mockRestore(); }
 });
 it('quiet preview uses the approved waiting copy and two text actions', () => {
@@ -99,8 +99,11 @@ it('quiet preview uses the approved waiting copy and two text actions', () => {
   const html = render(bridge, createElement(IdleIsland, { companion, onOpen: () => {} }));
   expect(html).toContain('<span class="island__label">Waiting</span>');
   expect(html).toContain('No agent active right now.');
+  expect(html).toContain('data-character-mode="idle"');
   expect(html).toContain('>Open Mini Player</button>');
   expect(html).toContain('>Open window</button>');
+  expect(html).toContain('class="island__cookie"');
+  expect(html).toContain('aria-label="Give Raio a cookie"');
 });
 it('a relevant failure keeps a short failure caption and its full reason despite recent activity', () => {
   const bridge = createFixtureBridge(); const snapshot = bridge.currentSession()!;
@@ -112,4 +115,23 @@ it('a relevant failure keeps a short failure caption and its full reason despite
   expect(html).toContain(companion.description);
   expect(html).toContain('Last replay event · Turn ended');
   expect(html).toContain('data-presence="failure"');
+  expect(html).toContain('data-character-mode="failure"');
+  expect(html).toContain('data-character-size="island"');
+  expect(html).toContain('--raio-char-box:28px');
+});
+it.each(['onPointerDown', 'onClick', 'onDoubleClick'])('the character slot consumes %s without focus, disclosure activation or surface switches', handler => {
+  const bridge = createFixtureBridge(null); const open = vi.fn(); const show = vi.fn();
+  const context = vi.spyOn(bridgeContext, 'useBridge').mockReturnValue({ ...bridge, showSurface: show });
+  const map = vi.spyOn(bridgeContext, 'useProjectMapSnapshot').mockReturnValue(null);
+  try {
+    const shell = IdleIsland({ onOpen: open });
+    const child = shell.props.collapsed.props.children[0];
+    const slot = typeof child.type === 'function' ? child.type(child.props) : child;
+    expect(slot.props[handler]).toBeTypeOf('function');
+    const preventDefault = vi.fn(); const stopPropagation = vi.fn();
+    slot.props[handler]({ preventDefault, stopPropagation });
+    expect(preventDefault).toHaveBeenCalledOnce(); expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled(); expect(show).not.toHaveBeenCalled();
+    expect(slot.props.tabIndex).toBeUndefined();
+  } finally { context.mockRestore(); map.mockRestore(); }
 });
