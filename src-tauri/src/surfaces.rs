@@ -24,6 +24,8 @@ const SURFACES: [&str; 3] = [EXPANDED, ISLAND, MINI];
 pub const ISLAND_SIZE: (f64, f64) = (420.0, 184.0);
 const MINI_SIZE: (f64, f64) = (380.0, 300.0);
 const EDGE_MARGIN: f64 = 24.0;
+// Approved space token (12 logical px), applied to the window; native CSS adds no second inset.
+const ISLAND_TOP_GAP: f64 = 12.0;
 
 /// How long a freshly created window may take to load its page before it is shown anyway.
 const LOAD_WAIT: Duration = Duration::from_secs(1);
@@ -124,12 +126,19 @@ pub fn defer_expanded(config: &mut tauri::Config) -> Option<WindowConfig> {
     Some(config.app.windows.remove(at))
 }
 
-/// Whether closing this window (its X button, Alt+F4) minimizes it instead of destroying it.
-pub fn minimizes_on_close(label: &str) -> bool {
+/// Whether closing this window (its X button, Alt+F4) hides it to the tray instead of destroying it.
+pub fn hides_on_close(label: &str) -> bool {
     label == EXPANDED
 }
 
-/// Whether `show` must un-minimize this window first: a window the user minimized (or whose X minimized it)
+/// Hide before notifying: a failed native hide must never claim the surface is off screen.
+fn hide_to_tray<E>(hide: impl FnOnce() -> Result<(), E>, notify_hidden: impl FnOnce()) -> Result<(), E> {
+    hide()?;
+    notify_hidden();
+    Ok(())
+}
+
+/// Whether `show` must un-minimize this window first: a window the user minimized
 /// stays iconic after a plain `show`, and focusing it would not bring it back. Only Expanded has a taskbar
 /// entry to be minimized from, and a window that is not minimized is left exactly as it is.
 fn restores_before_show(label: &str, minimized: bool) -> bool {
@@ -147,18 +156,16 @@ fn prevents_exit_on(windows: bool, code: Option<i32>) -> bool {
     windows && code.is_none()
 }
 
-/// Closing Expanded (its X button, Alt+F4) minimizes it: its taskbar entry stays and restoring it brings it
-/// back as it was. A destroyed window would leave the tray's "Open Raio", a second launch and the Island's
+/// Closing Expanded (its X button, Alt+F4) hides it to the tray, retaining its maximized state.
+/// A destroyed window would leave the tray's "Open Raio", a second launch and the Island's
 /// "Open" with nothing to show (and, with no other window, would end the app). Hooked to `RunEvent::WindowEvent` because that is where the
 /// close request of every window was observed to arrive: in this build (tauri 2.12.1, Windows) neither
 /// `Builder::on_window_event` nor a per-window listener was ever called for the window created from the
 /// startup config, only for windows built later. No `show` lock on purpose: this runs on the main thread,
 /// which `show` may be waiting on to build a webview.
 ///
-/// No `surface-visible` event is sent on minimize: the window is still the surface that is shown, and the
-/// renderer already folds "minimized" into its visibility (see `surfaceVisibilityTracker.ts`), so it stops
-/// animating by itself and `show` need not special-case a restore. If the window cannot be minimized, it is
-/// hidden instead (and told so), so the X never does nothing.
+/// Hiding removes the taskbar entry and emits `surface-visible: false` so the renderer stops its work.
+/// The separate minimize caption still minimizes; `show` restores it only if minimized.
 ///
 /// Also keeps Raio alive when the last window goes (e.g. the Mini Player of a `--surface=mini` launch
 /// closed with Alt+F4): only an explicit exit, the tray's "Quit Raio" (`app.exit(0)`), ends the app.
@@ -167,15 +174,12 @@ pub fn on_run_event(app: &AppHandle, event: &tauri::RunEvent) {
         island::on_window_event(app, label, event);
     }
     match event {
-        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if minimizes_on_close(label) => {
+        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if hides_on_close(label) => {
             api.prevent_close();
             if let Some(window) = app.get_webview_window(label)
-                && let Err(e) = window.minimize()
+                && let Err(e) = hide_to_tray(|| window.hide(), || { let _ = app.emit_to(label.as_str(), "surface-visible", false); })
             {
-                eprintln!("Raio could not minimize the {label} window, hiding it instead: {e}");
-                let _ = window.hide();
-                // Hidden webviews may keep animating; tell the surface it is off screen.
-                let _ = app.emit_to(label.as_str(), "surface-visible", false);
+                eprintln!("Raio could not hide the {label} window to the tray: {e}");
             }
         }
         tauri::RunEvent::ExitRequested { code, api, .. } if prevents_exit(*code) => api.prevent_exit(),
@@ -205,13 +209,13 @@ fn floating(app: &AppHandle, label: &str, size: (f64, f64), loaded: mpsc::Sender
         .build()
 }
 
-/// Where a floating surface sits on the primary display, in physical pixels: the Island top-centre,
+/// Where a floating surface sits in a physical rectangle: the Island in the primary work area,
 /// the Mini Player bottom-right. `None` for surfaces that are not placed by Raio.
 pub fn placement(label: &str, origin: (i32, i32), size: (u32, u32), scale: f64) -> Option<(i32, i32)> {
     match label {
         ISLAND => {
             let island_w = (ISLAND_SIZE.0 * scale) as i32;
-            Some((origin.0 + (size.0 as i32 - island_w) / 2, origin.1))
+            Some((origin.0 + (size.0 as i32 - island_w) / 2, origin.1 + (ISLAND_TOP_GAP * scale).round() as i32))
         }
         MINI => {
             let (mini_w, mini_h) = ((MINI_SIZE.0 * scale) as i32, (MINI_SIZE.1 * scale) as i32);
@@ -231,7 +235,13 @@ fn configure(window: &WebviewWindow, label: &str) -> tauri::Result<()> {
         window.app_handle().state::<island::IslandState>().on_window_created(label);
     }
     if let Some(monitor) = window.primary_monitor()? {
-        let (origin, extent) = (monitor.position(), monitor.size());
+        // Only Island changes placement policy; keep Mini's existing bottom-right position.
+        let (origin, extent) = if label == ISLAND {
+            let work = monitor.work_area();
+            (&work.position, &work.size)
+        } else {
+            (monitor.position(), monitor.size())
+        };
         if let Some((x, y)) = placement(label, (origin.x, origin.y), (extent.width, extent.height), monitor.scale_factor()) {
             window.set_position(PhysicalPosition::new(x, y))?;
         }
@@ -448,11 +458,23 @@ mod tests {
     }
 
     #[test]
-    fn closing_expanded_minimizes_it_so_it_can_be_shown_again() {
-        assert!(minimizes_on_close(EXPANDED));
-        assert!(!minimizes_on_close(ISLAND), "recreated by ensure_window on its next show");
-        assert!(!minimizes_on_close(MINI));
-        assert!(!minimizes_on_close("other"));
+    fn closing_expanded_hides_it_to_tray_so_it_can_be_shown_again() {
+        assert!(hides_on_close(EXPANDED));
+        assert!(!hides_on_close(ISLAND), "recreated by ensure_window on its next show");
+        assert!(!hides_on_close(MINI));
+        assert!(!hides_on_close("other"));
+    }
+
+    #[test]
+    fn close_to_tray_notifies_the_renderer_only_after_a_successful_hide() {
+        let mut hidden = false;
+        let mut visible = true;
+        hide_to_tray(|| { hidden = true; Ok::<_, ()>(()) }, || { visible = false; }).unwrap();
+        assert!(hidden);
+        assert!(!visible);
+        visible = true;
+        assert!(hide_to_tray(|| Err(()), || { visible = false; }).is_err());
+        assert!(visible, "a failed hide must not claim the renderer is hidden");
     }
 
     #[test]
@@ -479,9 +501,18 @@ mod tests {
     }
 
     #[test]
-    fn the_island_is_centred_on_the_top_edge_of_the_primary_display() {
-        assert_eq!(placement(ISLAND, (0, 0), (2880, 1620), 1.5), Some((1125, 0)));
-        assert_eq!(placement(ISLAND, (-1920, 0), (1920, 1080), 1.0), Some((-1170, 0)));
+    fn the_island_is_centred_with_a_12_logical_pixel_gap_in_the_work_area() {
+        // Work rectangles: taskbar bottom, top, left; negative origins; 100/150/175%.
+        for (origin, size, scale, expected) in [
+            ((0, 0), (1920, 1040), 1.0, (750, 12)),
+            ((0, 40), (1920, 1040), 1.0, (750, 52)),
+            ((0, 60), (2880, 1560), 1.5, (1125, 78)),
+            ((-3360, -1200), (3360, 1820), 1.75, (-2048, -1179)),
+            ((70, 0), (3290, 1820), 1.75, (1347, 21)),
+        ] {
+            assert_eq!(placement(ISLAND, origin, size, scale), Some(expected));
+        }
+        assert!(156.0 <= ISLAND_SIZE.1, "the inset is applied to the window, leaving the open preview inside it");
     }
 
     #[test]

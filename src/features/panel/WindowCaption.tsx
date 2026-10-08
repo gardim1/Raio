@@ -26,6 +26,7 @@ export const WindowCaption = ({ nativeWindow }: { readonly nativeWindow: TitleBa
   }, [nativeWindow]);
   const maximizeLabel = maximized ? 'Restore' : 'Maximize';
   const closeLabel = 'Close (Raio keeps running; quit from the tray)';
+  const closeTooltip = 'Close to tray · quit from the tray menu';
   return <div className="titlebar__caption" role="group" aria-label="Window controls">
     <button type="button" className="titlebar__control" aria-label="Minimize" title="Minimize" onClick={() => runWindowAction(() => nativeWindow.minimize())}>
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" /></svg>
@@ -35,7 +36,7 @@ export const WindowCaption = ({ nativeWindow }: { readonly nativeWindow: TitleBa
         {maximized ? <><rect x="2.5" y="0.5" width="7" height="7" /><rect x="0.5" y="2.5" width="7" height="7" /></> : <rect x="0.5" y="0.5" width="9" height="9" />}
       </svg>
     </button>
-    <button type="button" className="titlebar__control titlebar__control--close" aria-label={closeLabel} title={closeLabel} onClick={() => runWindowAction(() => nativeWindow.close())}>
+    <button type="button" className="titlebar__control titlebar__control--close" aria-label={closeLabel} aria-description={closeTooltip} title={closeTooltip} onClick={() => runWindowAction(() => nativeWindow.close())}>
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" /></svg>
     </button>
   </div>;

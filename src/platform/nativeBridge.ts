@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { RaioEvent } from '../features/ingest/raioEvent';
 import { isProjectImports, type ProjectImports } from '../features/project/importEdges';
@@ -33,6 +34,7 @@ export const surfaceFromUrl = (search: string): Surface | null => {
 export interface NativeIpc {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   onIngested(listener: () => void): void;
+  onIslandPointer?(listener: (inside: boolean) => void): Promise<() => void>;
   chooseFolder(): Promise<string | null>;
   onProjectIntent?(listener: (root: string) => void): Promise<() => void>;
   onProjectSelected?(listener: (root: string) => void): void;
@@ -42,6 +44,10 @@ export interface NativeIpc {
 const tauriIpc: NativeIpc = {
   invoke: (command, args) => invoke(command, args),
   onIngested: (listener) => void listen('events-ingested', listener),
+  onIslandPointer: (listener) => listenIslandPointer({
+    listen: handler => getCurrentWebviewWindow().listen<unknown>('island-pointer', event => handler(event.payload)),
+    read: () => invoke<unknown>('island_pointer'),
+  }, listener),
   onProjectIntent: (listener) => listen<unknown>('project-intent', (event) => {
     if (typeof event.payload === 'string' && event.payload.length > 0) listener(event.payload);
   }),
@@ -53,6 +59,24 @@ const tauriIpc: NativeIpc = {
     const picked = await open({ directory: true, multiple: false, title: 'Choose a project folder to connect' });
     return typeof picked === 'string' ? picked : null;
   },
+};
+
+/** Subscribe before sampling, so an already-inside pointer or a renderer reload cannot miss hover.
+ * A newer event supersedes an older in-flight sample. No additional cursor poll is started. */
+export const listenIslandPointer = async (port: {
+  listen(handler: (inside: unknown) => void): Promise<() => void>;
+  read(): Promise<unknown>;
+}, listener: (inside: boolean) => void): Promise<() => void> => {
+  let revision = 0;
+  let disposed = false;
+  const stop = await port.listen(value => {
+    if (!disposed && typeof value === 'boolean') { revision++; listener(value); }
+  });
+  const sampledAt = revision;
+  void port.read().then(value => {
+    if (!disposed && sampledAt === revision && typeof value === 'boolean') listener(value);
+  }).catch(() => {});
+  return () => { disposed = true; stop(); };
 };
 
 /**
@@ -394,6 +418,7 @@ export const createNativeBridge = (
     showSurface: (surface, intent) => void ipc.invoke('show_surface', { surface, intent: intent ?? null }).catch(report('show_surface')),
     setPinned: (pinned) => void ipc.invoke('set_always_on_top', { surface: 'mini', onTop: pinned }).catch(report('set_always_on_top')),
     setIslandHitRect: (rect) => void ipc.invoke('set_island_hit_rect', { rect }).catch(report('set_island_hit_rect')),
+    onIslandPointer: (listener) => ipc.onIslandPointer?.(listener) ?? Promise.resolve(() => {}),
     projectImports: () => Promise.resolve(imports),
     projectInventory: () => Promise.resolve(inventory),
     connector,

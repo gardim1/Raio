@@ -37,6 +37,7 @@ describe('Expanded product titlebar chrome', () => {
       'Window controls', 'Minimize', 'Maximize', 'Close (Raio keeps running; quit from the tray)',
     ]);
     expect(markup).not.toContain('titlebar__dots');
+    expect(markup).toContain('title="Close to tray · quit from the tray menu"');
     expect(markup.indexOf('Mode shortcut')).toBeLessThan(markup.indexOf('titlebar__caption'));
   });
 
@@ -59,7 +60,7 @@ describe('Expanded product titlebar chrome', () => {
     expect(state.maximized).toBe(false);
   });
 
-  it.each(['button', 'a', 'input', 'textarea', 'select', '[role="button"]', '[contenteditable]:not([contenteditable="false"])', '.titlebar__task'])('does not drag or maximize from %s or its descendants', async (selector) => {
+  it.each(['button', 'a', 'input', 'textarea', 'select', '[role="button"]', '[contenteditable]:not([contenteditable="false"])', '.titlebar__task', '.mini-orb'])('does not drag or maximize from %s or its descendants', async (selector) => {
     const { api, state } = windowApi();
     const bar = TitleBar({ ...props, nativeWindow: api });
     expect(typeof bar.props.onMouseDown).toBe('function');

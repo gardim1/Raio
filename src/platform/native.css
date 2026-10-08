@@ -6,7 +6,8 @@ html.native .app {
   background: transparent;
 }
 
-/* Island window: the capsule sits at the top centre of a transparent window; everything else is click-through. */
+/* The native window already starts 12 logical px below the primary work-area top.
+   Keep the capsule at its top: 156px preview + padding fits the 184px window. */
 html.native.surface-island .island-dock {
   top: 0;
 }

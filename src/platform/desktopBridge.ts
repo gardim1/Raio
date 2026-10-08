@@ -103,6 +103,8 @@ export interface DesktopBridge {
   setPinned(pinned: boolean): void;
   /** Island click-through: the capsule area that should receive the pointer. No-op in the browser. */
   setIslandHitRect(rect: Rect): void;
+  /** Core cursor truth; native Island ignores DOM hover while its window is click-through. */
+  onIslandPointer(listener: (inside: boolean) => void): Promise<() => void>;
   /**
    * The latest static import facts of the connected project (paths and specifiers only) that this bridge holds, or
    * null when there is none: no project, no scan yet, or the scan failed, timed out or was malformed. It never

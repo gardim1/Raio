@@ -8,6 +8,7 @@ import { tokens } from '../../tokens';
 import type { AgentStatusState } from '../session/model/script';
 import { MORPH_TRANSITION } from './presence';
 import type { CompanionPresence } from './companionPresence';
+import { canStartMiniDrag } from './miniDrag';
 
 const SIZE = tokens.size.miniPlayer;
 interface Rect { x: number; y: number; w: number; h: number }
@@ -39,7 +40,7 @@ export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned,
   useEffect(() => () => { gesture.current = null; }, []);
   const begin = useCallback(
     (kind: 'move' | 'resize') => (e: ReactPointerEvent) => {
-      if (!visible || !isSurfaceVisible() || (e.target as HTMLElement).closest('button')) return;
+      if (!visible || !isSurfaceVisible() || !canStartMiniDrag(e.target as HTMLElement, e.button)) return;
       gesture.current = { kind, startX: e.clientX, startY: e.clientY, origin: rect };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     }, [rect, visible],

@@ -127,6 +127,8 @@ impl IslandState {
     /// A replacement starts with click-through enabled; both poll caches belonged to the old window.
     pub fn on_window_created(&self, label: &str) {
         if label == ISLAND {
+            // A previous renderer's open preview must never make the new transparent window clickable.
+            *self.hit.lock().unwrap_or_else(|e| e.into_inner()) = None;
             self.geometry_epoch.fetch_add(1, Ordering::Release);
             self.window_epoch.fetch_add(1, Ordering::Release);
         }
@@ -138,6 +140,21 @@ pub fn set_island_hit_rect(state: State<'_, IslandState>, rect: HitRect) {
     if let Ok(mut hit) = state.hit.lock() {
         *hit = Some(rect);
     }
+}
+
+/// One sample after renderer listener registration, including reload/show with a stationary pointer.
+/// The existing poll remains the only recurring cursor reader.
+#[tauri::command]
+pub fn island_pointer(window: tauri::WebviewWindow, state: State<'_, IslandState>) -> Result<bool, String> {
+    if window.label() != ISLAND || !window.is_visible().map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let Some(rect) = *state.hit.lock().unwrap_or_else(|e| e.into_inner()) else { return Ok(false) };
+    let origin = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let (x, y) = to_local((cursor.x, cursor.y), (origin.x, origin.y), scale);
+    Ok(rect.contains(x, y))
 }
 
 /// Converts a physical screen cursor position into the window's CSS-pixel coordinates.
@@ -201,6 +218,14 @@ pub fn ensure_cursor_watch(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recreated_island_cannot_reuse_the_old_preview_hit_rectangle() {
+        let state = IslandState::default();
+        *state.hit.lock().unwrap() = Some(HitRect { x: 18.0, y: 0.0, width: 384.0, height: 156.0 });
+        state.on_window_created(ISLAND);
+        assert_eq!(*state.hit.lock().unwrap(), None, "stay click-through until the replacement renderer publishes its own layout");
+    }
 
     #[test]
     fn click_through_changes_only_when_inside_changes() {
