@@ -34,7 +34,8 @@ for (const surface of ['island', 'mini'] as const) {
         else await expect(fixture.locator('.mini-orb')).toHaveAttribute('data-presence', state);
         const dot = fixture.locator(surface === 'island' ? '.island__dot' : '.mini__status');
         await expect(dot).toHaveAttribute('data-presence', state);
-        const expected = await dot.evaluate((el, token) => {
+        // Owner's final candidate: the Island alone keeps the prototype's failure red.
+        const expected = surface === 'island' && state === 'failure' ? 'rgb(255, 123, 114)' : await dot.evaluate((el, token) => {
           const probe = document.createElement('i');
           probe.style.color = 'var(' + token + ')';
           el.append(probe);

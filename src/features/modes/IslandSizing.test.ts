@@ -65,10 +65,12 @@ it.each([
   ['.island .island__dot[data-presence]', 'text-primary'],
   ['.island .island__dot[data-presence="working"]', 'accent-cool'],
   ['.island .island__dot[data-presence="attention"]', 'accent-warning'],
-  ['.island .island__dot[data-presence="failure"]', 'accent-danger'],
 ])('keeps the functional dot %s on the shared %s token', (selector, token) => {
   expect(rule(selector)).toContain(`background: var(--raio-color-${token})`);
   if (token === 'accent-cool') expect(rule(selector)).toContain('box-shadow: 0 0 6px var(--raio-color-accent-cool)');
+});
+it('keeps the owner-approved ZIP failure red local to the Island dot', () => {
+  expect(rule('.island .island__dot[data-presence="failure"]')).toContain('background: #ff7b72');
 });
 it('every collapsed Island label can shrink and ellipsize within the open capsule width', () => {
   expect(render(session())).toContain('class="island__label"');

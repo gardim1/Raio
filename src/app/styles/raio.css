@@ -336,7 +336,7 @@ svg text { font-family: var(--raio-font-ui); }
 .island .island__dot[data-presence] { background: var(--raio-color-text-primary); }
 .island .island__dot[data-presence="working"] { background: var(--raio-color-accent-cool); box-shadow: 0 0 6px var(--raio-color-accent-cool); }
 .island .island__dot[data-presence="attention"] { background: var(--raio-color-accent-warning); }
-.island .island__dot[data-presence="failure"] { background: var(--raio-color-accent-danger); }
+.island .island__dot[data-presence="failure"] { background: #ff7b72; }
 .island__preview { position: absolute; left: 14px; right: 14px; top: 40px; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .3s; pointer-events: none; }
 .island--open .island__preview { opacity: 1; transform: none; transition-delay: .1s; pointer-events: auto; }
 .island .mini-orb { flex: none; }
