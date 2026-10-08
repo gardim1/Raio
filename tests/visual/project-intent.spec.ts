@@ -26,7 +26,11 @@ test('startup folder intent previews the map and diff; Cancel and folder choice 
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
   await review.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(fixture.getByLabel('Settings writes')).toHaveText('1');
-  await expect(fixture.getByText('No session recorded yet', { exact: true })).toBeVisible();
+  await expect(fixture.locator('.sidebar__task')).toHaveText('Waiting for activity');
+  await expect(fixture.locator('.sidebar__task')).toBeVisible();
+  await expect(fixture.locator('.sidebar__meta')).toHaveText('Connected · no activity yet');
+  await expect(fixture.locator('.connect--review')).toHaveCount(0);
+  await expect(fixture.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
 });
 
 test('normalized connected intent selects the existing project without reconnecting', async ({ page }) => {
@@ -35,7 +39,10 @@ test('normalized connected intent selects the existing project without reconnect
   await expect(fixture.locator('.titlebar__project')).toHaveText('Fixture A');
   await expect(fixture.locator('.connect--review')).toHaveCount(0);
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
-  await expect(fixture.getByText('No session recorded yet', { exact: true })).toBeVisible();
+  await expect(fixture.locator('.sidebar__task')).toHaveText('Waiting for activity');
+  await expect(fixture.locator('.sidebar__task')).toBeVisible();
+  await expect(fixture.locator('.sidebar__meta')).toHaveText('Connected · no activity yet');
+  await expect(fixture.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
 });
 
 test('missing preview-map command shows unavailability alongside the mandatory settings review', async ({ page }) => {

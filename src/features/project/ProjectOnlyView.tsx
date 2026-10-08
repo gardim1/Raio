@@ -56,6 +56,7 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
               <div className="sidebar__task">{state.heading}</div>
               <div className="sidebar__meta">{state.indicator}</div>
             </div>
+            <p className="evidence__note">{state.areaCount} · heuristic map</p>
             {state.message && <p className="sidebar__hint">{state.message}</p>}
             {state.warnings.map(line => <p className="evidence__warn" role="status" aria-label={line} key={line}>{line}</p>)}
             {companion && <PresenceHistory presence={companion} />}
@@ -64,7 +65,7 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
             {bridge.connector && <ConnectionFooter connector={bridge.connector} />}
           </div></aside>
         </div>
-        <div className="footer"><div className="footer__left"><div className="hint">{state.areaCount} · heuristic map</div></div></div>
+        <div className="footer"><div className="footer__left"><div className="hint">Project map</div></div></div>
       </div>
     </div>
   );

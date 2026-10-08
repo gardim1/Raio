@@ -4,7 +4,6 @@ export const AboutMap = ({ details, technologies = [] }: { readonly details: rea
   const [open, setOpen] = useState(false);
   const id = useId();
   return <div className="map-about">
-    <span className="map-about__cue">Heuristic map</span>
     <button type="button" className="map-about__toggle" aria-expanded={open} aria-controls={id}
       onKeyDown={event => { if (event.key === ' ') event.stopPropagation(); }}
       onClick={() => setOpen(value => !value)}>

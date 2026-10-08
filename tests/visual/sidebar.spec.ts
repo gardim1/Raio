@@ -29,6 +29,9 @@ for (const width of [960, 1296, 1920]) {
     expect(await sidebar.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await expect(sidebar.getByText(longFolderName, { exact: true })).toHaveCount(1);
     await expect(sidebar.getByText('Connected · no activity yet', { exact: true })).toBeVisible();
+    await expect(sidebar.getByText(/^\d+ areas? · heuristic map$/)).toBeVisible();
+    await expect(fixture.getByText(/^(?:Heuristic map|\d+ areas? · heuristic map)$/)).toHaveCount(1);
+    await expect(fixture.locator('.footer')).toHaveText('Project map');
     await expect(fixture.getByText('Start a new Claude Code session in this folder.', { exact: false })).toHaveCount(1);
     const button = sidebar.getByRole('button', { name: 'About this map', exact: true });
     await expect(button).toHaveAttribute('aria-expanded', 'false');
@@ -103,6 +106,8 @@ test('session warnings stay visible with details closed and area selection still
   await expect(fixture.getByRole('status', { name: /The scan was partial/ })).toBeVisible();
   const about = fixture.getByRole('button', { name: 'About this map', exact: true });
   await expect(about).toHaveAttribute('aria-expanded', 'false');
+  await expect(fixture.getByText(/^(?:Heuristic map|\d+ areas? · heuristic map)$/)).toHaveCount(1);
+  await expect(fixture.locator('.footer')).not.toContainText(/heuristic/i);
   await fixture.locator('.arch-node[aria-label="Auth"]').click();
   await expect(fixture.getByRole('region', { name: 'Auth details', exact: true })).toBeVisible();
   await expect(fixture.getByRole('button', { name: 'Close details', exact: true })).toBeVisible();

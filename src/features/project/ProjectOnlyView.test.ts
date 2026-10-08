@@ -51,6 +51,14 @@ describe('pre-session Expanded window', () => {
     expect(render(createFixtureBridge(null))).toContain('1 area');
     expect(render(createFixtureBridge(null))).not.toContain('1 systems mapped');
   });
+  it('shows the area count and a single heuristic cue in the sidebar, without repeating it in the footer', () => {
+    const html = render(createFixtureBridge(null));
+    const sidebar = html.match(/<aside class="sidebar">([\s\S]*?)<\/aside>/)![1]!;
+    expect(sidebar).toContain('1 area · heuristic map');
+    expect(html.match(/Heuristic map|· heuristic map/g)).toHaveLength(1);
+    const footer = html.slice(html.indexOf('<div class="footer">'));
+    expect(footer).not.toMatch(/heuristic|area|Waiting for activity/);
+  });
   it('keeps the folder name once in the sidebar, hides technical details and avoids repeated waiting copy', () => {
     const name = 'Pasta com acentos ação e espaços ' + 'muito longa '.repeat(8);
     const snapshot = { ...oneSystem, project: { id: 'fixture', name } };
@@ -94,12 +102,14 @@ describe('session Expanded overview', () => {
 it('retains the selected area inspector and its file details after the sidebar changes', () => {
   const fixture = createFixtureBridge();
   const snapshot = fixture.currentSession()!;
+  const withEvidence = { ...snapshot, evidence: { note: 'Relationships between areas are unknown.', relationships: 'unknown' as const,
+    parallel: false, actors: 1, reportedEdits: [], unassigned: [], validations: [] } };
   const frame = evaluateFrame(canonicalScript, snapshot.graph, canonicalScript.duration);
   const insights = deriveInsights(snapshot.log);
   const auth = snapshot.graph.nodeById.get('auth')!;
   const file = insights.byNode.get(auth.id)!.files[0]!.path;
   const noop = () => {};
-  const html = renderToStaticMarkup(createElement(BridgeProvider, { bridge: fixture, children: createElement(ExpandedWindow, {
+  const html = renderToStaticMarkup(createElement(BridgeProvider, { bridge: { ...fixture, currentSession: () => withEvidence }, children: createElement(ExpandedWindow, {
     graph: snapshot.graph, script: canonicalScript, frame, project: snapshot.project, insights,
     presence: derivePresence(canonicalScript, snapshot.graph, frame, false), selectedNodeId: auth.id, isReplay: false,
     onSelectNode: noop, onSelectEvent: noop, onPinMini: noop, onIsland: noop, onViewChanges: noop,
@@ -108,6 +118,8 @@ it('retains the selected area inspector and its file details after the sidebar c
   expect(html).toContain('aria-label="Close details"');
   expect(html).toContain('<ul class="inspector__files">');
   expect(html).toContain(file);
+  expect(html).toContain('About this map');
+  expect(html.match(/Heuristic map|· heuristic map/g)).toHaveLength(1);
 });
 
 it.each([

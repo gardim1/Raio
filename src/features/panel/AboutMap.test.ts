@@ -18,7 +18,7 @@ it('starts collapsed with a named native button and a matching controlled region
   expect(render()).toContain('aria-hidden="true"');
   expect(render()).toContain('About this map');
   const tree = AboutMap(props);
-  const button = tree.props.children[1];
+  const button = tree.props.children[0];
   expect(button.type).toBe('button'); expect(button.props.type).toBe('button');
   const stopPropagation = vi.fn(), preventDefault = vi.fn();
   button.props.onKeyDown({ key: ' ', stopPropagation, preventDefault });
@@ -30,6 +30,6 @@ it('starts collapsed with a named native button and a matching controlled region
   expect(render()).toContain('aria-expanded="true"');
   expect(render()).not.toContain(' hidden=');
   expect(render()).toContain('Technology hints');
-  AboutMap(props).props.children[1].props.onClick();
+  AboutMap(props).props.children[0].props.onClick();
   expect(render()).toContain('aria-expanded="false"');
 });
