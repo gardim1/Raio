@@ -128,10 +128,26 @@ it('Escape from the cookie returns focus to the persistent disclosure before rem
   el.props.onFocus(); expect(hooks.open).toBe(true);
   const focus = vi.fn(() => el.props.onFocus());
   el.props.onKeyDown({ key: 'Escape', stopPropagation: () => {},
-    target: { closest: (selector: string) => selector === '.island__cookie' },
+    target: { closest: (selector: string) => selector === '.island__preview' },
     currentTarget: { querySelector: (selector: string) => selector === '.island__trigger' ? { focus } : null },
   });
   expect(focus).toHaveBeenCalledOnce();
   expect(hooks.open).toBe(false); expect(cookie()).toBeFalsy();
+  stop();
+});
+it('mounts usage only while open and visible, preserving details Escape before Island Escape', () => {
+  const usage = () => capsule().props.children[1].props.children[0].props.children[1];
+  expect(usage()).toBe(false);
+  const el = capsule(); const stop = hooks.setup!()!;
+  el.props.onFocus(); expect(usage()).toBeTruthy();
+  const stopPropagation = vi.fn(), focus = vi.fn(() => el.props.onFocus());
+  const event = { key:'Escape', defaultPrevented:true, stopPropagation,
+    target:{closest:(selector:string) => selector === '.island__preview'},
+    currentTarget:{querySelector:() => ({focus})} };
+  // Shared rings consume the first Escape, then allow the second to bubble from their trigger.
+  el.props.onKeyDown(event); expect(hooks.open).toBe(true); expect(focus).not.toHaveBeenCalled();
+  el.props.onKeyDown({...event,defaultPrevented:false});
+  expect(focus).toHaveBeenCalledOnce(); expect(hooks.open).toBe(false); expect(usage()).toBe(false);
+  hooks.open = true; hooks.visible = false; expect(usage()).toBe(false);
   stop();
 });

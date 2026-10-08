@@ -7,7 +7,7 @@ html.native .app {
 }
 
 /* The native window already starts 10 logical px below the primary work-area top.
-   Keep the capsule at its top: 124px preview + shadow fits the 184px window. */
+   Keep the capsule at its top; preview + bounded usage details + shadow fit the 500px window. */
 html.native.surface-island .island-dock {
   top: 0;
 }

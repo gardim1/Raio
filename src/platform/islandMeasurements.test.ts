@@ -4,6 +4,27 @@ import * as effects from './NativeSurfaceEffects';
 import type { Rect } from './desktopBridge';
 afterEach(() => { vi.unstubAllGlobals(); setNativeSurfaceVisible(true); vi.useRealTimers(); });
 describe('Island graphic measurements', () => {
+  it('publishes resized in-flow usage details and shrinks the hit rect again on close', () => {
+    vi.useFakeTimers(); let resize = () => {};
+    const element = {offsetLeft:40,offsetTop:0,offsetWidth:340,offsetHeight:182,offsetParent:null};
+    vi.stubGlobal('document',{querySelector:()=>element,body:{},documentElement:{classList:{toggle:vi.fn()}}});
+    class Resize { constructor(callback:()=>void) { resize=callback; } observe=()=>{}; unobserve=()=>{}; disconnect=()=>{}; }
+    class Mutation { observe=()=>{}; disconnect=()=>{}; }
+    vi.stubGlobal('ResizeObserver',Resize); vi.stubGlobal('MutationObserver',Mutation);
+    vi.stubGlobal('requestAnimationFrame',(cb:()=>void)=>setTimeout(cb,16));
+    vi.stubGlobal('cancelAnimationFrame',(id:number)=>clearTimeout(id));
+    const boxes:Rect[]=[];
+    const stop=effects.observeIslandHitRect({setIslandHitRect:rect=>boxes.push(rect)},true);
+    vi.advanceTimersByTime(16);
+    element.offsetHeight=462; resize(); vi.advanceTimersByTime(16);
+    expect(boxes.at(-1)).toEqual({x:38,y:-2,width:344,height:466});
+    expect(boxes.at(-1)!.y+boxes.at(-1)!.height).toBeLessThan(500);
+    // Details down to y=420 remain interactive; below the capsule remains click-through.
+    expect(boxes.at(-1)!.y+boxes.at(-1)!.height).toBeGreaterThan(420);
+    element.offsetHeight=182; resize(); vi.advanceTimersByTime(16);
+    expect(boxes.at(-1)).toEqual(boxes[0]);
+    stop(); expect(vi.getTimerCount()).toBe(0);
+  });
   it.each([148, 240, 384])('publishes a final open hit box containing the %s px capsule, ignoring spring transforms', width => {
     vi.useFakeTimers();
     let changed = () => {};

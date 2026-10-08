@@ -30,7 +30,7 @@ for (const projectOnly of [false, true]) {
     await expect(cookie).toHaveCSS('height', '28px');
     await expect(cookie).toHaveCSS('border-radius', '50%');
     await expect.poll(async () => Math.round((await page.locator('.island').boundingBox())!.width)).toBe(340);
-    await expect.poll(async () => Math.round((await page.locator('.island').boundingBox())!.height)).toBe(124);
+    await expect.poll(async () => Math.round((await page.locator('.island').boundingBox())!.height)).toBe(144);
     const capsule = (await page.locator('.island').boundingBox())!;
     for (const action of [preview.getByRole('button', { name: 'Open Mini Player', exact: true }), full, cookie]) {
       const box = (await action.boundingBox())!;

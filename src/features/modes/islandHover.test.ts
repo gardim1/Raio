@@ -40,3 +40,13 @@ it('unsubscribes a late native listener and ignores its events after hide', asyn
   stop(); register(() => { stops++; }); await Promise.resolve();
   send(true); expect(f.open()).toBe(false); expect(stops).toBe(1);
 });
+it('gives growing usage details one bounded exit grace while the native hit rect catches up', () => {
+  const f = fixture(); f.hover.pointer(true); f.hover.pointer(false);
+  vi.advanceTimersByTime(200); f.hover.renew();
+  vi.advanceTimersByTime(259); expect(f.open()).toBe(true);
+  vi.advanceTimersByTime(1); expect(f.open()).toBe(false);
+  f.hover.pointer(true); f.hover.pointer(false); f.hover.renew(); f.hover.pointer(true);
+  expect(vi.getTimerCount()).toBe(0);
+  f.hover.pointer(false); f.hover.renew(); f.hover.dispose(); f.hover.renew();
+  expect(vi.getTimerCount()).toBe(0); expect(f.open()).toBe(false);
+});

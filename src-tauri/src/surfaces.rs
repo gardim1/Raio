@@ -20,8 +20,8 @@ pub const ISLAND: &str = "island";
 pub const MINI: &str = "mini";
 const SURFACES: [&str; 3] = [EXPANDED, ISLAND, MINI];
 
-/// Logical size of the Island window: room for the open capsule (340x124) plus shadow.
-pub const ISLAND_SIZE: (f64, f64) = (420.0, 184.0);
+/// Logical size: room for the 340px preview, bounded in-flow usage details and shadow.
+pub const ISLAND_SIZE: (f64, f64) = (420.0, 500.0);
 const MINI_SIZE: (f64, f64) = (380.0, 300.0);
 const EDGE_MARGIN: f64 = 24.0;
 // Approved gap (10 logical px), applied to the window; native CSS adds no second inset.
@@ -513,7 +513,7 @@ mod tests {
             assert_eq!(placement(ISLAND, origin, size, scale), Some(expected));
         }
         assert!(340.0 + 60.0 <= ISLAND_SIZE.0, "the preview and horizontal shadow fit the native window");
-        assert!(124.0 + 30.0 <= ISLAND_SIZE.1, "the preview and bottom shadow fit the native window");
+        assert!(462.0 + 30.0 <= ISLAND_SIZE.1, "the preview with bounded usage details and bottom shadow fit the native window");
     }
 
     #[test]
