@@ -63,6 +63,10 @@ entirely on the user's computer. No account, no cloud service, no telemetry, no 
      hooks are kept, and the original file is backed up.
    Tell the user that **nothing is written until they click Connect** in Raio, and that the hooks apply to **new**
    Claude Code sessions started in that folder after connecting.
+   The preview also offers an optional **Show Claude plan usage** (off by default). It adds a project-local
+   `statusLine` entry; if the user already has a status line, Raio keeps it unless the user explicitly chooses to
+   replace it in that project only. Leave this choice to the user; do not tick it for them, and never edit
+   `~/.claude/settings.json`.
 6. Tell the user to start a new Claude Code session in that folder. Raio shows it live (Island, Mini Player or the
    full window) and keeps a local history with a short replay.
 

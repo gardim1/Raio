@@ -18,9 +18,15 @@ Everything stays on your computer: no account, no cloud service, no telemetry, n
 
 ## What it shows
 
-- **Island**: a small capsule at the top of the screen with what the agent is doing, without taking focus.
-- **Mini Player**: a floating window with the orb and the session so far.
+- **Island**: a small capsule just below the top of the screen with what the agent is doing. Hovering it opens a
+  compact preview (also when nothing is running) with the latest observed activity and buttons to open the Mini
+  Player or the full window. It never takes focus, and clicks outside the capsule reach the window underneath.
+- **Mini Player**: a floating window with Raio's character and the session so far.
 - **Expanded view**: the project map, the session timeline and an inspector for each area.
+- **Raio's character**: reacts to what was actually observed (working, worth a look, observed failure, turn ended)
+  and to you: it looks toward the pointer, reacts when clicked, and accepts a cookie (**Give Raio a cookie** in the
+  Expanded title bar and the Island preview). The cookie is just a gesture: no score, balance or reward, and it never
+  changes what Raio reports. "Turn ended" is not "tests passed". It rests quietly when nothing happens.
 - **Replay**: about ten seconds that retell the session in order (short sessions replay in less).
 - **Map before any session**: when you choose a folder, Raio groups it into areas from folder names and known manifest
   names (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, compose files, Prisma schema). It never reads `.env`
@@ -64,12 +70,42 @@ npm run app                # opens the release build
    (the taskbar entry goes away; **Quit Raio** in the tray menu exits); it keeps recording while hidden and shows the
    current state when you open it again.
 
+## Claude plan usage (optional)
+
+Raio can show how much of your Claude plan's **5-hour** and **weekly** limits is used: two rings in the Expanded title
+bar and the Island preview (inner ring = 5-hour limit, outer ring = weekly limit; the fill is the share **used**).
+Hover, focus or click them for the percentages, reset times and how old the reading is.
+
+- **Source**: the `rate_limits` data that Claude Code itself passes to a
+  [status line command](https://code.claude.com/docs/en/statusline). Raio never reads your Claude credentials, never
+  logs in, never calls a usage API and never sends a prompt to get a number.
+- **How to enable**: in the Connect preview, tick **Show Claude plan usage**. Raio then adds a `statusLine` entry to
+  that project's `.claude/settings.local.json` (shown in the diff before anything is written). It runs `raio-hook.exe
+  statusline`, which keeps only the two limits, their reset times and the session id, and prints nothing. Side effect:
+  Claude Code shows a custom status line in that project, which hides some footer hints such as "esc to interrupt".
+- **If you already have a status line** (in your user, project or managed settings), Raio leaves it alone by default:
+  Claude Code uses only one status line, so adding Raio's would hide yours in that project. You can explicitly choose
+  to replace it **in that project only**. Raio never edits `~/.claude/settings.json`. A status line passed with
+  `claude --settings` cannot be detected.
+- **What the numbers mean**: a reading is what the latest Claude Code response in a connected project reported. It is
+  not live: with Claude Code closed nothing refreshes it, so Raio shows its age, mutes old readings and shows "Usage
+  unavailable" (never 0%) when a limit is missing or its reset time has passed. Several sessions may report the same
+  account; Raio shows the most recent reading and never adds percentages together. It is your plan's usage, not this
+  project's, and not context, tokens or cost.
+- **Compatibility**: Claude Code documents these fields for Pro and Max plans, after the first response of a session.
+  Verified on Claude Code 2.1.294 with a Team plan; other plans and versions are not verified.
+- **Turn it off**: reconnect without the option, or Disconnect. Raio removes only its own `statusLine` entry; if you
+  changed that entry yourself, Raio keeps your version.
+
 ## What Raio records
 
 Minimised events only: event type, time, project-relative paths, tool name, a command class (test, build, migration,
 install, other) and the program name, and exit codes when the hook reports them. **Not recorded**: prompts, file
 contents, tool output, transcripts or full command lines. Data lives in `%APPDATA%\io.github.gardim1.raio` (SQLite),
 kept 30 days by default. The hook is asynchronous, always exits 0, and goes inert if Raio has not run for 7 days.
+With the optional plan usage enabled, Raio also keeps, per Claude Code session, only the two limits' used percentages,
+their reset times, the session id, the Claude Code version and when the reading arrived (at most 30 days); nothing
+else from the status line input is stored or logged.
 
 ## Disconnect and remove
 
