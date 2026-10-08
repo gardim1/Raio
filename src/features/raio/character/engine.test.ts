@@ -22,6 +22,76 @@ const advance = (engine: CharacterEngine, seconds: number) => {
   for (let t = 0; t < seconds - 1e-8; t += 1 / 60) engine.update(Math.min(1 / 60, seconds - t));
 };
 describe('approved variant A engine', () => {
+  it('starts an external cookie at arrival, then retains the approved bites, hearts and recovery', () => {
+    const { engine } = make();
+    engine.setMode('attention');
+    const done = vi.fn();
+    expect(engine.cookieArrived(done)).toBe(true);
+    expect(engine.particleCount).toBe(1);
+    expect((engine.gFx as unknown as SvgNode).children[0]?.attrs.transform).toBe('translate(0 4.5) scale(1)');
+    advance(engine, .04);
+    expect(engine.particleCount).toBe(1);
+    advance(engine, .03);
+    expect(engine.particleCount).toBe(4);
+    advance(engine, .25);
+    expect(engine.particleCount).toBe(7);
+    advance(engine, .2);
+    expect(engine.ex.happy.t).toBe(1);
+    expect(engine.cookieArrived()).toBe(false);
+    engine.react('round');
+    expect(engine.busyWith).toBe('cookie');
+    advance(engine, 1.29);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(engine.busyWith).toBeNull();
+    expect(engine.mode).toBe('attention');
+    expect(engine.gy.t).toBe(1.3);
+    advance(engine, 2);
+    expect(engine.particleCount).toBe(0);
+    expect(engine.effectCount).toBe(0);
+    expect(engine.update(1 / 60)).toBe(false);
+  });
+  it('external cookies use the unshifted REDUCED branch and release the caller on disposal', () => {
+    const { engine } = make(true);
+    const done = vi.fn();
+    engine.cookieArrived(done);
+    advance(engine, .7);
+    expect(engine.particleCount).toBe(1);
+    expect(engine.ex.happy.t).toBe(0);
+    advance(engine, .12);
+    expect(engine.particleCount).toBe(2);
+    expect(engine.sx.x).toBe(1);
+    engine.dispose();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(engine.particleCount).toBe(0);
+    expect(engine.cookieArrived()).toBe(false);
+    engine.dispose();
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+  it('ignores external cookies during another reaction without scheduling a queue', () => {
+    const { engine } = make();
+    engine.react('dizzy');
+    const done = vi.fn();
+    expect(engine.cookieArrived(done)).toBe(false);
+    advance(engine, 5);
+    expect(engine.busyWith).toBeNull();
+    expect(engine.particleCount).toBe(0);
+    expect(done).not.toHaveBeenCalled();
+  });
+  it('keeps arrival completions attached to their own effect across a reduced-motion interrupt', () => {
+    let reduced = false;
+    const root = new SvgNode();
+    const engine = new CharacterEngine(root as unknown as SVGSVGElement, 'map', { reduced: () => reduced, wake() {}, random: () => .5 });
+    const first = vi.fn(), second = vi.fn();
+    engine.cookieArrived(first); advance(engine, .1);
+    reduced = true; engine.react('dizzy'); advance(engine, 1.21);
+    expect(engine.cookieArrived(second)).toBe(true);
+    advance(engine, .5);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+    engine.dispose();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
   it('integrates the reference spring and settles with its original tolerance', () => {
     const spring = new Spring(1, 520, 16);
     spring.x = .85;

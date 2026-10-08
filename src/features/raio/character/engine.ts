@@ -62,6 +62,7 @@ export class CharacterEngine {
   private nextBlink: number | undefined;
   private celebrating = false;
   private disposed = false;
+  private cookieFinishes = new Set<() => void>();
   private clock = 0;
   private readonly random: () => number;
   constructor(readonly svg: SVGGraphicsElement, readonly size: CharacterSize, private readonly options: EngineOptions) {
@@ -179,24 +180,7 @@ export class CharacterEngine {
       }, () => { this.recover('dizzy'); this.tilt.t = 0; });
     }
     if (kind === 'cookie') {
-      if (this.busyWith) return;
-      this.busyWith = 'cookie';
-      const ck = this.particle('g', { opacity: 0 });
-      this.E('circle', { r: 5, fill: '#d9a066' }, ck); this.E('circle', { r: 5, fill: 'none', stroke: '#b9824c', 'stroke-width': .6 }, ck);
-      [[-1.8, -1.2], [1.6, -.6], [-.2, 1.8], [1.9, 2]].forEach(([x, y]) => this.E('circle', { cx: x!, cy: y!, r: .75, fill: '#5e3b22' }, ck));
-      const bite = this.E('circle', { cx: 4.6, cy: -2.6, r: 0, fill: '#1d2028' }, ck);
-      let c1 = false, c2 = false, h = false;
-      this.open.t = 1.25; this.gy.t = -1.6;
-      this.fx(R ? 1.6 : 2.3, (_k, t) => {
-        if (R) { ck.setAttribute('opacity', String(t < .6 ? eo(t / .3) : Math.max(0, 1 - (t - .6) / .2))); ck.setAttribute('transform', 'translate(0 -19)'); if (t > .8 && !h) { h = true; this.setExpr('happy'); this.heart(0, 0, true); } return; }
-        const fall = eio(clamp(t / .5)); ck.setAttribute('opacity', String(Math.min(1, t / .12)));
-        const cy = lerp(-34, 4.5, fall), sc = t < .62 ? 1 : t < .86 ? .62 : 0;
-        ck.setAttribute('transform', `translate(0 ${cy}) scale(${sc})`);
-        if (t > .5) this.gy.t = 1.2;
-        if (t > .55 && !c1) { c1 = true; this.chomp(); bite.setAttribute('r', '2.4'); }
-        if (t > .8 && !c2) { c2 = true; this.chomp(); }
-        if (t > 1 && !h) { h = true; this.setExpr('happy'); this.open.t = 1; this.gy.t = 0; [0, .22, .44].forEach((d, i) => this.later(d, () => this.heart((i - 1) * 6, -4))); }
-      }, () => { this.removeParticle(ck); this.recover('cookie'); });
+      this.startCookie(false);
     }
     if (kind === 'round') {
       if (this.busyWith) return;
@@ -216,16 +200,43 @@ export class CharacterEngine {
       this.fx(1.4, () => {}, () => { this.celebrating = false; this.setExpr('normal'); });
     }
   }
+  /** External flight replaces only the prototype's first .5 s; REDUCED is unchanged. */
+  cookieArrived(onFinished?: () => void): boolean { return this.startCookie(true, onFinished); }
+  private startCookie(arrived: boolean, onFinished?: () => void): boolean {
+    if (this.disposed || this.busyWith) return false;
+    const R = this.options.reduced(), offset = arrived && !R ? .5 : 0;
+    this.busyWith = 'cookie';
+    const finish = () => { if (this.cookieFinishes.delete(finish)) onFinished?.(); };
+    this.cookieFinishes.add(finish);
+    const ck = this.particle('g', { class: 'raio-char__cookie', opacity: offset ? 1 : 0, ...(offset ? { transform: 'translate(0 4.5) scale(1)' } : {}) });
+    this.E('circle', { r: 5, fill: '#d9a066' }, ck); this.E('circle', { r: 5, fill: 'none', stroke: '#b9824c', 'stroke-width': .6 }, ck);
+    [[-1.8, -1.2], [1.6, -.6], [-.2, 1.8], [1.9, 2]].forEach(([x, y]) => this.E('circle', { cx: x!, cy: y!, r: .75, fill: '#5e3b22' }, ck));
+    const bite = this.E('circle', { cx: 4.6, cy: -2.6, r: 0, fill: '#1d2028' }, ck);
+    let c1 = false, c2 = false, h = false;
+    this.open.t = 1.25; this.gy.t = offset ? 1.2 : -1.6;
+    this.fx(R ? 1.6 : 2.3 - offset, (_k, elapsed) => {
+      const t = elapsed + offset;
+      if (R) { ck.setAttribute('opacity', String(t < .6 ? eo(t / .3) : Math.max(0, 1 - (t - .6) / .2))); ck.setAttribute('transform', 'translate(0 -19)'); if (t > .8 && !h) { h = true; this.setExpr('happy'); this.heart(0, 0, true); } return; }
+      const fall = eio(clamp(t / .5)); ck.setAttribute('opacity', String(Math.min(1, t / .12)));
+      const cy = lerp(-34, 4.5, fall), sc = t < .62 ? 1 : t < .86 ? .62 : 0;
+      ck.setAttribute('transform', `translate(0 ${cy}) scale(${sc})`);
+      if (t > .5) this.gy.t = 1.2;
+      if (t > .55 && !c1) { c1 = true; this.chomp(); bite.setAttribute('r', '2.4'); }
+      if (t > .8 && !c2) { c2 = true; this.chomp(); }
+      if (t > 1 && !h) { h = true; this.setExpr('happy'); this.open.t = 1; this.gy.t = 0; [0, .22, .44].forEach((d, i) => this.later(d, () => this.heart((i - 1) * 6, -4))); }
+    }, () => { this.removeParticle(ck); this.recover('cookie'); finish(); });
+    return true;
+  }
   private chomp() {
     this.sx.x = 1.1; this.sy.x = .88;
     for (let i = 0; i < 3; i++) {
-      const c = this.particle('circle', { r: .7, fill: '#c9945e', cx: 0, cy: 7, opacity: 0 });
+      const c = this.particle('circle', { class: 'raio-char__crumb', r: .7, fill: '#c9945e', cx: 0, cy: 7, opacity: 0 });
       const vx = (this.random() - .5) * 16, vy = -6 - this.random() * 6; let x = (this.random() - .5) * 4, y = 7;
       this.fx(.7, k => { x += vx * .016; y += (vy + 60 * k) * .016; c.setAttribute('cx', String(x)); c.setAttribute('cy', String(y)); c.setAttribute('opacity', String(1 - k)); }, () => this.removeParticle(c));
     }
   }
   private heart(x0: number, y0: number, still = false) {
-    const g = this.particle('g', { opacity: 0 }); this.E('path', { d: HEART, fill: '#ff9fb8' }, g);
+    const g = this.particle('g', { class: 'raio-char__heart', opacity: 0 }); this.E('path', { d: HEART, fill: '#ff9fb8' }, g);
     const drift = (this.random() - .5) * 4;
     this.fx(1.3, k => { const y = still ? y0 - 16 : lerp(y0 - 12, y0 - 30, eo(k)); g.setAttribute('transform', `translate(${x0 + drift * k} ${y}) scale(${still ? 1.4 : lerp(.9, 1.5, eo(k))})`); g.setAttribute('opacity', String(k < .2 ? k / .2 : 1 - (k - .2) / .8)); }, () => this.removeParticle(g));
   }
@@ -281,5 +292,5 @@ export class CharacterEngine {
     if (this.cL && this.cR) { const o = clamp(ex.normal.x / tot) * (this.open.x > .5 ? 1 : 0); this.cL.setAttribute('opacity', String(o)); this.cR.setAttribute('opacity', String(o)); }
     this.sparks.forEach(sp => { const s = Math.max(0, sp.s.x); sp.g.setAttribute('transform', `translate(${(sp.x.x + this.ox.x).toFixed(2)} ${(sp.y.x + this.oy.x).toFixed(2)}) scale(${s.toFixed(3)})`); sp.g.setAttribute('opacity', s > .02 ? '1' : '0'); });
   }
-  dispose() { this.disposed = true; this.effects = []; this.timers = []; this.particles.clear(); this.nodes.forEach(n => n.remove()); this.nodes = []; }
+  dispose() { this.disposed = true; this.effects = []; this.timers = []; this.particles.clear(); this.nodes.forEach(n => n.remove()); this.nodes = []; this.cookieFinishes.forEach(finish => finish()); }
 }

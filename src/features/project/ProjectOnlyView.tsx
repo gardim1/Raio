@@ -19,6 +19,7 @@ import { TitleBar } from '../panel/TitleBar';
 import { useSessionUi } from '../session/store/sessionStore';
 import type { ProjectMapSnapshot } from './projectMap';
 import { projectMapFrame } from './projectMapFrame';
+import { ExpandedCompanionActions } from '../raio/ExpandedCompanionActions';
 
 /** The connected repository before telemetry. No session model, clock, timeline or replay is constructed. */
 export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapshot: ProjectMapSnapshot; readonly mode: Surface; readonly companion?: CompanionPresence }) => {
@@ -45,6 +46,7 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
     <div className="expanded-dock">
       <div className="panel expanded" style={{ borderRadius: 28 }}>
         <TitleBar companion={companion} nativeWindow={nativeWindow} project={snapshot.project.name} agent="unknown" task="Project overview" taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
+          <ExpandedCompanionActions />
           <IconButton label="Open Mini Player" onClick={() => go('mini')}><PictureInPictureIcon /></IconButton>
           <IconButton label="Show as Island" onClick={() => go('island')}><IslandIcon /></IconButton>
         </>} />

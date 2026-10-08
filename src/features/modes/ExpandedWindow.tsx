@@ -23,6 +23,7 @@ import { ConnectionFooter } from '../panel/ConnectionFooter';
 import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
 import type { DesktopBridge } from '../../platform/desktopBridge';
 import { lastRecordedSession } from '../session/model/lastRecordedSession';
+import { ExpandedCompanionActions } from '../raio/ExpandedCompanionActions';
 
 /** Matches the Windows-only chrome configuration in surfaces.rs; the harness never opens a native API. */
 export const expandedWindowChrome = (
@@ -109,6 +110,7 @@ export const ExpandedWindow = ({
           {...(isReplay ? { statusLabel: frame.ui.finished ? 'Replay complete' : 'Replay', taskPrefix: `Replay of a ${formatOffset(insights.durationMs)} session:` } : {})}
           actions={
             <>
+              <ExpandedCompanionActions />
               <IconButton label="Open Mini Player" onClick={onPinMini}>
                 <PictureInPictureIcon />
               </IconButton>

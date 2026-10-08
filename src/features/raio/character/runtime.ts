@@ -1,6 +1,7 @@
 import { isSurfaceVisible, subscribeSurfaceVisibility } from '../../../shared/motion/surfaceVisibility';
 import type { CharacterEngine } from './engine';
 import type { CharacterReaction } from './types';
+import { registerCookieTarget } from './cookieTargets';
 
 interface AnimatedCharacter {
   update(dt: number): boolean;
@@ -99,7 +100,8 @@ export const characterLoop = (): CharacterLoop => runtime ??= new CharacterLoop(
 export const mountCharacter = (engine: CharacterEngine): (() => void) => {
   if (mediaUsers++ === 0 && typeof matchMedia !== 'undefined') { media = matchMedia('(prefers-reduced-motion: reduce)'); media.addEventListener('change', mediaChange); }
   const stop = characterLoop().add(engine);
-  return () => { stop(); engine.dispose(); if (--mediaUsers === 0) { media?.removeEventListener('change', mediaChange); media = undefined; } };
+  const stopTarget = registerCookieTarget(engine);
+  return () => { stopTarget(); stop(); engine.dispose(); if (--mediaUsers === 0) { media?.removeEventListener('change', mediaChange); media = undefined; } };
 };
 export const requestCharacterReaction = (kind: CharacterReaction): void => { runtime?.react(kind); };
 

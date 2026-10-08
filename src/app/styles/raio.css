@@ -54,6 +54,36 @@ svg text { font-family: var(--raio-font-ui); }
 .mini-orb > .raio-char { position: absolute; left: 50%; top: 50%; width: var(--raio-char-box); height: var(--raio-char-box); transform: translate(-50%, -50%); }
 .raio-orb { pointer-events: none; }
 
+/* ---------- Claude plan limits and the approved external cookie ---------- */
+.cookie-flight { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 90; overflow: visible; }
+.cookie-button { color: var(--raio-color-text-muted); }
+.usage-rings { position: relative; flex: none; z-index: 30; }
+.usage-rings__button { display: flex; align-items: center; gap: 4px; padding: 0 3px; min-height: 32px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.usage-rings__button:hover { background: var(--raio-color-surface-raised-hover); }
+.usage-rings__svg { display: block; width: 32px; height: 32px; flex: none; overflow: visible; }
+.usage-rings__track, .usage-rings__fill { fill: none; stroke-width: 2.5; }
+.usage-rings__track { stroke: currentColor; opacity: .14; }
+.usage-rings__fill { stroke: currentColor; stroke-linecap: butt; }
+.usage-rings__fiveHour { color: var(--raio-color-accent-cool); }
+.usage-rings__sevenDay { color: var(--raio-color-accent-success); }
+.usage-rings__missing { fill: var(--raio-color-text-muted); text-anchor: middle; font-size: 9px; }
+.usage-rings__unavailable { max-width: 76px; text-align: left; font-size: 11px; line-height: 1.25; color: var(--raio-color-text-muted); }
+.usage-rings--stale .usage-rings__svg { opacity: .4; }
+.usage-details-wrap { position: absolute; right: 0; top: 100%; width: min(320px, calc(100vw - 32px)); padding-top: 8px; }
+.usage-details { padding: 14px 16px; border: 1px solid var(--raio-color-border-control); border-radius: 14px; background: var(--raio-color-surface-island); box-shadow: 0 12px 32px rgba(0, 0, 0, .25); color: var(--raio-color-text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.usage-details strong { display: block; margin-bottom: 7px; color: var(--raio-color-text-primary); font-weight: 600; }
+.usage-details p { margin: 5px 0 0; }
+.usage-details__five-hour::before, .usage-details__weekly::before { content: ''; display: inline-block; width: 5px; height: 5px; margin: 0 6px 2px 0; border-radius: 50%; }
+.usage-details__five-hour::before { background: var(--raio-color-accent-cool); }
+.usage-details__weekly::before { background: var(--raio-color-accent-success); }
+.usage-rings--compact .usage-rings__svg { width: 28px; height: 28px; }
+.usage-rings--compact { width: 100%; min-width: 0; }
+.usage-rings--compact .usage-details-wrap { position: static; width: 100%; max-width: 280px; }
+.usage-demo { margin-top: 24px; }
+.usage-demo__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.usage-demo__state { padding: 12px; border: 1px solid var(--raio-color-border-control); border-radius: 14px; }
+.usage-demo__state h3 { margin: 0 0 8px; font-size: 12px; color: var(--raio-color-text-muted); }
+
 /* ---------- Panel (canonical) ---------- */
 .panel {
   position: relative;

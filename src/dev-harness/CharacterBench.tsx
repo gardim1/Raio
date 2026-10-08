@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { RaioCharacter, requestCharacterReaction, type CharacterMode, type CharacterReaction } from '../features/raio/character';
 import { characterLoop, setCharacterRandom, setCharacterReducedMotion } from '../features/raio/character/runtime';
 import { frozenClock } from '../shared/motion/frozenClock';
+import { UsageDemoPanel } from './UsageDemoPanel';
 
 const STATES: readonly [CharacterMode, string][] = [['idle', 'Waiting'], ['working', 'Agent working'], ['attention', 'Attention'], ['failure', 'Observed failure'], ['passed', 'Check passed again']];
 const REACTIONS: readonly [CharacterReaction, string][] = [['click', 'One click'], ['dizzy', 'Several clicks'], ['cookie', 'Give a cookie'], ['round', 'Turn ended · tests not verified'], ['celebrate', 'Celebrate (simulated)']];
@@ -80,5 +81,6 @@ export const CharacterBench = () => {
       <figure><RaioCharacter size="map" mode={mode} interactive label="Raio · map size" /><figcaption>Map · 22 px body</figcaption></figure>
       <figure><RaioCharacter size="island" mode={mode} interactive label="Raio · Island size" /><figcaption>Island · 28 px box / 14 px body</figcaption></figure>
     </div>
+    <UsageDemoPanel />
   </main>;
 };
