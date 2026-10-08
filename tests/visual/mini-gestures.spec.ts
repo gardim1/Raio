@@ -30,7 +30,7 @@ for (const state of ['project-only', 'session'] as const) {
 
     // Pin is a header button; its pointer gesture must not move or resize the Mini.
     const resized = await rect();
-    await page.getByRole('button', { name: /Keep on top|Unpin/ }).click();
+    await page.getByRole('button', { name: /^(Keep on top|Stop keeping on top)$/ }).click();
     await expect.poll(rect).toEqual(resized);
     await page.mouse.move(200, 200);
     await expect.poll(rect).toEqual(resized);
