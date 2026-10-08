@@ -322,7 +322,13 @@ svg text { font-family: var(--raio-font-ui); }
   outline: none;
 }
 .island--open { width: 384px; height: 156px; }
-.island:focus-visible { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
+.island:has(.island__trigger:focus-visible) { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
+.island__trigger { appearance: none; border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; outline: none; }
+.island__heading { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.island__collapsed-content, .island__heading-content { display: contents; }
+.island__collapsed-content[hidden] { display: none; }
+.island__preview { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
+.island__preview[hidden] { display: none; }
 .island__closed { height: 34px; min-width: 148px; max-width: 382px; display: flex; align-items: center; gap: 9px; padding: 0 14px 0 11px; white-space: nowrap; }
 .island__label { font-size: 12.5px; font-weight: 500; color: var(--raio-color-text-status); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .island__dot { width: 6px; height: 6px; border-radius: 50%; margin-left: auto; flex: none; background: rgba(255, 255, 255, 0.3); }

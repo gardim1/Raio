@@ -23,3 +23,18 @@ export const islandPresenceActivity = (facts: readonly PresenceFact[], now: numb
   const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
   return `${latest.source}${at ? ` · ${at}` : ''}`;
 };
+
+/** Use the companion's project-wide observations, including facts omitted by the replay projection. */
+export const islandObservedActivity = (facts: readonly PresenceFact[], now: number, timeZone?: string): string => {
+  const latest = facts.reduce<PresenceFact | null>((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at >= last.at) ? fact : last, null);
+  if (!latest) return 'No activity observed';
+  // The shared facts deliberately group commands and turn boundaries as activity; do not infer a result.
+  const label = latest.kind === 'activity' ? 'Activity observed'
+    : latest.kind === 'change' ? 'File change observed'
+      : latest.kind === 'edit-failed' ? 'Edit failed'
+        : latest.kind === 'start' ? 'Session started'
+          : latest.kind === 'end' ? 'Session ended'
+            : `${latest.checkClass === 'tests' ? 'Tests' : latest.checkClass === 'build' ? 'Build' : 'Command'} ${latest.result ?? 'unknown'} (recorded)`;
+  const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
+  return `${label}${at ? ` · ${at}` : ''} · ${latest.source}`;
+};

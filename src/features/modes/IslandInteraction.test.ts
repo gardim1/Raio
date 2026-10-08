@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { IslandShell } from './IslandShell';
 import { createFixtureBridge } from '../../platform/fixtureBridge';
+import { createElement } from 'react';
 
 // Exercise the real shell handlers/effect with native IPC injected, without a webview or DOM.
 const hooks = vi.hoisted(() => ({ open: false, visible: true, setup: null as (() => (() => void) | undefined) | null, ref: { current: null as unknown }, bridge: {} as ReturnType<typeof createFixtureBridge> }));
@@ -8,6 +9,7 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
   useState: () => [hooks.open, (value: boolean) => { hooks.open = value; }],
   useRef: () => hooks.ref,
   useEffect: (setup: typeof hooks.setup) => { hooks.setup = setup; },
+  useId: () => 'island-preview-test',
 }));
 vi.mock('../../platform/BridgeContext', () => ({ useBridge: () => hooks.bridge }));
 vi.mock('../../shared/motion/surfaceVisibility', () => ({ useSurfaceVisible: () => hooks.visible }));
@@ -38,4 +40,40 @@ it('browser hover, focus-within and Escape use the same compact preview and canc
 it('hidden Island registers no pointer work and renders no open preview', () => {
   hooks.visible = false; hooks.open = true; const listen = vi.fn(); hooks.bridge.onIslandPointer = listen;
   expect(capsule().props['aria-expanded']).toBe(false); hooks.setup!(); expect(listen).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+});
+it('capsule disclosure is a real button beside its named preview, and activation never changes surfaces', () => {
+  const show = vi.fn(); hooks.bridge.showSurface = show;
+  const el = capsule(); const stop = hooks.setup!()!;
+  const content = el.props.children.props.children;
+  const button = content[0].props.children[0]; const preview = content[1];
+  expect(button?.type).toBe('button');
+  expect(button.props['aria-label']).toBe('Raio: Fixture state');
+  expect(button.props['aria-controls']).toBe(preview.props.id);
+  expect(preview.props.role).toBe('group');
+  expect(preview.props['aria-label']).toBe('Island preview');
+  expect(el.props.tabIndex).toBeUndefined();
+  button.props.onClick();
+  button.props.onClick();
+  expect(hooks.open).toBe(true);
+  expect(show).not.toHaveBeenCalled();
+  expect(capsule().props.children.props.children[0].props.children[0].props['aria-expanded']).toBe(true);
+  stop();
+});
+it('hover and Escape keep collapsed label content in the same child slot instead of replacing it with the heading', () => {
+  const label = createElement('span', { className: 'island__label' }, 'projeto com espaços e acentos — ' + 'long folder name '.repeat(8));
+  const button = () => IslandShell({ description: 'Fixture', collapsed: label, heading: 'Project heading', children: 'Preview' })
+    .props.children.props.children.props.children[0].props.children[0];
+  const closed = button(); const stop = hooks.setup!()!;
+  expect(closed.props.children[0]?.props.children).toBe(label);
+  expect(closed.props.children[0].props.hidden).toBe(false);
+  const el = capsule(); el.props.onPointerEnter();
+  const open = button();
+  expect(open.props.children[0]?.props.children).toBe(label);
+  expect(open.props.children[0].type).toBe(closed.props.children[0].type);
+  expect(open.props.children[0].key).toBe(closed.props.children[0].key);
+  expect(open.props.children[0].props.hidden).toBe(true);
+  el.props.onKeyDown({ key: 'Escape', stopPropagation: () => {} });
+  expect(button().props.children[0].props.children).toBe(label);
+  expect(button().props.children[0].props.hidden).toBe(false);
+  stop();
 });
