@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { AgentStatus } from '../../shared/ui/AgentStatus';
 import { agentFullName, agentShortName } from '../../shared/ui/agentName';
 import { Button, IconButton } from '../../shared/ui/Button';
-import { ExpandIcon, PinIcon, PlayIcon } from '../../shared/ui/icons';
+import { ExpandIcon, PictureInPictureIcon, PlayIcon } from '../../shared/ui/icons';
 import { RiskPill } from '../../shared/ui/RiskPill';
 import { MiniOrb } from '../raio/MiniOrb';
 import type { FrameState } from '../session/model/evaluateFrame';
@@ -106,8 +106,8 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
                   </span>
                 )}
                 <span className="island__spacer" />
-                <IconButton label="Pin as mini player" onClick={onPinMini}>
-                  <PinIcon />
+                <IconButton label="Open Mini Player" onClick={onPinMini}>
+                  <PictureInPictureIcon />
                 </IconButton>
                 <IconButton label="Open full view" onClick={onExpand}>
                   <ExpandIcon />

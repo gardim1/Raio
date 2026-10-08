@@ -1,9 +1,9 @@
 import { motion } from 'motion/react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { agentFullName } from '../../shared/ui/agentName';
 import { Button, IconButton } from '../../shared/ui/Button';
-import { CollapseIcon, PinIcon, PlayIcon } from '../../shared/ui/icons';
+import { IslandIcon, PictureInPictureIcon, PlayIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
 import type { ArchitectureGraph, NodeId } from '../architecture/model/types';
 import { PanelFooter } from '../panel/PanelFooter';
@@ -83,7 +83,7 @@ export const ExpandedWindow = ({
   const evidence = snapshotNow?.evidence;
   const bridge = useBridge();
   const connector = bridge.connector;
-  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const nativeWindow = useMemo(() => expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [bridge]);
   const agentFull = agentFullName(script.agent);
   // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
   const overview =
@@ -113,11 +113,11 @@ export const ExpandedWindow = ({
           {...(isReplay ? { statusLabel: frame.ui.finished ? 'Replay complete' : 'Replay', taskPrefix: `Replay of a ${formatOffset(insights.durationMs)} session:` } : {})}
           actions={
             <>
-              <IconButton label="Pin as mini player" onClick={onPinMini}>
-                <PinIcon />
+              <IconButton label="Open Mini Player" onClick={onPinMini}>
+                <PictureInPictureIcon />
               </IconButton>
-              <IconButton label="Tuck into Island" onClick={onIsland}>
-                <CollapseIcon />
+              <IconButton label="Show as Island" onClick={onIsland}>
+                <IslandIcon />
               </IconButton>
             </>
           }

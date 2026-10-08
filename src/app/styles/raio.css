@@ -81,24 +81,33 @@ svg text { font-family: var(--raio-font-ui); }
 }
 .titlebar__dots { display: flex; gap: 7px; margin-right: 6px; }
 .titlebar__dots i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); }
-.titlebar--native { user-select: none; }
+.titlebar--native { user-select: none; padding-right: 0; }
 .titlebar--native .titlebar__task--show { pointer-events: auto; user-select: text; }
+.titlebar--native .titlebar__brand, .titlebar--native .titlebar__end { flex: none; }
+.titlebar--native .titlebar__project { min-width: 0; max-width: min(20vw, 240px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In native chrome task text occupies its own shrinking slot, never an overlay above buttons. */
+.titlebar--native .titlebar__task { position: static; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; transform: translateY(4px); }
+.titlebar--native .titlebar__task--show { transform: translateY(0); }
+.titlebar__caption { display: flex; align-self: stretch; flex: none; margin-left: 4px; border-left: 1px solid var(--raio-color-border-divider); }
 .titlebar__control {
   appearance: none;
-  width: 11px;
-  height: 11px;
+  width: 46px;
+  height: 100%;
   padding: 0;
   border: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  background: transparent;
   color: var(--raio-color-text-secondary);
   display: grid;
   place-items: center;
   cursor: pointer;
 }
-.titlebar__control svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; opacity: 0; pointer-events: none; }
-.titlebar__control:hover svg, .titlebar__control:focus svg { opacity: 1; }
-.titlebar__control:focus-visible { outline: 2px solid var(--raio-color-text-secondary); outline-offset: 2px; }
+.titlebar__control svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; pointer-events: none; }
+.titlebar__control:hover { background: rgba(255, 255, 255, 0.08); }
+.titlebar__control:active { background: rgba(255, 255, 255, 0.05); }
+.titlebar__control--close:hover { background: #c42b1c; color: #fff; }
+.titlebar__control--close:active { background: #a92317; color: #fff; }
+.titlebar__control:focus-visible { outline: 2px solid var(--raio-color-text-secondary); outline-offset: -3px; }
 .titlebar__brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
 .titlebar__brand .mini-orb { box-shadow: var(--raio-color-raio-css-orb-shadow) !important; }
 .titlebar__sep { width: 1px; height: 14px; background: var(--raio-color-border-separator); }
@@ -295,6 +304,7 @@ svg text { font-family: var(--raio-font-ui); }
   transition: background 0.2s ease, color 0.2s ease;
 }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.icon-btn:focus-visible { outline: 2px solid var(--raio-color-text-secondary); outline-offset: 2px; }
 .icon-btn--active { background: rgba(138, 180, 255, 0.14); color: #dce8ff; }
 .icon-btn svg { width: 13px; height: 13px; }
 

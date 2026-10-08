@@ -7,7 +7,10 @@ import { createProjectFixtureBridge } from '../../../src/platform/fixtureBridge'
 import { setNativeSurfaceVisible } from '../../../src/shared/motion/surfaceVisibility';
 import '../../../src/platform/native.css';
 
-export const mountConnectPreviewFixture = (initialRoot?: string) => {
+let updateMaximized = (_value: boolean) => {};
+export const setFixtureMaximized = (value: boolean) => updateMaximized(value);
+
+export const mountConnectPreviewFixture = (initialRoot?: string, initialMaximized = false) => {
   setNativeSurfaceVisible(true);
   document.documentElement.classList.add('native', 'surface-expanded');
   const host = document.createElement('div');
@@ -33,7 +36,16 @@ export const mountConnectPreviewFixture = (initialRoot?: string) => {
       disconnect: async () => {},
     },
   };
-  const windowApi = { startDragging: () => record('drag'), toggleMaximize: () => record('maximize'), minimize: () => record('minimize'), close: () => record('close') };
+  let maximized = initialMaximized;
+  const resizeListeners = new Set<() => void>();
+  updateMaximized = value => { maximized = value; resizeListeners.forEach(listener => listener()); };
+  const windowApi = {
+    startDragging: () => record('drag'),
+    toggleMaximize: async () => { updateMaximized(!maximized); await record('maximize'); },
+    minimize: () => record('minimize'), close: () => record('close'),
+    isMaximized: async () => maximized,
+    onResized: async (callback: () => void) => { resizeListeners.add(callback); return () => { resizeListeners.delete(callback); }; },
+  };
   createRoot(host).render(createElement(BridgeProvider, { bridge, children: createElement('div', null,
     createElement(ExpandedConnectView, { connector: bridge.connector, initialRoot, windowApi }),
     createElement('output', { 'aria-label': 'Fixture actions', style: { position: 'fixed', bottom: 0, right: 0, pointerEvents: 'none' } }, JSON.stringify(calls)),

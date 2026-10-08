@@ -108,7 +108,7 @@ export const ExpandedConnectView = ({ connector, initialRoot, onClose, windowApi
   readonly windowApi?: TitleBarWindowApi;
 }) => {
   const bridge = useBridge();
-  const nativeWindow = windowApi ?? expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const nativeWindow = useMemo(() => windowApi ?? expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [windowApi, bridge]);
   const [previewRoot, setPreviewRoot] = useState(initialRoot ?? null);
   const previewPresence: CompanionPresence = { state: 'disconnected', label: 'Connect preview', description: 'Connect preview · confirm the settings review to connect this folder', records: [], activeUntil: null };
   const root = previewRoot;

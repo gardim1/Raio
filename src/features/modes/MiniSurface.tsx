@@ -3,7 +3,7 @@ import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, us
 import { isSurfaceVisible, useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { clamp } from '../../shared/motion/easing';
 import { IconButton } from '../../shared/ui/Button';
-import { CollapseIcon, ExpandIcon, PinIcon } from '../../shared/ui/icons';
+import { IslandIcon, ExpandIcon, PinIcon } from '../../shared/ui/icons';
 import { tokens } from '../../tokens';
 import type { AgentStatusState } from '../session/model/script';
 import { MORPH_TRANSITION } from './presence';
@@ -65,8 +65,8 @@ export const MiniSurface = ({ project, projectTitle, status, stateLabel, pinned,
         <span className="mini__project" title={projectTitle}>{project}</span>
         <span className="mini__state" title={companion?.description}>{companion && companion.activeUntil === null && !/Replay/.test(stateLabel) ? companion.label : stateLabel}</span>
         <span className="mini__spacer" />
-        <IconButton label={pinned ? 'Unpin (stop floating on top)' : 'Keep on top'} active={pinned} onClick={onTogglePin}><PinIcon filled={pinned} /></IconButton>
-        <IconButton label="Tuck into Island" onClick={onCollapse}><CollapseIcon /></IconButton>
+        <IconButton label={pinned ? 'Stop keeping on top' : 'Keep on top'} active={pinned} onClick={onTogglePin}><PinIcon filled={pinned} /></IconButton>
+        <IconButton label="Show as Island" onClick={onCollapse}><IslandIcon /></IconButton>
         <IconButton label="Open full view" onClick={onExpand}><ExpandIcon /></IconButton>
       </header>
       <div className="mini__map">{children}</div>

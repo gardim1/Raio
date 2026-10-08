@@ -11,6 +11,8 @@ const windowApi = () => {
     minimize: async () => { state.minimized = true; },
     toggleMaximize: async () => { state.maximized = !state.maximized; },
     startDragging: async () => { state.drags++; },
+    isMaximized: async () => state.maximized,
+    onResized: async () => () => {},
   };
   return { api, state };
 };
@@ -28,23 +30,14 @@ describe('Expanded product titlebar chrome', () => {
     expect(TitleBar(props).props.onMouseDown).toBeUndefined();
   });
 
-  it('makes the native dots accessible buttons in close/minimize/maximize order', async () => {
-    const { api, state } = windowApi();
-    const bar = TitleBar({ ...props, nativeWindow: api });
-    const buttons = bar.props.children[0].props.children;
-    expect(buttons.map((b: { props: { 'aria-label': string } }) => b.props['aria-label'])).toEqual([
-      'Close window', 'Minimize window', 'Maximize or restore window',
+  it('puts Windows caption controls after the status/actions, without left dots', () => {
+    const { api } = windowApi();
+    const markup = renderToStaticMarkup(createElement(TitleBar, { ...props, nativeWindow: api, actions: createElement('button', null, 'Mode shortcut') }));
+    expect([...markup.matchAll(/aria-label="([^"]+)"/g)].map(match => match[1])).toEqual([
+      'Window controls', 'Minimize', 'Maximize', 'Close (Raio keeps running; quit from the tray)',
     ]);
-    expect(renderToStaticMarkup(bar)).not.toContain('class="titlebar__dots" aria-hidden');
-    for (const b of buttons) expect(b.props.type).toBe('button');
-    await buttons[0].props.onClick();
-    expect(state).toEqual({ closed: true, minimized: false, maximized: false, drags: 0 });
-    await buttons[1].props.onClick();
-    expect(state.minimized).toBe(true);
-    await buttons[2].props.onClick();
-    expect(state.maximized).toBe(true);
-    await buttons[2].props.onClick();
-    expect(state.maximized).toBe(false);
+    expect(markup).not.toContain('titlebar__dots');
+    expect(markup.indexOf('Mode shortcut')).toBeLessThan(markup.indexOf('titlebar__caption'));
   });
 
   it('starts a native drag on a primary press in a noninteractive titlebar area', async () => {

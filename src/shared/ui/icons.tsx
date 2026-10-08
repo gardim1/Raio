@@ -22,6 +22,12 @@ export const ExpandIcon = () => (
 export const CollapseIcon = () => (
   <svg {...base} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5h3V2M11 9H8v3M6 5 2.5 1.5M8 9l3.5 3.5" /></svg>
 );
+export const PictureInPictureIcon = () => (
+  <svg {...base} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><rect x="7" y="7" width="4" height="3" rx="0.5" fill="currentColor" stroke="none" /></svg>
+);
+export const IslandIcon = () => (
+  <svg {...base} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><rect x="5" y="1.5" width="4" height="3" rx="1.5" fill="currentColor" stroke="none" /></svg>
+);
 export const PinIcon = ({ filled = false }: { readonly filled?: boolean }) => (
   <svg {...base} fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><path d="M5 1.8h4l-.6 3.6 2.1 1.9H3.5l2.1-1.9z" /><path d="M7 7.3v4.9" strokeLinecap="round" /></svg>
 );

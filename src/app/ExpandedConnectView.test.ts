@@ -8,7 +8,7 @@ import { BridgeProvider } from '../platform/BridgeContext';
 import { createFixtureBridge } from '../platform/fixtureBridge';
 import type { DesktopBridge } from '../platform/desktopBridge';
 
-const windowApi = { close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {} };
+const windowApi = { close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {}, isMaximized: async () => false, onResized: async () => () => {} };
 const bridgeFor = (kind: DesktopBridge['kind']): DesktopBridge => ({
   ...createFixtureBridge(null), kind, fixedSurface: 'expanded',
   connector: { project: () => null, chooseFolder: async () => null, preview: vi.fn(), connect: vi.fn(), disconnect: vi.fn() },
@@ -19,11 +19,13 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 describe('Expanded connection chrome', () => {
   it('keeps all window controls in the actual native empty Expanded flow', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
-    vi.mocked(getCurrentWindow).mockReturnValue(windowApi as ReturnType<typeof getCurrentWindow>);
+    vi.mocked(getCurrentWindow).mockReturnValue(windowApi as unknown as ReturnType<typeof getCurrentWindow>);
     const bridge = bridgeFor('native');
     const html = render(bridge, createElement(product.App));
     expect(html).toContain('titlebar--native');
-    for (const label of ['Close window', 'Minimize window', 'Maximize or restore window']) expect(html).toContain('aria-label="' + label + '"');
+    for (const label of ['Minimize', 'Maximize', 'Close (Raio keeps running; quit from the tray)']) expect(html).toContain('aria-label="' + label + '"');
+    expect(html.match(/class="titlebar /g)).toHaveLength(1);
+    expect(html).not.toContain('titlebar__dots');
     expect(html).toContain('Choose a folder');
     expect(html).not.toContain('Unknown agent');
     expect(html).toContain('data-presence="disconnected"');
@@ -31,12 +33,12 @@ describe('Expanded connection chrome', () => {
   });
   it('keeps native chrome and the chosen folder on the initial intent preview without connecting', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
-    vi.mocked(getCurrentWindow).mockReturnValue(windowApi as ReturnType<typeof getCurrentWindow>);
+    vi.mocked(getCurrentWindow).mockReturnValue(windowApi as unknown as ReturnType<typeof getCurrentWindow>);
     expect(product.ExpandedConnectView).toBeTypeOf('function');
     const bridge = bridgeFor('native');
     const html = render(bridge, createElement(product.ExpandedConnectView, { connector: bridge.connector!, initialRoot: 'C:/fixture/New folder', onClose: () => {} }));
     expect(html).toContain('titlebar--native');
-    expect(html).toContain('aria-label="Close window"');
+    expect(html).toContain('aria-label="Close (Raio keeps running; quit from the tray)"');
     expect(html).toContain('Reviewing C:/fixture/New folder');
     expect(html).toContain('New folder');
     expect(html).toContain('Cancel');
@@ -47,7 +49,7 @@ describe('Expanded connection chrome', () => {
     const bridge = bridgeFor('fixture');
     const html = render(bridge, createElement(product.App));
     expect(html).toContain('class="titlebar__dots" aria-hidden="true"');
-    expect(html).not.toContain('aria-label="Close window"');
+    expect(html).not.toContain('titlebar__caption');
     expect(getCurrentWindow).not.toHaveBeenCalled();
   });
 });

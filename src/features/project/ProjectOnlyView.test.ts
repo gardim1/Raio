@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const windowApi = vi.hoisted(() => ({ close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {} }));
+const windowApi = vi.hoisted(() => ({ close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {}, isMaximized: async () => false, onResized: async () => () => {} }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => windowApi }));
 
 import { BridgeProvider } from '../../platform/BridgeContext';
@@ -16,6 +16,8 @@ import { derivePresence } from '../modes/presence';
 import { compileReplay } from '../session/model/compileReplay';
 import type { SessionLog } from '../session/model/events';
 import { deriveInsights } from '../session/model/insights';
+import { canonicalScript } from '../session/model/canonicalScript';
+import { evaluateFrame } from '../session/model/evaluateFrame';
 
 const oneSystem = projectMap({ id: 'qa', name: 'QA fixture' }, { files: ['package.json'], manifests: [], truncated: false, skipped: 0, scannedAtMs: 1 }, null, { provenance: 'fixture' });
 const render = (bridge: DesktopBridge, snapshot = oneSystem) => renderToStaticMarkup(createElement(BridgeProvider, {
@@ -28,15 +30,15 @@ describe('pre-session Expanded window', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
     const markup = render({ ...createFixtureBridge(null), kind: 'native', fixedSurface: 'expanded' });
     expect(markup).toContain('titlebar--native');
-    expect(markup).toContain('aria-label="Close window"');
-    expect(markup).toContain('aria-label="Minimize window"');
-    expect(markup).toContain('aria-label="Maximize or restore window"');
+    expect(markup).toContain('aria-label="Close (Raio keeps running; quit from the tray)"');
+    expect(markup).toContain('aria-label="Minimize"');
+    expect(markup).toContain('aria-label="Maximize"');
   });
 
   it.each(['Windows NT 10.0', 'Macintosh'])('keeps fixture chrome decorative on %s', (userAgent) => {
     vi.stubGlobal('navigator', { userAgent });
     expect(render(createFixtureBridge(null))).not.toContain('titlebar--native');
-    expect(render(createFixtureBridge(null))).not.toContain('aria-label="Close window"');
+    expect(render(createFixtureBridge(null))).not.toContain('titlebar__caption');
   });
 
   it('keeps native non-Windows chrome decorative', () => {
@@ -68,4 +70,29 @@ describe('ready live Expanded map heading', () => {
     }) }));
     expect(markup).toContain(`<div class="sidebar__task">${expected}</div>`);
   });
+});
+
+it.each([
+  { time: 0, replay: false },
+  { time: 4, replay: false },
+  { time: 4, replay: true },
+  { time: canonicalScript.duration, replay: true },
+])('uses one Windows caption bar for session time=$time, replay=$replay', ({ time, replay }) => {
+  vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
+  const fixture = createFixtureBridge();
+  const snapshot = fixture.currentSession()!;
+  const frame = evaluateFrame(canonicalScript, snapshot.graph, time);
+  const noop = () => {};
+  const html = renderToStaticMarkup(createElement(BridgeProvider, {
+    bridge: { ...fixture, kind: 'native', fixedSurface: 'expanded' },
+    children: createElement(ExpandedWindow, { graph: snapshot.graph, script: canonicalScript, frame, project: snapshot.project,
+      insights: deriveInsights(snapshot.log), presence: derivePresence(canonicalScript, snapshot.graph, frame, replay),
+      selectedNodeId: null, isReplay: replay, onSelectNode: noop, onSelectEvent: noop, onPinMini: noop, onIsland: noop, onViewChanges: noop }),
+  }));
+  expect(html.match(/class="titlebar /g)).toHaveLength(1);
+  expect(html.match(/class="titlebar__caption"/g)).toHaveLength(1);
+  expect(html).not.toContain('titlebar__dots');
+  for (const label of ['Minimize', 'Maximize', 'Close (Raio keeps running; quit from the tray)', 'Open Mini Player', 'Show as Island']) {
+    expect(html).toContain('aria-label="' + label + '"');
+  }
 });

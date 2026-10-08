@@ -6,7 +6,7 @@ import { useBridge } from '../../platform/BridgeContext';
 import type { Surface } from '../../platform/desktopBridge';
 import { receptionProblem } from '../../platform/coreHealth';
 import { IconButton } from '../../shared/ui/Button';
-import { CollapseIcon, PinIcon } from '../../shared/ui/icons';
+import { IslandIcon, PictureInPictureIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
 import { IdleIsland } from '../modes/IdleIsland';
 import { expandedWindowChrome } from '../modes/ExpandedWindow';
@@ -26,6 +26,7 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
   const heading = snapshot.listing === 'pending' ? 'Mapping project' : snapshot.listing === 'unavailable' ? 'Project listing unavailable' : `${snapshot.graph.nodes.length} ${snapshot.graph.nodes.length === 1 ? 'system' : 'systems'} mapped`;
   const problem = receptionProblem(snapshot.core, snapshot.provenance === 'fixture');
   const waiting = problem ?? 'Waiting for an agent session';
+  const nativeWindow = useMemo(() => expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [bridge]);
   const go = (surface: Surface) => bridge.showSurface(surface);
   if (mode === 'island') return <IdleIsland companion={companion} onOpen={() => go('expanded')} />;
   if (mode === 'mini') return (
@@ -35,13 +36,12 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
       <ArchitectureCanvas graph={snapshot.graph} frame={frame} variant="mini" camera={false} fit={snapshot.graph.nodes.length > 0 ? 'content' : 'world'} className="mini__svg" label="Project architecture map" />
     </MiniSurface>
   );
-  const nativeWindow = expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent);
   return (
     <div className="expanded-dock">
       <div className="panel expanded" style={{ borderRadius: 28 }}>
         <TitleBar companion={companion} nativeWindow={nativeWindow} project={snapshot.project.name} agent="unknown" task={waiting} taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
-          <IconButton label="Pin as mini player" onClick={() => go('mini')}><PinIcon /></IconButton>
-          <IconButton label="Tuck into Island" onClick={() => go('island')}><CollapseIcon /></IconButton>
+          <IconButton label="Open Mini Player" onClick={() => go('mini')}><PictureInPictureIcon /></IconButton>
+          <IconButton label="Show as Island" onClick={() => go('island')}><IslandIcon /></IconButton>
         </>} />
         <div className="expanded__body">
           <div className="map expanded__map"><ArchitectureCanvas graph={snapshot.graph} frame={frame} className="map__svg" label="Project architecture map" /></div>

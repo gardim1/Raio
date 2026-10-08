@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { expandedWindowChrome } from './ExpandedWindow';
 
 describe('Expanded native chrome selection', () => {
-  const api = { close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {} };
+  const api = { close: async () => {}, minimize: async () => {}, toggleMaximize: async () => {}, startDragging: async () => {}, isMaximized: async () => false, onResized: async () => () => {} };
   it('uses the injected window API only for a native Windows Expanded window', () => {
     const getWindow = vi.fn(() => api);
     expect(expandedWindowChrome({ kind: 'native', fixedSurface: 'expanded' }, 'Mozilla Windows NT 10.0', getWindow)).toBe(api);

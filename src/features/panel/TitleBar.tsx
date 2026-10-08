@@ -4,6 +4,7 @@ import { agentFullName } from '../../shared/ui/agentName';
 import { MiniOrb } from '../raio/MiniOrb';
 import type { AgentId, AgentStatusState } from '../session/model/script';
 import type { CompanionPresence } from '../modes/companionPresence';
+import { WindowCaption } from './WindowCaption';
 
 /** Only supplied for Expanded's undecorated native window; injectable without a Tauri runtime. */
 export interface TitleBarWindowApi {
@@ -11,9 +12,11 @@ export interface TitleBarWindowApi {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   startDragging(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  onResized(callback: () => void): Promise<() => void>;
 }
 
-const runWindowAction = async (action: () => Promise<void>) => {
+export const runWindowAction = async (action: () => Promise<void>) => {
   try {
     await action();
   } catch (error) {
@@ -37,7 +40,7 @@ export interface TitleBarProps {
   readonly taskVisible: boolean;
   readonly status: AgentStatusState;
   readonly statusLabel?: string;
-  /** Show the three muted window dots (desktop window chrome). */
+  /** Show decorative dots, or Windows caption controls when nativeWindow is supplied. */
   readonly windowDots?: boolean;
   readonly nativeWindow?: TitleBarWindowApi;
   readonly actions?: ReactNode;
@@ -47,21 +50,11 @@ export interface TitleBarProps {
   readonly taskIsPlaceholder?: boolean;
 }
 
-/** 54px title bar: dots · brand · project | centred task | status pill (+ actions). */
+/** One 54px bar: decorative dots in the harness; right-hand captions for native Windows Expanded. */
 export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabel, windowDots = true, nativeWindow, actions, taskPrefix, taskIsPlaceholder = false, companion }: TitleBarProps) => (
   <div className={`titlebar${nativeWindow ? ' titlebar--native' : ''}`} onMouseDown={nativeWindow ? (event) => dragTitlebar(nativeWindow, event) : undefined}>
-    {windowDots && (
-      nativeWindow ? <div className="titlebar__dots">
-        <button type="button" className="titlebar__control" aria-label="Close window" title="Close window" onClick={() => runWindowAction(() => nativeWindow.close())}>
-          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 3l4 4M7 3L3 7" /></svg>
-        </button>
-        <button type="button" className="titlebar__control" aria-label="Minimize window" title="Minimize window" onClick={() => runWindowAction(() => nativeWindow.minimize())}>
-          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 5h5" /></svg>
-        </button>
-        <button type="button" className="titlebar__control" aria-label="Maximize or restore window" title="Maximize or restore window" onClick={() => runWindowAction(() => nativeWindow.toggleMaximize())}>
-          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5h5v5h-5z" /></svg>
-        </button>
-      </div> : <div className="titlebar__dots" aria-hidden>
+    {windowDots && !nativeWindow && (
+      <div className="titlebar__dots" aria-hidden>
         <i />
         <i />
         <i />
@@ -89,5 +82,6 @@ export const TitleBar = ({ project, agent, task, taskVisible, status, statusLabe
       <AgentStatus state={status} agent={agent} companion={companion} {...(statusLabel ? { label: statusLabel } : {})} />
       {actions && <div className="titlebar__actions">{actions}</div>}
     </div>
+    {windowDots && nativeWindow && <WindowCaption nativeWindow={nativeWindow} />}
   </div>
 );
