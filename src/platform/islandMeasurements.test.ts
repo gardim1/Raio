@@ -1,8 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setNativeSurfaceVisible } from '../shared/motion/surfaceVisibility';
 import * as effects from './NativeSurfaceEffects';
+import type { Rect } from './desktopBridge';
 afterEach(() => { vi.unstubAllGlobals(); setNativeSurfaceVisible(true); vi.useRealTimers(); });
 describe('Island graphic measurements', () => {
+  it.each([148, 240, 384])('publishes a final open hit box containing the %s px capsule, ignoring spring transforms', width => {
+    vi.useFakeTimers();
+    let changed = () => {};
+    let element = { offsetLeft: (420 - width) / 2, offsetTop: 0, offsetWidth: width, offsetHeight: 36, offsetParent: null,
+      getBoundingClientRect: () => { throw new Error('spring geometry must not drive hit testing'); } };
+    vi.stubGlobal('document', { querySelector: () => element, body: {}, documentElement: { classList: { toggle: vi.fn() } } });
+    class Resize { observe = () => {}; unobserve = () => {}; disconnect = () => {}; }
+    class Mutation extends Resize { constructor(callback: () => void) { super(); changed = callback; } }
+    vi.stubGlobal('ResizeObserver', Resize); vi.stubGlobal('MutationObserver', Mutation);
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 16));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
+    const boxes: Rect[] = [];
+    const stop = effects.observeIslandHitRect({ setIslandHitRect: rect => boxes.push(rect) }, true);
+    vi.advanceTimersByTime(16);
+    element = { ...element, offsetLeft: 18, offsetWidth: 384, offsetHeight: 156 };
+    changed(); vi.advanceTimersByTime(16);
+    const [closed, open] = boxes as [Rect, Rect];
+    expect(open).toEqual({ x: 16, y: -2, width: 388, height: 160 });
+    expect(open.x).toBeLessThanOrEqual(closed.x);
+    expect(open.y).toBeLessThanOrEqual(closed.y);
+    expect(open.x + open.width).toBeGreaterThanOrEqual(closed.x + closed.width);
+    expect(open.y + open.height).toBeGreaterThanOrEqual(closed.y + closed.height);
+    expect(vi.getTimerCount()).toBe(0);
+    stop();
+  });
   it('attaches no observers or frame while hidden', () => {
     const resize = vi.fn(), mutation = vi.fn(), request = vi.fn();
     vi.stubGlobal('ResizeObserver', resize); vi.stubGlobal('MutationObserver', mutation); vi.stubGlobal('requestAnimationFrame', request);

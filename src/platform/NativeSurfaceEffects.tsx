@@ -8,6 +8,7 @@ import { useBridge } from './BridgeContext';
 import { takeSurfaceIntent } from './nativeBridge';
 import { followSurfaceIntent } from './surfaceIntentFollower';
 import { trackSurfaceVisibility } from './surfaceVisibilityTracker';
+import { canStartMiniDrag } from '../features/modes/miniDrag';
 
 /** Extra pixels around the capsule that still count as "on the Island". */
 const HIT_PADDING = 2;
@@ -75,7 +76,7 @@ export const NativeSurfaceEffects = () => {
     if (surface !== 'mini' || !visible) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Element | null;
-      if (!isSurfaceVisible() || e.button !== 0 || !target?.closest('.mini__head') || target.closest('button')) return;
+      if (!isSurfaceVisible() || !target?.closest('.mini__head') || !canStartMiniDrag(target, e.button)) return;
       void getCurrentWindow().startDragging();
     };
     document.addEventListener('pointerdown', onPointerDown, true);

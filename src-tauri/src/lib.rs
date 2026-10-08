@@ -81,6 +81,7 @@ pub fn run() {
             surfaces::set_always_on_top,
             surfaces::take_surface_intent,
             island::set_island_hit_rect,
+            island::island_pointer,
             core::core_status,
             core::list_projects,
             core::project_events,

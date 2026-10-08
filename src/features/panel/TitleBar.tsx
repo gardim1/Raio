@@ -26,7 +26,7 @@ export const runWindowAction = async (action: () => Promise<void>) => {
 
 const dragTitlebar = (window: TitleBarWindowApi, event: MouseEvent<HTMLDivElement>) => {
   const target = event.target as Element;
-  if (event.button !== 0 || event.buttons !== 1 || target.closest('button,a,input,textarea,select,[role="button"],[contenteditable]:not([contenteditable="false"]),.titlebar__task')) return;
+  if (event.button !== 0 || event.buttons !== 1 || target.closest('button,a,input,textarea,select,[role="button"],[contenteditable]:not([contenteditable="false"]),.titlebar__task,.mini-orb')) return;
   event.preventDefault();
   // Use the second mousedown: the OS drag loop may consume the later DOM dblclick event.
   return runWindowAction(() => event.detail === 2 ? window.toggleMaximize() : window.startDragging());
