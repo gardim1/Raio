@@ -30,6 +30,10 @@ html.native.surface-expanded .expanded {
   height: 100vh;
   border-radius: 0;
 }
+/* DWM supplies the native outline; avoid a second CSS outline while keeping the inset highlight. */
+html.native.surface-expanded .panel.expanded {
+  border: 0;
+}
 
 /* A hidden native surface stops every CSS animation (see surfaceVisibility.ts). */
 html.surface-hidden *,
