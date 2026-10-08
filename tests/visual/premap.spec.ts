@@ -10,7 +10,11 @@ for (const view of ['expanded', 'mini', 'island'] as const) {
     await expect(page.getByRole('button', { name: 'View changes' })).toHaveCount(0);
     await expect(page.getByText('Session started', { exact: false })).toHaveCount(0);
     if (view === 'island') {
-      await expect(page.getByText('Connected · quiet', { exact: true })).toBeVisible();
+      await expect(page.getByText('Waiting', { exact: true })).toBeVisible();
+      // Visible copy is short; the disclosure's accessible name retains the connected state.
+      const disclosure = page.getByRole('button', { name: 'Raio: Connected · quiet', exact: true });
+      await expect(disclosure).toBeVisible();
+      await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
     } else {
       await expect(page.getByRole('img', { name: 'Project architecture map' })).toBeVisible();
       await expect(page.locator(view === 'expanded' ? '.status__label' : '.mini__state').filter({ hasText: view === 'mini' ? 'Connected · quiet' : 'No session yet' })).toBeVisible();
