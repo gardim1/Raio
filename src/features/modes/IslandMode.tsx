@@ -1,18 +1,16 @@
 import { IslandShell } from './IslandShell';
-import { AgentStatus } from '../../shared/ui/AgentStatus';
 import { agentFullName, agentShortName } from '../../shared/ui/agentName';
-import { IconButton } from '../../shared/ui/Button';
 import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
 import { useSurfaceStore } from '../../shared/motion/visibleStore';
-import { islandActivity, islandObservedActivity } from './islandActivity';
-import { ExpandIcon, PictureInPictureIcon } from '../../shared/ui/icons';
+import { islandActivity, islandCaption, islandObservedActivity } from './islandActivity';
 import { MiniOrb } from '../raio/MiniOrb';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
 import { useSessionUi } from '../session/store/sessionStore';
 import { islandOrbBobs, islandOrbState } from './islandOrbState';
 import type { Presence } from './presence';
-import type { CompanionPresence } from './companionPresence';
+import { deriveCompanionPresence, type CompanionPresence } from './companionPresence';
+import { fallbackPresenceInput } from './presenceClock';
 import { useSessionMeta } from './sessionMeta';
 
 export interface IslandModeProps {
@@ -32,6 +30,7 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
   const snapshot = useSessionSnapshot();
   const bridge = useBridge();
   const observations = useSurfaceStore(bridge.subscribe, () => bridge.projectPresence?.() ?? null);
+  const effective = companion ?? deriveCompanionPresence(observations ?? fallbackPresenceInput(snapshot, null, bridge.kind === 'fixture'), Date.now());
   const lastActivity = observations
     ? islandObservedActivity(observations.facts, Date.now())
     : `Last replay event · ${islandActivity(snapshot?.log ?? null)} · ${snapshot?.provenance === 'fixture' ? 'Demo fixture' : 'Recorded session log'}`;
@@ -39,44 +38,28 @@ export const IslandMode = ({ script, frame, presence, companion, onPinMini, onEx
   const agent = agentShortName(script.agent);
   const agentFull = agentFullName(script.agent);
   const working = ui.status === 'working';
-  const recentActivity = companion ? companion.activeUntil !== null : working;
   const finished = ui.finished;
-  const ready = ui.status === 'ready' && !replaying;
-  const activityLabel = presence.activeNodeLabel ? `${agent} · ${presence.activeNodeLabel}` : companion?.label ?? `${agent} · starting`;
-  const collapsedLabel = !replaying && !recentActivity && companion ? companion.label : replaying
-    ? 'Replaying'
-    : recentActivity
-      ? activityLabel
-      : presence.recentlyFinished
-        ? `${agent} finished`
-        : finished
-          ? 'Idle'
-          : 'Ready';
-  const description = companion && collapsedLabel !== companion.label
-    ? `${collapsedLabel} · ${companion.description}`
-    : companion?.description ?? collapsedLabel;
+  const collapsedLabel = replaying ? 'Replaying' : islandCaption(effective, presence.activeNodeLabel, agent);
+  const description = !replaying && collapsedLabel === `${agent} · ${presence.activeNodeLabel}`
+    ? `${collapsedLabel} · ${effective.description}` : effective.description;
+  const warning = effective.state === 'failure' || effective.state === 'attention' || effective.state === 'unknown';
+  const activity = warning ? `${effective.description} · Latest: ${lastActivity}`
+    : effective.state === 'connected' ? `No agent active right now. · ${lastActivity}`
+      : lastActivity;
   const orbState = islandOrbState({ working, replaying, recentlyFinished: presence.recentlyFinished, finished });
-  const dotClass = working || replaying ? 'cool' : 'idle';
 
   return (
     <IslandShell description={description} collapsed={<>
-      <MiniOrb companion={companion} size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={islandOrbBobs(orbState)} restartKey={orbState} />
-      <span className="island__label">{companion?.state === 'unknown' ? '? ' : companion?.state === 'disconnected' ? '− ' : ''}{collapsedLabel}</span>
-      {ui.activeRisk && working && !replaying ? <i data-presence={companion?.state} className="island__dot island__dot--warning" /> : <i data-presence={companion?.state} className={`island__dot island__dot--${dotClass}`} />}
-    </>} heading={<>
-        <MiniOrb companion={companion} size={16} glow={0.3 + orb.glowCool * 0.6} warm={orb.glowWarm} />
-        <span className="island__title" title={project || undefined}>{project || 'Raio'}</span>
-    </>} status={<AgentStatus state={ui.status} agent={script.agent} companion={companion} />}>
-      <div className={`island__task${ready ? ' island__task--muted' : ''}`} title={lastActivity}>{replaying ? `${agentFull} · Replay` : observations ? lastActivity : `${agentFull} · ${lastActivity}`}</div>
-      <div className="island__hint island__reason" title={description}>{companion?.state === 'failure' || companion?.state === 'attention' || companion?.state === 'unknown' ? companion.description : recentActivity ? presence.activeNodeLabel ? `Last in ${presence.activeNodeLabel}` : 'Recent observed activity' : lastActivity}</div>
-      <div className="island__row island__row--actions">
-        <span className="island__spacer" />
-        <IconButton label="Open Mini Player" onClick={onPinMini}>
-          <PictureInPictureIcon />
-        </IconButton>
-        <IconButton label="Open full view" onClick={onExpand}>
-          <ExpandIcon />
-        </IconButton>
+      <span className="island__character" title={`${project || 'Raio'} · ${agentFull}`}>
+        <MiniOrb companion={effective} size={14} glow={0.25 + orb.glowCool * 0.6} warm={orb.glowWarm} bob={islandOrbBobs(orbState)} restartKey={orbState} />
+      </span>
+      <span className="island__label">{effective.state === 'unknown' ? '? ' : effective.state === 'disconnected' ? '− ' : ''}{collapsedLabel}</span>
+      <i data-presence={effective.state} className="island__dot" />
+    </>}>
+      <p className="island__activity" title={activity}>{activity}</p>
+      <div className="island__actions">
+        <button type="button" title="Open Mini Player" aria-label="Open Mini Player" onClick={onPinMini}>Open Mini Player</button>
+        <button type="button" title="Open window" aria-label="Open window" onClick={onExpand}>Open window</button>
       </div>
     </IslandShell>
   );

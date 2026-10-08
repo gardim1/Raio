@@ -20,12 +20,12 @@ pub const ISLAND: &str = "island";
 pub const MINI: &str = "mini";
 const SURFACES: [&str; 3] = [EXPANDED, ISLAND, MINI];
 
-/// Logical size of the Island window: room for the open capsule (384x156) plus margins.
+/// Logical size of the Island window: room for the open capsule (340x124) plus shadow.
 pub const ISLAND_SIZE: (f64, f64) = (420.0, 184.0);
 const MINI_SIZE: (f64, f64) = (380.0, 300.0);
 const EDGE_MARGIN: f64 = 24.0;
-// Approved space token (12 logical px), applied to the window; native CSS adds no second inset.
-const ISLAND_TOP_GAP: f64 = 12.0;
+// Approved gap (10 logical px), applied to the window; native CSS adds no second inset.
+const ISLAND_TOP_GAP: f64 = 10.0;
 
 /// How long a freshly created window may take to load its page before it is shown anyway.
 const LOAD_WAIT: Duration = Duration::from_secs(1);
@@ -501,18 +501,19 @@ mod tests {
     }
 
     #[test]
-    fn the_island_is_centred_with_a_12_logical_pixel_gap_in_the_work_area() {
+    fn the_island_is_centred_with_a_10_logical_pixel_gap_in_the_work_area() {
         // Work rectangles: taskbar bottom, top, left; negative origins; 100/150/175%.
         for (origin, size, scale, expected) in [
-            ((0, 0), (1920, 1040), 1.0, (750, 12)),
-            ((0, 40), (1920, 1040), 1.0, (750, 52)),
-            ((0, 60), (2880, 1560), 1.5, (1125, 78)),
-            ((-3360, -1200), (3360, 1820), 1.75, (-2048, -1179)),
-            ((70, 0), (3290, 1820), 1.75, (1347, 21)),
+            ((0, 0), (1920, 1040), 1.0, (750, 10)),
+            ((0, 40), (1920, 1040), 1.0, (750, 50)),
+            ((0, 60), (2880, 1560), 1.5, (1125, 75)),
+            ((-3360, -1200), (3360, 1820), 1.75, (-2048, -1182)),
+            ((70, 0), (3290, 1820), 1.75, (1347, 18)),
         ] {
             assert_eq!(placement(ISLAND, origin, size, scale), Some(expected));
         }
-        assert!(156.0 <= ISLAND_SIZE.1, "the inset is applied to the window, leaving the open preview inside it");
+        assert!(340.0 + 60.0 <= ISLAND_SIZE.0, "the preview and horizontal shadow fit the native window");
+        assert!(124.0 + 30.0 <= ISLAND_SIZE.1, "the preview and bottom shadow fit the native window");
     }
 
     #[test]

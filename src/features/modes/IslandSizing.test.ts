@@ -1,6 +1,5 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createProjectionNode } from 'motion-dom';
 import type { HTMLMotionProps } from 'motion/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { BridgeProvider } from '../../platform/BridgeContext';
@@ -10,6 +9,7 @@ import { evaluateFrame } from '../session/model/evaluateFrame';
 import { deriveInsights } from '../session/model/insights';
 import { ExpandedWindow } from './ExpandedWindow';
 import { IslandMode } from './IslandMode';
+import { fitIslandWidth } from './IslandShell';
 import { derivePresence } from './presence';
 
 // Capture our real components' projection options; keep Motion rendering/projection code real.
@@ -45,29 +45,31 @@ it('long-label session Island never inherits Expanded geometry during surface ha
   }));
   const expandedProps = captured.divs.find(props => props.className === 'panel expanded')!;
   expect(render(session())).toContain(longLabel);
-  const islandProps = captured.divs.find(props => props.className === 'island')!;
-
-  // A narrow characterization of the unexpected handoff: CSS max-width cannot cap a transform
-  // copied from a shared peer. Feed the actual component options to Motion's real node stack.
-  const Node = createProjectionNode({ measureScroll: () => ({ x: 0, y: 0 }), checkIsScrollRoot: () => false, resetTransform: () => {} });
-  const root = new Node();
-  const expanded = new Node({}, root);
-  expanded.setOptions({ layoutId: expandedProps.layoutId, layoutDependency: expandedProps.layoutDependency });
-  const box = { x: { min: 220, max: 1220 }, y: { min: 190, max: 710 } };
-  expanded.snapshot = { source: expanded.id, animationId: 0, measuredBox: box, layoutBox: box, latestValues: {} };
-  if (expanded.options.layoutId) root.registerSharedNode(expanded.options.layoutId, expanded);
-  const island = new Node({}, root);
-  island.setOptions({ layoutId: islandProps.layoutId, layout: Boolean(islandProps.layout), layoutDependency: islandProps.layoutDependency });
-  if (island.options.layoutId) root.registerSharedNode(island.options.layoutId, island);
-  expect(island.resumeFrom === expanded).toBe(false);
-  expect(island.snapshot).toBeUndefined();
-  expect(island.options.layout).toBe(true); // Own hover spring remains enabled.
+  expect(expandedProps.layoutId).toBeTruthy();
+  // CSS owns Island geometry now: it cannot join Motion's shared projection stack at all.
+  expect(captured.divs.some(props => props.className?.split(' ').includes('island'))).toBe(false);
 });
+
+it.each([[0, 150], [40, 150], [60.1, 151], [120, 210], [250, 340], [1800, 340], [NaN, 150]])(
+  'fits measured label width %s with the prototype formula and containment cap (%s)', (label, width) => {
+    expect(fitIslandWidth(label)).toBe(width);
+  },
+);
 
 const NODE_FS = 'node:fs';
 const { readFileSync } = (await import(/* @vite-ignore */ NODE_FS)) as { readFileSync: (path: URL, encoding: 'utf8') => string };
 const css = readFileSync(new URL('../../app/styles/raio.css', import.meta.url), 'utf8');
-const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replaceAll('.', '\\.')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+it.each([
+  ['.island__dot', 'text-primary'],
+  ['.island .island__dot[data-presence]', 'text-primary'],
+  ['.island .island__dot[data-presence="working"]', 'accent-cool'],
+  ['.island .island__dot[data-presence="attention"]', 'accent-warning'],
+  ['.island .island__dot[data-presence="failure"]', 'accent-danger'],
+])('keeps the functional dot %s on the shared %s token', (selector, token) => {
+  expect(rule(selector)).toContain(`background: var(--raio-color-${token})`);
+  if (token === 'accent-cool') expect(rule(selector)).toContain('box-shadow: 0 0 6px var(--raio-color-accent-cool)');
+});
 it('every collapsed Island label can shrink and ellipsize within the open capsule width', () => {
   expect(render(session())).toContain('class="island__label"');
   const openWidth = Number(rule('.island--open').match(/(?:^|;)\s*width:\s*(\d+)px/)?.[1]);
@@ -78,4 +80,30 @@ it('every collapsed Island label can shrink and ellipsize within the open capsul
   expect(rule('.island__label')).toMatch(/(?:^|;)\s*min-width:\s*0\s*;/);
   expect(rule('.island__label')).toContain('overflow: hidden');
   expect(rule('.island__label')).toContain('text-overflow: ellipsis');
+});
+it('uses the approved capsule, preview materials and CSS timing instead of projected geometry', () => {
+  expect(rule('.island')).toContain('height: 34px');
+  expect(rule('.island')).toContain('max-width: 340px');
+  expect(rule('.island')).toContain('border-radius: 17px');
+  expect(rule('.island')).toContain('background: rgba(20,21,26,.92)');
+  expect(rule('.island')).toContain('border: 1px solid rgba(255,255,255,.08)');
+  expect(rule('.island')).toContain('0 14px 30px -12px rgba(0,0,0,.7)');
+  expect(rule('.island')).toContain('width .42s cubic-bezier(.2,1.15,.3,1)');
+  expect(rule('.island--open')).toContain('width: 340px');
+  expect(rule('.island--open')).toContain('height: 124px');
+  expect(rule('.island--open')).toContain('border-radius: 24px');
+  expect(rule('.island__closed')).toContain('gap: 8px');
+  expect(rule('.island__closed')).toContain('padding: 0 12px 0 6px');
+  expect(rule('.island__character')).toContain('width: 28px');
+  expect(rule('.island__character')).toContain('height: 28px');
+  expect(rule('.island__label')).toContain('font-size: 12.5px');
+  expect(rule('.island__label')).toContain('font-weight: 500');
+  expect(rule('.island__dot')).toContain('width: 6px');
+  expect(rule('.island__preview')).toContain('left: 14px; right: 14px; top: 40px');
+  expect(rule('.island__preview')).toContain('transform: translateY(-4px)');
+  expect(rule('.island__preview')).toContain('transition: opacity .2s, transform .3s');
+  expect(rule('.island--open .island__preview')).toContain('transition-delay: .1s');
+  expect(rule('.island__actions button')).toContain('height: 28px');
+  expect(rule('.island__actions button')).toContain('border-radius: 14px');
+  expect(css).toContain('@media (prefers-reduced-motion: reduce) { .island, .island__preview { transition: none; } }');
 });

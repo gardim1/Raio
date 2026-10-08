@@ -8,10 +8,10 @@ const fixture = () => {
   const hover = createIslandHover(value => { open = value; });
   return { hover, open: () => open };
 };
-it('opens from native pointer truth without DOM hover and allows a 250 ms exit grace', () => {
+it('opens from native pointer truth without DOM hover and allows the approved 260 ms exit grace', () => {
   const f = fixture();
   f.hover.pointer(true); expect(f.open()).toBe(true);
-  f.hover.pointer(false); vi.advanceTimersByTime(249); expect(f.open()).toBe(true);
+  f.hover.pointer(false); vi.advanceTimersByTime(259); expect(f.open()).toBe(true);
   vi.advanceTimersByTime(1); expect(f.open()).toBe(false);
 });
 it('an idle outside sample schedules no rendering work', () => {
@@ -21,7 +21,7 @@ it('cancels exit on re-entry into the preview and keeps open while focus is insi
   const f = fixture(); f.hover.pointer(true); f.hover.pointer(false);
   vi.advanceTimersByTime(200); f.hover.pointer(true); vi.advanceTimersByTime(100); expect(f.open()).toBe(true);
   f.hover.focus(true); f.hover.pointer(false); vi.advanceTimersByTime(1000); expect(f.open()).toBe(true);
-  f.hover.focus(false); vi.advanceTimersByTime(250); expect(f.open()).toBe(false);
+  f.hover.focus(false); vi.advanceTimersByTime(260); expect(f.open()).toBe(false);
 });
 it('Escape collapses even with pointer/focus inside, until a new entry', () => {
   const f = fixture(); f.hover.pointer(true); f.hover.focus(true); f.hover.escape();

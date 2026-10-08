@@ -26,13 +26,21 @@ for (const projectOnly of [false, true]) {
     const mountedText = await mountedLabel.evaluateHandle(el => el.lastChild);
     const closed = await island.boundingBox();
     if (!closed) throw new Error('Collapsed Island missing');
+    expect(closed.width).toBeGreaterThanOrEqual(150);
+    expect(closed.width).toBeLessThanOrEqual(340);
+    expect(closed.height).toBe(34);
+    expect(closed.y).toBe(10);
+    await expect(island.locator('.island__character')).toHaveCSS('width', '28px');
+    await expect(island.locator('.island__character')).toHaveCSS('height', '28px');
     await expect(island.locator('.mini-orb')).toHaveCSS('width', '14px');
     await island.hover();
     await expect(island).toHaveAttribute('aria-expanded', 'true');
     expect(await mountedLabel.evaluate(el => el.isConnected)).toBe(true);
     expect(await mountedText.evaluate(node => node?.isConnected)).toBe(true);
-    await expect(label).toBeHidden();
-    await expect.poll(async () => Math.round((await island.boundingBox())!.width)).toBe(384);
+    // The approved ZIP keeps row 1 visible in the preview; both DOM nodes must survive.
+    await expect(label).toBeVisible();
+    await expect.poll(async () => Math.round((await island.boundingBox())!.width)).toBe(340);
+    await expect.poll(async () => Math.round((await island.boundingBox())!.height)).toBe(124);
     const open = (await island.boundingBox())!;
     expect(open.x).toBeLessThanOrEqual(closed.x + 1);
     expect(open.y).toBeLessThanOrEqual(closed.y + 1);
@@ -45,7 +53,7 @@ for (const projectOnly of [false, true]) {
     await island.locator('.mini-orb:visible').first().click();
     await expect(page.locator('.expanded')).toHaveCount(0);
     await expect(page.locator('.mini')).toHaveCount(0);
-    const full = island.getByRole('button', { name: 'Open full view', exact: true });
+    const full = island.getByRole('button', { name: 'Open window', exact: true });
     await full.focus();
     await page.mouse.move(0, 300);
     await page.waitForTimeout(300);
@@ -63,7 +71,7 @@ test('quiet Island opens full view only from its explicit action', async ({ page
   await page.goto('/harness.html?view=island&project-only=1&t=4&chrome=0');
   const island = page.locator('.island');
   await island.hover();
-  await expect(island.getByText('Waiting for activity', { exact: true })).toBeVisible();
-  await island.getByRole('button', { name: 'Open full view', exact: true }).click();
+  await expect(island.getByText('No agent active right now.', { exact: true })).toBeVisible();
+  await island.getByRole('button', { name: 'Open window', exact: true }).click();
   await expect(page.locator('.expanded')).toBeVisible();
 });

@@ -55,9 +55,11 @@ it('pre-session Expanded uses the same Mini/Island shortcuts', () => {
   const html = render(createElement(ProjectOnlyView, { snapshot: createProjectFixtureBridge().currentProjectMap()!, mode: 'expanded' }));
   expectMini(html); expectIsland(html);
 });
-it('open Island offers Mini Player with the picture-in-picture icon', () => {
+it('open Island offers the approved text actions with their explicit accessible names', () => {
   hooks.openIsland = true;
-  expectMini(render(createElement(IslandMode, { script: canonicalScript, frame, presence, onPinMini: noop, onExpand: noop, onViewChanges: noop })));
+  const html = render(createElement(IslandMode, { script: canonicalScript, frame, presence, onPinMini: noop, onExpand: noop, onViewChanges: noop }));
+  expect(shortcut(html, 'Open Mini Player')).toContain('>Open Mini Player</button>');
+  expect(shortcut(html, 'Open window')).toContain('>Open window</button>');
 });
 it.each([false, true])('Mini distinguishes Island from its always-on-top toggle (pinned=%s)', pinned => {
   const html = render(createElement(MiniSurface, { project: 'fixture', status: 'ready', stateLabel: 'Ready', pinned,

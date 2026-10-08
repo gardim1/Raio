@@ -24,7 +24,9 @@ for (const surface of ['island', 'mini'] as const) {
         await page.evaluate(async ({ path, state }) => { (await import(path)).setPresence(state); }, { path: fixtureModule, state });
         if (!recent) await page.clock.fastForward(31_000);
         const text = fixture.locator(surface === 'island' ? '.island__label' : '.mini__state');
-        await expect(text).toHaveText(recent ? (surface === 'island' ? 'Claude · API' : 'Claude working') : new RegExp('^' + label + ' · \\d{2}:\\d{2}$'));
+        const expectedLabel = surface === 'island' ? recent && state === 'attention' ? 'Claude · API' : label
+          : recent ? 'Claude working' : new RegExp('^' + label + ' · \\d{2}:\\d{2}$');
+        await expect(text).toHaveText(expectedLabel);
         const accessible = fixture.locator(surface === 'island' ? '.island' : '.mini__status');
         await expect(accessible).toHaveAttribute('aria-label', new RegExp(label));
         await expect(accessible).toHaveAttribute('title', new RegExp(label));

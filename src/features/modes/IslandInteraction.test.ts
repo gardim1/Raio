@@ -6,9 +6,10 @@ import { createElement } from 'react';
 // Exercise the real shell handlers/effect with native IPC injected, without a webview or DOM.
 const hooks = vi.hoisted(() => ({ open: false, visible: true, setup: null as (() => (() => void) | undefined) | null, ref: { current: null as unknown }, bridge: {} as ReturnType<typeof createFixtureBridge> }));
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
-  useState: () => [hooks.open, (value: boolean) => { hooks.open = value; }],
+  useState: (initial: unknown) => initial === 150 ? [150, () => {}] : [hooks.open, (value: boolean) => { hooks.open = value; }],
   useRef: () => hooks.ref,
   useEffect: (setup: typeof hooks.setup) => { hooks.setup = setup; },
+  useLayoutEffect: () => {},
   useId: () => 'island-preview-test',
 }));
 vi.mock('../../platform/BridgeContext', () => ({ useBridge: () => hooks.bridge }));
@@ -33,7 +34,7 @@ it('browser hover, focus-within and Escape use the same compact preview and canc
   el.props.onPointerEnter(); expect(capsule().props['aria-expanded']).toBe(true);
   el.props.onPointerLeave(); el.props.onFocus(); vi.advanceTimersByTime(300); expect(hooks.open).toBe(true);
   el.props.onBlur({ currentTarget: { contains: () => true }, relatedTarget: {} }); vi.advanceTimersByTime(300); expect(hooks.open).toBe(true);
-  el.props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); vi.advanceTimersByTime(250); expect(hooks.open).toBe(false);
+  el.props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); vi.advanceTimersByTime(260); expect(hooks.open).toBe(false);
   el.props.onPointerEnter(); el = capsule(); el.props.onKeyDown({ key: 'Escape', stopPropagation: () => {} }); expect(hooks.open).toBe(false);
   stop(); expect(vi.getTimerCount()).toBe(0);
 });
@@ -44,36 +45,48 @@ it('hidden Island registers no pointer work and renders no open preview', () => 
 it('capsule disclosure is a real button beside its named preview, and activation never changes surfaces', () => {
   const show = vi.fn(); hooks.bridge.showSurface = show;
   const el = capsule(); const stop = hooks.setup!()!;
-  const content = el.props.children.props.children;
-  const button = content[0].props.children[0]; const preview = content[1];
+  const content = el.props.children;
+  const button = content[0]; const preview = content[1];
   expect(button?.type).toBe('button');
   expect(button.props['aria-label']).toBe('Raio: Fixture state');
   expect(button.props['aria-controls']).toBe(preview.props.id);
   expect(preview.props.role).toBe('group');
   expect(preview.props['aria-label']).toBe('Island preview');
+  expect(preview.props['aria-hidden']).toBe(true); expect(preview.props.inert).toBe(true);
   expect(el.props.tabIndex).toBeUndefined();
   button.props.onClick();
   button.props.onClick();
   expect(hooks.open).toBe(true);
   expect(show).not.toHaveBeenCalled();
-  expect(capsule().props.children.props.children[0].props.children[0].props['aria-expanded']).toBe(true);
+  expect(capsule().props.children[0].props['aria-expanded']).toBe(true);
+  expect(capsule().props.children[1].props['aria-hidden']).toBe(false);
+  expect(capsule().props.children[1].props.inert).toBe(false);
   stop();
 });
-it('hover and Escape keep collapsed label content in the same child slot instead of replacing it with the heading', () => {
+it('hover and Escape keep the same visible header label in the same child slot', () => {
   const label = createElement('span', { className: 'island__label' }, 'projeto com espaços e acentos — ' + 'long folder name '.repeat(8));
-  const button = () => IslandShell({ description: 'Fixture', collapsed: label, heading: 'Project heading', children: 'Preview' })
-    .props.children.props.children.props.children[0].props.children[0];
+  const button = () => IslandShell({ description: 'Fixture', collapsed: label, children: 'Preview' })
+    .props.children.props.children[0];
   const closed = button(); const stop = hooks.setup!()!;
-  expect(closed.props.children[0]?.props.children).toBe(label);
-  expect(closed.props.children[0].props.hidden).toBe(false);
+  expect(closed.props.children.props.children).toBe(label);
+  expect(closed.props.children.props.hidden).toBeUndefined();
   const el = capsule(); el.props.onPointerEnter();
   const open = button();
-  expect(open.props.children[0]?.props.children).toBe(label);
-  expect(open.props.children[0].type).toBe(closed.props.children[0].type);
-  expect(open.props.children[0].key).toBe(closed.props.children[0].key);
-  expect(open.props.children[0].props.hidden).toBe(true);
+  expect(open.props.children.props.children).toBe(label);
+  expect(open.props.children.type).toBe(closed.props.children.type);
+  expect(open.props.children.key).toBe(closed.props.children.key);
+  expect(open.props.children.props.hidden).toBeUndefined();
   el.props.onKeyDown({ key: 'Escape', stopPropagation: () => {} });
-  expect(button().props.children[0].props.children).toBe(label);
-  expect(button().props.children[0].props.hidden).toBe(false);
+  expect(button().props.children.props.children).toBe(label);
+  expect(button().props.children.props.hidden).toBeUndefined();
   stop();
+});
+it('double-click is consumed without switching a surface or asking for window focus', () => {
+  const show = vi.fn(); hooks.bridge.showSurface = show;
+  const el = capsule();
+  expect(el.props.onDoubleClick).toBeTypeOf('function');
+  const preventDefault = vi.fn(); const stopPropagation = vi.fn();
+  el.props.onDoubleClick({ preventDefault, stopPropagation });
+  expect(preventDefault).toHaveBeenCalledOnce(); expect(stopPropagation).toHaveBeenCalledOnce();
+  expect(show).not.toHaveBeenCalled();
 });
