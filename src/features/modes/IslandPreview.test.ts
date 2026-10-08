@@ -10,6 +10,9 @@ import { IslandMode } from './IslandMode';
 import { canonicalScript } from '../session/model/canonicalScript';
 import { evaluateFrame } from '../session/model/evaluateFrame';
 import { derivePresence } from './presence';
+import { factsFromEvents } from './presenceFacts';
+import { projectSession } from '../project/projectSession';
+import type { RaioEvent } from '../ingest/raioEvent';
 
 // SSR does not deliver hover: inspect open content, while IslandInteraction tests the real transition.
 vi.mock('react', async original => { const actual = await original<typeof import('react')>(); return { ...actual,
@@ -42,6 +45,40 @@ it('session preview shows the real project, agent and latest observed operation'
   const html = render(bridge, createElement(IslandMode, { script: canonicalScript, frame, presence: derivePresence(canonicalScript, snapshot.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} }));
   expect(html).toContain(snapshot.project); expect(html).toContain('Claude Code'); expect(html).toContain('Turn ended');
   expect(html).not.toContain('Checks passed'); expect(html).not.toContain('island__dot--success');
+});
+it('session preview advances beyond the last replay file read to command and Stop observations', () => {
+  const start = new Date(2026, 9, 8, 14, 0).getTime();
+  const event = (minute: number, kind: RaioEvent['kind'], paths: string[] = []): RaioEvent => ({
+    schema: 1, id: String(minute), seq: minute, projectId: 'p', sessionId: 's',
+    agent: 'claude', source: 'claude-hook', provenance: 'agent-reported', attribution: 'session',
+    observedAt: start + minute * 60_000, kind, paths, evidence: {},
+  });
+  const events = [event(0, 'session.started'), event(1, 'file.inspected', ['src/api/a.ts']), event(2, 'command.observed'), event(3, 'turn.ended')];
+  const fixture = createFixtureBridge().currentSession()!;
+  const frame = evaluateFrame(canonicalScript, fixture.graph, 4);
+  const child = createElement(IslandMode, { script: canonicalScript, frame, presence: derivePresence(canonicalScript, fixture.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} });
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    for (const minute of [2, 3]) {
+      const observed = events.slice(0, minute + 1);
+      const snapshot = projectSession({ id: 'p', name: 'acme-web' }, observed)!;
+      // Real replay projection deliberately cannot carry ordinary commands or turn.ended.
+      expect(snapshot.log.events.at(-1)?.kind).toBe('file.read');
+      const state = { connected: true, available: true, facts: factsFromEvents(observed, 'p') };
+      clock.mockReturnValue(start + minute * 60_000);
+      const bridge = { ...createFixtureBridge(), currentSession: () => snapshot, projectPresence: () => state };
+      const html = render(bridge, child);
+      expect(html).toContain(`Activity observed · 14:0${minute} · Claude hook`);
+      expect(html).not.toContain('Read src/api/a.ts');
+      expect(html).not.toContain('Checks passed');
+    }
+  } finally { clock.mockRestore(); }
+});
+it('older session adapters explicitly identify their last replay event', () => {
+  const bridge = createFixtureBridge(); const snapshot = bridge.currentSession()!;
+  const frame = evaluateFrame(canonicalScript, snapshot.graph, 4);
+  const html = render(bridge, createElement(IslandMode, { script: canonicalScript, frame, presence: derivePresence(canonicalScript, snapshot.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} }));
+  expect(html).toContain('Last replay event · Turn ended');
 });
 it('idle actions invoke only their explicit callbacks', () => {
   const bridge = createFixtureBridge(null); const open = vi.fn(); const show = vi.fn();

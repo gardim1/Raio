@@ -22,8 +22,7 @@ export const IdleIsland = ({ onOpen, companion }: { readonly onOpen: () => void;
     <MiniOrb companion={companion} size={14} glow={0.25} />
     <span className="island__label">{companion?.state === 'unknown' ? '? ' : disconnected ? '− ' : ''}{label}</span>
     <i data-presence={companion?.state} className="island__dot island__dot--idle" />
-  </>}>
-    <div className="island__row"><MiniOrb companion={companion} size={16} glow={0.3} /><span className="island__title" title={project}>{project ?? 'Raio'}</span></div>
+  </>} heading={<><MiniOrb companion={companion} size={16} glow={0.3} /><span className="island__title" title={project}>{project ?? 'Raio'}</span></>}>
     <div className="island__task" title={message}>{message}</div>
     <div className="island__hint island__reason" title={observed ?? description}>{disconnected ? 'Connect a folder to observe Claude Code activity' : observed ?? (companion?.state === 'attention' || companion?.state === 'failure' || companion?.state === 'unknown' ? description : 'Start a new Claude Code session in this folder')}</div>
     <div className="island__row island__row--actions">

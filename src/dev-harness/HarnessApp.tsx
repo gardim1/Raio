@@ -5,6 +5,7 @@ import { DesktopBackdrop } from './DesktopBackdrop';
 import { FilmMode } from './FilmMode';
 import { type HarnessView, MODES, ModeDock } from './ModeDock';
 import { StatesGallery } from './StatesGallery';
+import { IslandLabelFixture } from './IslandLabelFixture';
 
 /** Development-only review harness around the product app. Never shipped. */
 const VIEWS: readonly HarnessView[] = ['film', 'island', 'mini', 'expanded', 'states'];
@@ -20,6 +21,7 @@ const feedPace = new URLSearchParams(window.location.search).get('feed');
 const simulatedFeed = feedPace === 'steady' || feedPace === 'burst';
 
 export const HarnessApp = () => {
+  const islandLabel = new URLSearchParams(window.location.search).get('island-label');
   const [view, setView] = useState<HarnessView>(initialView);
   const setMode = useSessionUi((s) => s.setMode);
   const restartLive = useSessionUi((s) => s.restartLive);
@@ -65,7 +67,9 @@ export const HarnessApp = () => {
           <StatesGallery />
         </div>
       )}
-      {view !== 'film' && view !== 'states' && <App underlay={<DesktopBackdrop />} />}
+      {view !== 'film' && view !== 'states' && (view === 'island' && islandLabel !== null
+        ? <IslandLabelFixture label={islandLabel} underlay={<DesktopBackdrop />} />
+        : <App underlay={<DesktopBackdrop />} />)}
       {showChrome && <ModeDock mode={view} onMode={show} onRunLive={simulatedFeed ? () => window.location.reload() : restartLive} onViewChanges={startReplay} />}
     </>
   );

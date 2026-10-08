@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { islandActivity, islandPresenceActivity } from './islandActivity';
+import { islandActivity, islandObservedActivity, islandPresenceActivity } from './islandActivity';
+import type { PresenceFact } from './companionPresence';
 import type { SessionLog } from '../session/model/events';
 const log: SessionLog = { id: 'fixture', project: 'folder', agent: 'claude', task: 'Observed activity', startedAt: '2026-10-08T12:00:00Z', events: [] };
 it('absence of telemetry is unknown, never working', () => {
@@ -20,4 +21,16 @@ it('pre-session activity shows the latest recorded source and time, excluding fu
     { id: 'future', kind: 'activity', at: 100_000, source: 'Future fact' },
   ], 70_000, 'UTC')).toBe('Fixture watcher · 00:01');
   expect(islandPresenceActivity([], 0)).toBe('Activity details unavailable');
+});
+it.each([
+  [{ kind: 'edit-failed', paths: ['src/a.ts'] }, 'Edit failed · 14:04 · Claude hook'],
+  [{ kind: 'change', source: 'Filesystem observation · author unknown' }, 'File change observed · 14:04 · Filesystem observation · author unknown'],
+  [{ kind: 'check', checkClass: 'tests', result: 'unknown' }, 'Tests unknown (recorded) · 14:04 · Claude hook'],
+  [{ kind: 'check', checkClass: 'other', result: 'passed' }, 'Command passed (recorded) · 14:04 · Claude hook'],
+] as const)('latest fact preserves its kind/result and evidence source: %j', (detail, expected) => {
+  const fact: PresenceFact = { id: 'latest', at: Date.parse('2026-10-08T14:04:00Z'), source: 'Claude hook', ...detail };
+  expect(islandObservedActivity([fact, { id: 'earlier', kind: 'activity', at: fact.at - 1000, source: 'Earlier hook' }, { id: 'future', kind: 'check', result: 'passed', at: fact.at + 1000, source: 'Future hook' }], fact.at, 'UTC')).toBe(expected);
+});
+it('no available presence facts never falls back to claiming newer activity or check success', () => {
+  expect(islandObservedActivity([], 0, 'UTC')).toBe('No activity observed');
 });
