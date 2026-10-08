@@ -1,6 +1,45 @@
 # Raio status
 
-Last updated: 2026-10-08 (sidebar, Island, approved character). Earlier sections keep their own dates.
+Last updated: 2026-10-08 (cookie in Expanded, Claude plan usage, Island preview). Earlier sections keep their own dates.
+
+## Cookie in Expanded, Claude plan usage, Island preview (2026-10-08, later)
+
+Windows 11, browser checks in Edge (Playwright), Rust tests; no native desktop input was used this round.
+
+- **Cookie in Expanded**: "Give Raio a cookie" in the title-bar actions. The cookie flies (0.5 s, window-local geometry
+  measured at click and re-measured each frame) from the button to the visible character (map character when on
+  screen, else the title-bar one), which then plays the approved cookie reaction. Busy clicks are ignored (no queue);
+  hidden/unmounted/lost targets cancel the flight without leftovers; reduced motion skips the flight. Nothing technical
+  changes.
+- **Claude plan usage (optional, per project)**: `raio-hook statusline` receives Claude Code's status line input and
+  keeps only the session id, the Claude Code version and the 5-hour / weekly `used_percentage` + `resets_at`; it prints
+  nothing, exits 0, is inert without a fresh heartbeat or when Raio's exact entry is not installed. The core keeps the
+  latest reading per source (bounded, 30-day retention), exposes disabled / incompatible / waiting / error / reading and
+  notifies every window on new readings and on configuration changes (no polling). Connect offers the opt-in with the
+  exact `statusLine` diff; an existing status line (user, shared project, project local, or a managed settings file)
+  is never replaced unless the user explicitly chooses "replace in this project only"; `~/.claude/settings.json` is
+  only read (its `statusLine` key) and never written. Disconnect removes only Raio's exact, receipted entry.
+- **Usage rings**: inner = 5-hour, outer = weekly, fill = % used; stale readings muted; missing or expired windows show
+  as unavailable, never 0%; details on hover/focus/click with reset times and the reading's age; sources are never
+  combined; quota never changes the character's mood.
+- **Island preview**: character + project/agent + real state, one activity line ("Last activity · time · source"),
+  compact usage rings, Open Mini Player / Open window / cookie; height measured and animated with the approved curve;
+  the window fits the work area below the 10 px gap (max 500 logical px) and stays click-through outside the capsule.
+
+Real reading (consented, disposable project, isolated data, one trivial prompt): Claude Code 2.1.294 on a Team-plan
+account emitted both windows to the status line; Raio stored only the allowed fields. The documentation describes the
+fields for Pro/Max; other plans and versions are unverified. Packaged-hook smoke: inert without heartbeat; with it,
+silent exit 0 in ~12 ms and only allowed keys stored.
+
+Tests on `6190276`: vitest 1125 (89 files), tsc + build + bundle check 0, cargo 252 unit + 13 hook + 4 status line
+(+3 ignored; the first full run had 2 intermittent failures in the hook watchdog timing tests right after a rebuild,
+then 3/3 isolated runs and a second full run passed; not changed), clippy 0 with 2 existing warnings, Playwright 83
+passed / 21 screenshot differences + 2 new screenshots awaiting approval (no assertion failures; nothing re-blessed).
+Three independent reviews: 3 P2 and 1 P3 found and fixed in this round's code.
+
+Not exercised: everything that needs the real desktop (native hover/click-through/focus with a real mouse, tray, X to
+tray and restore, borders, the larger Island window, DPI/multi-monitor/top taskbar), the usage rings with a real reading
+in the running app, and CPU/memory of this build.
 
 ## Sidebar, Island and the approved character (2026-10-08)
 
