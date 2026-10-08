@@ -13,6 +13,14 @@ export interface ProjectMapSnapshot {
   readonly provenance: DataProvenance;
   readonly graph: ArchitectureGraph;
   readonly listing: 'pending' | 'ready' | 'unavailable';
+  /** Absent on older adapters; an unknown count must never be treated as an empty folder. */
+  readonly listingDetails?: {
+    readonly fileCount: number | null;
+    readonly truncated: boolean;
+    readonly skipped: number;
+    readonly stale: boolean;
+    readonly unavailableReason: string | null;
+  };
   readonly note: string;
   readonly technologies: readonly string[];
   /** null: core status/refresh unavailable; absent only for older adapters and fixtures. */
@@ -23,7 +31,7 @@ export const projectMap = (
   project: ProjectRef,
   inventory: ProjectInventory | null,
   imports: ProjectImports | null,
-  options: { pending?: boolean; inventoryStale?: boolean; importsStale?: boolean; provenance?: DataProvenance; core?: CoreHealth | null } = {},
+  options: { pending?: boolean; inventoryStale?: boolean; importsStale?: boolean; provenance?: DataProvenance; core?: CoreHealth | null; unavailableReason?: string } = {},
 ): ProjectMapSnapshot => {
   const map = inventory ? groupInventory(inventory) : null;
   const groups = map?.groups ?? [];
@@ -35,9 +43,12 @@ export const projectMap = (
     ...(options.core !== undefined ? { core: options.core } : {}),
     graph: layoutGroups(groups, derived ? drawnLinks(derived.edges) : [], map && !groups.some((g) => g.groupId === OTHER_GROUP.groupId) ? [OTHER_GROUP] : []),
     listing: inventory ? 'ready' : options.pending ? 'pending' : 'unavailable',
+    listingDetails: { fileCount: inventory?.files.length ?? null, truncated: inventory?.truncated ?? false,
+      skipped: inventory?.skipped ?? 0, stale: options.inventoryStale ?? false,
+      unavailableReason: !inventory && !options.pending ? options.unavailableReason ?? null : null },
     note: inventory
       ? [relationshipsNote(relationships, 'inventory'), ...inventoryNotes(inventory, { stale: options.inventoryStale })].join(' ')
-      : options.pending ? 'Mapping project. No agent session has been observed.' : 'Project listing unavailable. No agent session has been observed.',
+      : relationshipsNote('unknown', 'inventory'),
     technologies: map?.technologies ?? [],
   };
 };

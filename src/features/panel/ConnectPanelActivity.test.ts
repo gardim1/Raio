@@ -24,7 +24,7 @@ import { ConnectPanel, ConnectReview } from './ConnectPanel';
 import { ConnectMapPreview } from './ConnectMapPreview';
 import { createProjectFixtureBridge, createFixtureBridge } from '../../platform/fixtureBridge';
 
-type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void }>;
+type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
 const find = (node: unknown, match: (node: Node) => boolean): Node | null => {
   if (!node || typeof node !== 'object') return null;
   const element = node as Node;
@@ -44,7 +44,7 @@ const preview: ConnectPreview = { before: null, after: '{}', settingsPath: 'C:/f
 let previews: ReturnType<typeof deferred<ConnectPreview>>[];
 let maps: ReturnType<typeof deferred<ProjectMapSnapshot | null>>[];
 let connector: Connector;
-const render = (onPreviewRootChange?: (root: string | null) => void) => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector, onPreviewRootChange }); };
+const render = (onPreviewRootChange?: (root: string | null) => void, chooseAnother = false) => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector, onPreviewRootChange, chooseAnother }); };
 const review = () => find(render(), node => node.type === ConnectReview);
 beforeEach(() => {
   hooks.slots = []; previews = []; maps = [];
@@ -125,4 +125,31 @@ it('publishes a chosen folder for the preview title and clears it on cancellatio
   expect(onRoot).toHaveBeenLastCalledWith(null);
   previews[0]!.resolve(preview); maps[0]!.resolve(null); await settle();
   expect(onRoot).toHaveBeenCalledTimes(2);
+});
+
+it('choosing another folder while connected only previews, and Cancel keeps the original connection', async () => {
+  const original = { id: 'original', name: 'Original folder', root: 'C:/fixture/original' };
+  connector.project = () => original;
+  const tree = render(undefined, true); hooks.effects[0]!();
+  find(tree, node => node.props?.children === 'Choose another folder')!.props.onClick!(); await settle();
+  expect(connector.preview).toHaveBeenCalledWith('C:/fixture');
+  expect(connector.connect).not.toHaveBeenCalled(); expect(connector.disconnect).not.toHaveBeenCalled();
+  previews[0]!.resolve(preview); maps[0]!.resolve(null); await settle();
+  const card = find(render(undefined, true), node => node.type === ConnectReview)!;
+  card.props.onCancel!();
+  expect(connector.project()).toBe(original);
+  expect(connector.connect).not.toHaveBeenCalled(); expect(connector.disconnect).not.toHaveBeenCalled();
+  expect(find(render(undefined, true), node => node.props?.children === 'Choose another folder')).not.toBeNull();
+});
+
+it('switches a connected folder only through the explicit Connect callback', async () => {
+  connector.project = () => ({ id: 'original', name: 'Original', root: 'C:/fixture/original' });
+  const tree = render(undefined, true); hooks.effects[0]!();
+  find(tree, node => node.props?.children === 'Choose another folder')!.props.onClick!(); await settle();
+  previews[0]!.resolve(preview); maps[0]!.resolve(null); await settle();
+  const card = find(render(undefined, true), node => node.type === ConnectReview)!;
+  expect(connector.connect).not.toHaveBeenCalled();
+  card.props.onConnect!(); await settle();
+  expect(connector.connect).toHaveBeenCalledExactlyOnceWith('C:/fixture', preview);
+  expect(connector.disconnect).not.toHaveBeenCalled();
 });

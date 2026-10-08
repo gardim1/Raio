@@ -3,6 +3,8 @@ import type { CoreHealth } from '../../platform/desktopBridge';
 import { HOOK_BINARY_MISSING_NOTE } from '../../platform/coreHealth';
 import type { ProjectInsights } from '../project/projectInsights';
 import { currentValidations, describeValidation, UNASSIGNED_CHANGE_NOTE } from '../project/projectInsights';
+import { AboutMap } from './AboutMap';
+import { coreWarnings, splitMapNotes } from './sidebarState';
 
 const DISK_LABEL = {
   consistent: 'reported, consistent on disk',
@@ -15,6 +17,7 @@ const DISK_LABEL = {
  */
 export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectInsights; readonly core?: CoreHealth | undefined }) => {
   const checks = currentValidations(evidence.validations);
+  const notes = splitMapNotes(evidence.note);
   return (
   <section className="evidence" aria-label="Evidence">
     <h4 className="sidebar__section">Evidence</h4>
@@ -55,30 +58,10 @@ export const EvidencePanel = ({ evidence, core }: { readonly evidence: ProjectIn
         ))}
       </ul>
     )}
-    {core && (core.dropped > 0 || core.droppedAtLeast) && (
-      <p className="evidence__warn">
-        {core.droppedAtLeast && core.dropped === 0
-          ? 'Some events may not have been recorded; this session may be incomplete.'
-          : `${core.droppedAtLeast ? 'At least ' : ''}${core.dropped} event(s) could not be recorded; this session may be incomplete.`}
-      </p>
-    )}
-    {core?.watcherOverflow && <p className="evidence__warn">The file watcher overflowed; some disk changes may be missing.</p>}
-    {core?.historyResetFrom && <p className="evidence__warn">Local history was unreadable and was moved aside; earlier sessions are not shown.</p>}
-    {core && !core.hookBinary && <p className="evidence__warn">{HOOK_BINARY_MISSING_NOTE}</p>}
-    {evidence.technologies && evidence.technologies.length > 0 && (
-      <ul className="evidence__list" aria-label="Technologies">
-        {evidence.technologies.map((line) => (
-          <li key={line} className="evidence__item">
-            <span className="evidence__path" title={line}>
-              {line}
-            </span>
-            <span className="evidence__meta">named in manifests (names only, heuristic)</span>
-          </li>
-        ))}
-      </ul>
-    )}
+    {[...coreWarnings(core), ...(core && !core.hookBinary ? [HOOK_BINARY_MISSING_NOTE] : []), ...notes.warnings].map(line =>
+      <p className="evidence__warn" role="status" aria-label={line} key={line}>{line}</p>)}
     {evidence.parallel && <p className="evidence__note">Activity from {evidence.actors} agents overlapped; Raio does not infer an order between them.</p>}
-    <p className="evidence__note">{evidence.note}</p>
+    <AboutMap details={notes.details} technologies={evidence.technologies} />
   </section>
   );
 };

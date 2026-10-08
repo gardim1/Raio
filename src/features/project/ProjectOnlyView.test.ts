@@ -48,16 +48,32 @@ describe('pre-session Expanded window', () => {
 
   it('uses singular copy for exactly one mapped system', () => {
     expect(oneSystem.graph.nodes).toHaveLength(1);
-    expect(render(createFixtureBridge(null))).toContain('1 system mapped');
+    expect(render(createFixtureBridge(null))).toContain('1 area');
     expect(render(createFixtureBridge(null))).not.toContain('1 systems mapped');
+  });
+  it('keeps the folder name once in the sidebar, hides technical details and avoids repeated waiting copy', () => {
+    const name = 'Pasta com acentos ação e espaços ' + 'muito longa '.repeat(8);
+    const snapshot = { ...oneSystem, project: { id: 'fixture', name } };
+    const html = render(createFixtureBridge(null), snapshot);
+    const sidebar = html.match(/<aside class="sidebar">([\s\S]*?)<\/aside>/)![1]!;
+    expect(sidebar.match(new RegExp('>' + name + '<', 'g'))).toHaveLength(1);
+    expect(sidebar).toContain('title="' + name + '"');
+    expect(sidebar).toContain('aria-label="' + name + '"');
+    expect(sidebar).toContain('Connected · no activity yet');
+    expect(sidebar).toContain('Waiting for activity');
+    expect(html.match(/Start a new Claude Code session in this folder/g)).toHaveLength(1);
+    expect(html).not.toContain('Waiting for an agent session');
+    expect(sidebar).toContain('aria-expanded="false"');
+    expect(sidebar).toContain('About this map');
+    expect(sidebar).not.toContain('Connected to');
   });
 });
 
-describe('ready live Expanded map heading', () => {
+describe('session Expanded overview', () => {
   it.each([
-    { files: [], expected: '0 systems mapped' },
-    { files: ['package.json'], expected: '1 system mapped' },
-    { files: ['package.json', 'src/api/a.ts'], expected: '2 systems mapped' },
+    { files: [], expected: '0 areas' },
+    { files: ['package.json'], expected: '1 area' },
+    { files: ['package.json', 'src/api/a.ts'], expected: '2 areas' },
   ])('renders $expected', ({ files, expected }) => {
     const graph = projectMap({ id: 'qa', name: 'QA fixture' }, { files, manifests: [], truncated: false, skipped: 0, scannedAtMs: 1 }, null).graph;
     const log: SessionLog = { id: 'qa-ready', agent: 'unknown', task: 'QA fixture', project: 'QA fixture', startedAt: '2026-10-07T00:00:00Z', events: [] };
@@ -68,8 +84,30 @@ describe('ready live Expanded map heading', () => {
       graph, script, frame, project: log.project, insights: deriveInsights(log), presence: derivePresence(script, graph, frame, false),
       selectedNodeId: null, isReplay: false, onSelectNode: noop, onSelectEvent: noop, onPinMini: noop, onIsland: noop, onViewChanges: noop,
     }) }));
-    expect(markup).toContain(`<div class="sidebar__task">${expected}</div>`);
+    expect(markup).toContain('<div class="sidebar__task">Session activity</div>');
+    expect(markup).toContain(`${expected} · heuristic map`);
+    expect(markup).not.toContain('systems mapped');
+    expect(markup).not.toMatch(/Start .* in this repository|Start a new Claude/);
   });
+});
+
+it('retains the selected area inspector and its file details after the sidebar changes', () => {
+  const fixture = createFixtureBridge();
+  const snapshot = fixture.currentSession()!;
+  const frame = evaluateFrame(canonicalScript, snapshot.graph, canonicalScript.duration);
+  const insights = deriveInsights(snapshot.log);
+  const auth = snapshot.graph.nodeById.get('auth')!;
+  const file = insights.byNode.get(auth.id)!.files[0]!.path;
+  const noop = () => {};
+  const html = renderToStaticMarkup(createElement(BridgeProvider, { bridge: fixture, children: createElement(ExpandedWindow, {
+    graph: snapshot.graph, script: canonicalScript, frame, project: snapshot.project, insights,
+    presence: derivePresence(canonicalScript, snapshot.graph, frame, false), selectedNodeId: auth.id, isReplay: false,
+    onSelectNode: noop, onSelectEvent: noop, onPinMini: noop, onIsland: noop, onViewChanges: noop,
+  }) }));
+  expect(html).toContain('<section class="inspector" aria-label="Auth details">');
+  expect(html).toContain('aria-label="Close details"');
+  expect(html).toContain('<ul class="inspector__files">');
+  expect(html).toContain(file);
 });
 
 it.each([

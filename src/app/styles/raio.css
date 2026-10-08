@@ -389,11 +389,19 @@ svg text { font-family: var(--raio-font-ui); }
 .expanded__map { flex: 1; height: auto; aspect-ratio: 1000 / 520; max-height: calc(100vh - 54px - 68px - 120px); }
 .sidebar { position: relative; width: 280px; flex: none; border-left: 1px solid var(--raio-color-border-divider); background: var(--raio-color-surface-sidebar); }
 .sidebar__scroll { position: absolute; inset: 0; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; scrollbar-width: thin; }
-.sidebar__eyebrowless { font-size: 12.5px; font-weight: 600; color: var(--raio-color-text-secondary); }
+.sidebar__eyebrowless { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; font-weight: 600; color: var(--raio-color-text-secondary); }
 .sidebar__task { font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; margin-top: 2px; }
 .sidebar__meta { font-size: 12px; color: var(--raio-color-text-muted); margin-top: 4px; }
 .sidebar__hint { font-size: 12.5px; color: var(--raio-color-text-subtle); margin: 0; line-height: 1.45; }
 .sidebar__section { margin: 4px 0 0; font-size: 12.5px; font-weight: 600; color: var(--raio-color-text-secondary); }
+.sidebar__task, .sidebar__hint { overflow-wrap: anywhere; }
+.sidebar__choose { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.project-controls { display: flex; gap: 8px; font-size: 11.5px; padding-top: 4px; }
+.map-about { display: flex; flex-direction: column; gap: 6px; }
+.map-about__cue { font-size: 11px; color: var(--raio-color-text-muted); }
+.map-about__toggle { display: flex; align-items: center; gap: 6px; border: 0; padding: 2px 0; background: none; color: var(--raio-color-text-secondary); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.map-about__toggle:focus-visible, .project-controls .link-btn:focus-visible { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 3px; border-radius: 3px; }
+.map-about .evidence__list { margin-top: 8px; }
 
 .timeline { list-style: none; margin: -4px -8px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .timeline__item { opacity: 0.28; transform: translateY(0); transition: opacity 0.45s ease, transform 0.6s cubic-bezier(0.2, 1.2, 0.3, 1); }
@@ -508,7 +516,7 @@ svg text { font-family: var(--raio-font-ui); }
 .evidence__note { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--raio-color-text-subtle); }
 .link-btn { border: 0; padding: 0; background: none; font: inherit; color: var(--raio-color-accent-cool); cursor: pointer; }
 .link-btn:disabled { opacity: 0.5; cursor: default; }
-.evidence__warn { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: #ffd9a3; }
+.evidence__warn { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: #ffd9a3; overflow-wrap: anywhere; }
 .island--idle { padding: 0; color: inherit; font: inherit; cursor: pointer; }
 
 /* Existing tokens express recorded companion state, independently of animation/replay status. */

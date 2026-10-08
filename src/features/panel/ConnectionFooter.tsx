@@ -4,7 +4,7 @@ import { useBridge } from '../../platform/BridgeContext';
 import type { ConnectedProject, ConnectPreview, Connector } from '../../platform/desktopBridge';
 import { ConnectReview } from './ConnectPanel';
 
-/** "Connected to <project> · Disconnect" at the end of the sidebar (native only). */
+/** Compact project controls, without repeating the folder name. */
 export const ConnectionFooter = ({ connector }: { readonly connector: Connector }) => {
   const bridge = useBridge();
   const project = useSurfaceStore(bridge.subscribe, connector.project);
@@ -21,8 +21,7 @@ const ConnectedFooter = ({ project, connector }: { readonly project: ConnectedPr
   const [review, setReview] = useState<ConnectPreview | null>(null);
   return (
     <>
-    <p className="evidence__note">
-      Connected to {project.name} ·{' '}
+    <div className="project-controls" aria-label="Project controls" title={project.root}>
       <button
         type="button"
         className="link-btn"
@@ -38,9 +37,9 @@ const ConnectedFooter = ({ project, connector }: { readonly project: ConnectedPr
       >
         Disconnect
       </button>
-      {error && <span className="evidence__warn"> {error}</span>}
-    </p>
-    {hooks === 'outdated' && <p className="evidence__warn">
+    </div>
+    {error && <p className="evidence__warn" role="alert">{error}</p>}
+    {hooks === 'outdated' && <p className="evidence__warn" role="status" aria-label="Hooks out of date">
       Raio's hooks for this project are out of date — reconnect to capture PowerShell checks.{' '}
       <button type="button" className="link-btn" disabled={busy} onClick={() => {
         setBusy(true);

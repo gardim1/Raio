@@ -15,7 +15,7 @@ const health = (dropped: number, droppedAtLeast: boolean | undefined): CoreHealt
 });
 const warning = (core: CoreHealth | undefined): string | null => {
   const html = renderToStaticMarkup(createElement(EvidencePanel, { evidence, core }));
-  return html.match(/<p class="evidence__warn">(.*?)<\/p>/)?.[1] ?? null;
+  return html.match(/<p class="evidence__warn"[^>]*>(.*?)<\/p>/)?.[1] ?? null;
 };
 
 describe('dropped-event evidence', () => {
@@ -33,4 +33,18 @@ describe('dropped-event evidence', () => {
   it('does not invent dropped events without core health', () => {
     expect(warning(undefined)).toBeNull();
   });
+});
+
+it('keeps partial/stale/import warnings outside the collapsed map details', () => {
+  const html = renderToStaticMarkup(createElement(EvidencePanel, { evidence: {
+    ...evidence, technologies: ['Frontend · Next.js'],
+    note: 'Areas are a heuristic guess from folders and manifests, not verified dependencies. Relationships between areas are unknown. The latest relisting failed, so these areas are as of the last listing. The scan was partial, so some relationships may be missing.',
+  }, core: { ...health(3, true), watcherOverflow: true, historyResetFrom: 'history.backup' } }));
+  expect(html).toContain('About this map');
+  expect(html).toContain('aria-expanded="false"');
+  const disclosure = html.slice(html.indexOf('class="map-about"'));
+  expect(disclosure).toContain('Frontend · Next.js');
+  for (const warning of ['The latest relisting failed', 'The scan was partial', 'At least 3 event(s)', 'The file watcher overflowed', 'Local history was unreadable']) {
+    expect(html).toContain(warning); expect(disclosure).not.toContain(warning);
+  }
 });

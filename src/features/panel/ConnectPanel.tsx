@@ -84,12 +84,13 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
  * Empty state of the native app: connect a project (opt-in, previewed, reversible) or, once connected,
  * wait for the first agent session. Nothing is written until the user confirms the exact diff.
  */
-export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootChange, mapBesideReview = false }: {
+export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootChange, mapBesideReview = false, chooseAnother = false }: {
   readonly connector: Connector;
   readonly initialRoot?: string;
   readonly onClose?: () => void;
   readonly onPreviewRootChange?: (root: string | null) => void;
   readonly mapBesideReview?: boolean;
+  readonly chooseAnother?: boolean;
 }) => {
   const bridge = useBridge();
   const project = useSurfaceStore(bridge.subscribe, connector.project);
@@ -145,7 +146,13 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
     }
   };
 
-  if (project && !initialRoot && step.kind === 'idle') {
+  const choose = () => void run(async () => {
+    const token = request.current;
+    const root = await connector.chooseFolder();
+    if (root && token === request.current) begin(root);
+  });
+
+  if (project && !initialRoot && step.kind === 'idle' && !chooseAnother) {
     return (
       <div className="connect">
         <MiniOrb size={22} glow={0.35} bob restartKey="connected" />
@@ -159,7 +166,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
     );
   }
 
-  if (step.kind === 'loading') return <div className="connect connect--review">
+  if (step.kind === 'loading') return <div className={`connect connect--review${chooseAnother ? ' connect--sidebar-review' : ''}`}>
     <p className="connect__title">Reviewing {step.root}</p>
     <ConnectMapPreview state={step.map} />
     <p className="evidence__note">Loading settings preview…</p>
@@ -171,7 +178,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
     return (
       <div className="connect__flow">
       {error && <p className="connect__warn" role="alert">{error}</p>}
-      <ConnectReview preview={preview} map={step.map} mapBesideReview={mapBesideReview} busy={busy} onCancel={cancel}
+      <ConnectReview preview={preview} map={step.map} sidebar={chooseAnother} mapBesideReview={mapBesideReview} busy={busy} onCancel={cancel}
         onConnect={() => void run(async () => {
           const token = request.current;
           await connector.connect(root, preview);
@@ -180,6 +187,12 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
       </div>
     );
   }
+
+  if (chooseAnother) return <div className="sidebar__choose">
+    {step.kind === 'error' && <p className="connect__warn" role="alert">{step.message}</p>}
+    {error && <p className="connect__warn" role="alert">{error}</p>}
+    <Button onClick={choose} disabled={busy}>Choose another folder</Button>
+  </div>;
 
   return (
     <div className="connect">
@@ -190,13 +203,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
       {error && <p className="connect__warn" role="alert">{error}</p>}
       {initialRoot && <Button onClick={cancel}>Cancel</Button>}
       <Button
-        onClick={() =>
-          void run(async () => {
-            const token = request.current;
-            const root = await connector.chooseFolder();
-            if (root && token === request.current) begin(root);
-          })
-        }
+        onClick={choose}
         disabled={busy}
       >
         Choose a folder

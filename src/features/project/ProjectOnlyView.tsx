@@ -4,7 +4,6 @@ import type { CompanionPresence } from '../modes/companionPresence';
 import { PresenceHistory } from '../modes/PresenceHistory';
 import { useBridge } from '../../platform/BridgeContext';
 import type { Surface } from '../../platform/desktopBridge';
-import { receptionProblem } from '../../platform/coreHealth';
 import { IconButton } from '../../shared/ui/Button';
 import { IslandIcon, PictureInPictureIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
@@ -12,6 +11,10 @@ import { IdleIsland } from '../modes/IdleIsland';
 import { expandedWindowChrome } from '../modes/ExpandedWindow';
 import { MiniSurface } from '../modes/MiniSurface';
 import { ConnectionFooter } from '../panel/ConnectionFooter';
+import { AboutMap } from '../panel/AboutMap';
+import { ConnectPanel } from '../panel/ConnectPanel';
+import { NoProjectState } from '../panel/NoProjectState';
+import { deriveSidebarState } from '../panel/sidebarState';
 import { TitleBar } from '../panel/TitleBar';
 import { useSessionUi } from '../session/store/sessionStore';
 import type { ProjectMapSnapshot } from './projectMap';
@@ -23,38 +26,45 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
   const { pinned, togglePin, exitReplay } = useSurfaceStore(useSessionUi.subscribe, useSessionUi.getState);
   const frame = useMemo(() => projectMapFrame(snapshot.graph), [snapshot.graph]);
   useEffect(() => exitReplay(), [snapshot.project.id, exitReplay]);
-  const heading = snapshot.listing === 'pending' ? 'Mapping project' : snapshot.listing === 'unavailable' ? 'Project listing unavailable' : `${snapshot.graph.nodes.length} ${snapshot.graph.nodes.length === 1 ? 'system' : 'systems'} mapped`;
-  const problem = receptionProblem(snapshot.core, snapshot.provenance === 'fixture');
-  const waiting = problem ?? 'Waiting for an agent session';
+  const connection = useSurfaceStore(bridge.subscribe, () => bridge.connector?.project() ?? null);
+  const hooks = useSurfaceStore(bridge.subscribe, () => bridge.projectHooksState?.() ?? 'unknown');
+  const presence = useSurfaceStore(bridge.subscribe, () => bridge.projectPresence?.());
+  const state = deriveSidebarState({ snapshot, connected: bridge.connector ? connection !== null : true, hooks, presence });
   const nativeWindow = useMemo(() => expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [bridge]);
   const go = (surface: Surface) => bridge.showSurface(surface);
   if (mode === 'island') return <IdleIsland companion={companion} onOpen={() => go('expanded')} />;
+  if (state.action === 'connect') return bridge.connector ? <ConnectPanel connector={bridge.connector} /> : <NoProjectState />;
   if (mode === 'mini') return (
-    <MiniSurface companion={companion} project={snapshot.project.name} projectTitle="No session recorded yet" status="ready" stateLabel="No session yet" pinned={pinned}
+    <MiniSurface companion={companion} project={snapshot.project.name} projectTitle={snapshot.project.name} status="ready" stateLabel="No session yet" pinned={pinned}
       onTogglePin={() => { bridge.setPinned(!pinned); togglePin(); }} onExpand={() => go('expanded')} onCollapse={() => go('island')}
-      footer={<div className="mini__foot"><span className="mini__foot-text" title={waiting} style={problem ? { overflow: 'hidden', textOverflow: 'ellipsis' } : undefined}>{problem ?? (snapshot.listing === 'ready' ? waiting : heading)}</span></div>}>
+      footer={<div className="mini__foot"><span className="mini__foot-text" title={[state.heading, ...state.warnings].join(' · ')} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{state.warnings[0] ?? state.heading}</span></div>}>
       <ArchitectureCanvas graph={snapshot.graph} frame={frame} variant="mini" camera={false} fit={snapshot.graph.nodes.length > 0 ? 'content' : 'world'} className="mini__svg" label="Project architecture map" />
     </MiniSurface>
   );
   return (
     <div className="expanded-dock">
       <div className="panel expanded" style={{ borderRadius: 28 }}>
-        <TitleBar companion={companion} nativeWindow={nativeWindow} project={snapshot.project.name} agent="unknown" task={waiting} taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
+        <TitleBar companion={companion} nativeWindow={nativeWindow} project={snapshot.project.name} agent="unknown" task="Project overview" taskVisible taskIsPlaceholder taskPrefix="Connected ·" status="ready" statusLabel="No session yet" actions={<>
           <IconButton label="Open Mini Player" onClick={() => go('mini')}><PictureInPictureIcon /></IconButton>
           <IconButton label="Show as Island" onClick={() => go('island')}><IslandIcon /></IconButton>
         </>} />
         <div className="expanded__body">
           <div className="map expanded__map"><ArchitectureCanvas graph={snapshot.graph} frame={frame} className="map__svg" label="Project architecture map" /></div>
           <aside className="sidebar"><div className="sidebar__scroll">
-            <div className="sidebar__overview"><div className="sidebar__eyebrowless">{snapshot.project.name}</div><div className="sidebar__task">{heading}</div><div className="sidebar__meta">{waiting}</div></div>
-            <p className="evidence__note">No session recorded yet</p>
+            <div className="sidebar__overview">
+              <div className="sidebar__eyebrowless" role="heading" aria-level={2} title={state.projectName} aria-label={state.projectName}>{state.projectName}</div>
+              <div className="sidebar__task">{state.heading}</div>
+              <div className="sidebar__meta">{state.indicator}</div>
+            </div>
+            {state.message && <p className="sidebar__hint">{state.message}</p>}
+            {state.warnings.map(line => <p className="evidence__warn" role="status" aria-label={line} key={line}>{line}</p>)}
             {companion && <PresenceHistory presence={companion} />}
-            <p className="evidence__note">{snapshot.note}</p>
-            {snapshot.technologies.length > 0 && <ul className="evidence__list" aria-label="Technologies">{snapshot.technologies.map((line) => <li key={line} className="evidence__item"><span className="evidence__path" title={line}>{line}</span><span className="evidence__meta">named in manifests (names only, heuristic)</span></li>)}</ul>}
+            {state.action === 'choose-another' && bridge.connector && <ConnectPanel key={JSON.stringify([connection?.id, connection?.root])} connector={bridge.connector} chooseAnother />}
+            <AboutMap details={state.details} technologies={snapshot.technologies} />
             {bridge.connector && <ConnectionFooter connector={bridge.connector} />}
           </div></aside>
         </div>
-        <div className="footer"><div className="footer__left"><div className="hint">{waiting}</div></div></div>
+        <div className="footer"><div className="footer__left"><div className="hint">{state.areaCount} · heuristic map</div></div></div>
       </div>
     </div>
   );

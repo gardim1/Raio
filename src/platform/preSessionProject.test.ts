@@ -69,13 +69,14 @@ describe('connected project before its first session', () => {
     expect(frame.pulses).toEqual([]);
     expect(frame.risks).toEqual([]);
     const markup = renderApp(bridge);
-    expect(markup).toContain('Waiting for an agent session');
+    expect(markup).toContain('Waiting for activity');
+    expect(markup).toContain('Start a new Claude Code session in this folder');
     expect(markup).toContain('No session yet');
-    expect(markup).toContain('4 systems mapped');
+    expect(markup).toContain('4 areas');
     expect(markup).toContain('Project architecture map');
     expect(markup).toContain('aria-label="Auth"');
     expect(markup).toContain('aria-label="Web"');
-    expect(markup).not.toMatch(/Claude Code is working|Unknown agent|Session started|No edits reported|View changes|Replay|files changed|Start a new Claude/);
+    expect(markup).not.toMatch(/Claude Code is working|Unknown agent|Session started|No edits reported|View changes|Replay|files changed/);
     expect(markup).not.toContain('Demo fixture');
     feed.notify();
     await settle();
@@ -96,7 +97,7 @@ describe('connected project before its first session', () => {
     expect(bridge.currentSession()?.log.id).toBe('real-session');
     expect(bridge.currentSession()?.graph.nodes.map((node) => node.position)).toEqual(before.nodes.map((node) => node.position));
     expect(projectMapOf(bridge)).toBeNull();
-    expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    expect(renderApp(bridge)).not.toContain('Waiting for activity');
     await bridge.connector!.disconnect();
     expect(bridge.currentSession()).toBeNull();
     expect(projectMapOf(bridge)).toBeNull();
@@ -118,7 +119,7 @@ describe('connected project before its first session', () => {
     await settle();
     expect(projectMapOf(bridge)?.listing).toBe('unavailable');
     expect(projectMapOf(bridge)?.graph.nodes).toEqual([]);
-    expect(renderApp(bridge)).toContain('Project listing unavailable');
+    expect(renderApp(bridge)).toContain('Couldn&#x27;t list this folder');
     expect(renderApp(bridge)).not.toContain('0 systems mapped');
   });
 
@@ -144,7 +145,7 @@ describe('connected project before its first session', () => {
     expect(bridge.currentProjectMap()?.provenance).toBe('fixture');
     const markup = renderApp(bridge);
     expect(markup).toContain('Demo fixture · not real agent activity');
-    expect(markup).toContain('Waiting for an agent session');
+    expect(markup).toContain('Waiting for activity');
     expect(markup).not.toMatch(/View changes|Replay|Session started/);
   });
 
@@ -154,7 +155,7 @@ describe('connected project before its first session', () => {
     await settle();
     await settle();
     expect(renderApp(bridge)).toContain('raio-hook was not found next to Raio; new agent events cannot be recorded.');
-    expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    expect(renderApp(bridge)).not.toContain('Waiting for activity');
     expect(bridge.currentSession()).toBeNull();
   });
 
@@ -164,17 +165,17 @@ describe('connected project before its first session', () => {
     const bridge = createNativeBridge(surface, feed.ipc, () => 100_000, 1000, []);
     await settle();
     await settle();
-    expect(renderApp(bridge)).toContain('Waiting for an agent session');
+    expect(renderApp(bridge)).toContain('Waiting for activity');
     available = false;
     feed.notify();
     await settle();
     expect(renderApp(bridge)).toContain('Core status unavailable; new agent events cannot be confirmed.');
-    expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+    expect(renderApp(bridge)).not.toContain('Waiting for activity');
     expect(projectMapOf(bridge)?.graph.nodes).toHaveLength(4);
     available = true;
     feed.notify();
     await settle();
-    expect(renderApp(bridge)).toContain('Waiting for an agent session');
+    expect(renderApp(bridge)).toContain('Waiting for activity');
   });
 
   it('marks retained project data unavailable when the core can no longer refresh the connection', async () => {
@@ -193,7 +194,7 @@ describe('connected project before its first session', () => {
       await settle();
       expect(projectMapOf(bridge)?.graph.nodes).toHaveLength(4);
       expect(renderApp(bridge)).toContain('Core status unavailable; new agent events cannot be confirmed.');
-      expect(renderApp(bridge)).not.toContain('Waiting for an agent session');
+      expect(renderApp(bridge)).not.toContain('Waiting for activity');
     } finally {
       error.mockRestore();
     }

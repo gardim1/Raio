@@ -85,15 +85,11 @@ export const ExpandedWindow = ({
   const connector = bridge.connector;
   const nativeWindow = useMemo(() => expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [bridge]);
   const agentFull = agentFullName(script.agent);
-  // Before the agent starts the sidebar describes the repository; while it works, the live session; afterwards, the finished one.
-  const overview =
-    !isReplay && frame.ui.status === 'ready'
-      ? { eyebrow: project, title: `${graph.nodes.length} ${graph.nodes.length === 1 ? 'system' : 'systems'} mapped`, meta: `Start ${agentFull} in this repository` }
-      : {
-          eyebrow: agentFull,
-          title: script.task,
-          meta: !isReplay && frame.ui.status === 'working' ? (startedAt ? `Live session, started ${startedAt}` : 'Live session') : `${formatOffset(insights.durationMs)} session, ${insights.filesChanged} ${insights.filesChanged === 1 ? 'file' : 'files'} changed`,
-        };
+  const overview = {
+    eyebrow: project,
+    title: script.taskIsPlaceholder || script.task === project ? 'Session activity' : script.task,
+    meta: `${agentFull} · ${!isReplay && frame.ui.status === 'working' ? (startedAt ? `Live session, started ${startedAt}` : 'Live session') : `${formatOffset(insights.durationMs)} session, ${insights.filesChanged} ${insights.filesChanged === 1 ? 'file' : 'files'} changed`}`,
+  };
   const selected = selectedNodeId ? graph.nodeById.get(selectedNodeId) : undefined;
   const hovered = tooltip ? graph.nodeById.get(tooltip.id) : undefined;
   const hoveredFrame = tooltip ? frame.nodes.get(tooltip.id) : undefined;
@@ -140,10 +136,11 @@ export const ExpandedWindow = ({
           <aside className="sidebar">
             <div className="sidebar__scroll">
             <div className="sidebar__overview">
-              <div className="sidebar__eyebrowless">{overview.eyebrow}</div>
+              <div className="sidebar__eyebrowless" role="heading" aria-level={2} title={project} aria-label={project}>{overview.eyebrow}</div>
               <div className="sidebar__task">{overview.title}</div>
               <div className="sidebar__meta">{overview.meta}</div>
             </div>
+            <p className="evidence__note">{graph.nodes.length} {graph.nodes.length === 1 ? 'area' : 'areas'} · heuristic map</p>
             <p className="evidence__note">{lastRecordedSession(snapshotNow?.log ?? null, undefined, { live: !isReplay && script.live?.open === true })}</p>
             {companion && <PresenceHistory presence={companion} />}
             {selected ? (

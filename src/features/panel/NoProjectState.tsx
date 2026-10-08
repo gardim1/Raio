@@ -6,7 +6,7 @@ export const NoProjectState = ({ onChoose }: { readonly onChoose?: () => void })
   <div className="no-project">
     <MiniOrb size={22} glow={0.35} bob />
     <p className="no-project__title">No project yet</p>
-    <p className="no-project__body">Open a repository, or start Claude Code or Codex inside one, and Raio will map it.</p>
-    <Button onClick={onChoose}>Choose a folder</Button>
+    <p className="no-project__body">Choose a repository and review the Claude Code connection before Raio changes anything.</p>
+    <Button onClick={onChoose} disabled={!onChoose}>Choose a folder</Button>
   </div>
 );
