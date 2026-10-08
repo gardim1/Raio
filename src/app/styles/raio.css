@@ -355,20 +355,31 @@ svg text { font-family: var(--raio-font-ui); }
   transition: width .42s cubic-bezier(.2,1.15,.3,1), height .42s cubic-bezier(.2,1.15,.3,1), border-radius .42s cubic-bezier(.2,1.15,.3,1);
   outline: none;
 }
-.island--open { width: 340px; height: 124px; border-radius: 24px; }
+.island--open { width: 340px; height: auto; min-height: 144px; border-radius: 24px; }
 .island:has(.island__trigger:focus-visible) { outline: 2px solid var(--raio-color-accent-cool); outline-offset: 2px; }
 .island__trigger { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; outline: none; }
 .island__collapsed-content { display: contents; }
 .island__closed { position: absolute; left: 0; top: 0; width: 100%; max-width: 340px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 6px; white-space: nowrap; }
+.island--open .island__closed { height: 54px; padding: 8px 14px; }
+.island__heading { flex: 1; min-width: 0; }
+.island__identity { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; font-weight: 500; line-height: 1.4; }
+.island--open .island__identity { display: block; }
+.island--open .island__label { color: var(--raio-color-text-secondary); }
 .island__character { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex: none; }
-.island__label { font-size: 12.5px; font-weight: 500; color: rgba(240,244,250,.85); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.island__label { display: block; width: fit-content; max-width: 100%; font-size: 12.5px; font-weight: 500; color: rgba(240,244,250,.85); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .island__dot { width: 6px; height: 6px; border-radius: 50%; margin-left: auto; flex: none; background: var(--raio-color-text-primary); }
 .island .island__dot[data-presence] { background: var(--raio-color-text-primary); }
 .island .island__dot[data-presence="working"] { background: var(--raio-color-accent-cool); box-shadow: 0 0 6px var(--raio-color-accent-cool); }
 .island .island__dot[data-presence="attention"] { background: var(--raio-color-accent-warning); }
 .island .island__dot[data-presence="failure"] { background: #ff7b72; }
-.island__preview { position: absolute; left: 14px; right: 14px; top: 40px; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .3s; pointer-events: none; }
-.island--open .island__preview { opacity: 1; transform: none; transition-delay: .1s; pointer-events: auto; }
+.island__preview { position: relative; display: none; margin-top: 54px; padding: 0 14px 14px; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .3s; pointer-events: none; }
+.island--open .island__preview { display: block; opacity: 1; transform: none; transition-delay: .1s; pointer-events: auto; }
+.island__usage { position: relative; margin-bottom: 10px; }
+.island__usage-summary { position: absolute; top: 5px; left: 38px; right: 0; pointer-events: none; color: var(--raio-color-text-secondary); font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.island__usage:has(.usage-rings--stale) .island__usage-summary { opacity: .4; }
+.island__usage .usage-rings__button { width: 100%; min-height: 28px; padding: 0; }
+.island__usage .usage-rings__unavailable { max-width: none; font-size: 12px; }
+.island__usage .usage-details-wrap { max-height: min(280px, calc(100vh - 220px)); overflow-y: auto; overscroll-behavior: contain; }
 .island .mini-orb { flex: none; }
 .island__activity { font-size: 12.5px; color: rgba(240,244,250,.8); margin: 0 0 10px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .island__actions { display: flex; gap: 6px; }

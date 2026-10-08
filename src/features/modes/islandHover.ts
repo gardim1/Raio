@@ -17,6 +17,8 @@ export const createIslandHover = (setOpen: (open: boolean) => void) => {
     pointer: (inside: boolean) => { if (disposed) return; const previous = pointer; pointer = inside; change(inside, previous); },
     focus: (inside: boolean) => { if (disposed) return; const previous = focused; focused = inside; change(inside, previous); },
     escape: () => { if (!disposed) { cancel(); setOpen(false); } },
+    // A disclosure can grow before the next native hit-rect publication. Renew only the normal exit grace.
+    renew: () => { if (!disposed) { cancel(); if (!pointer && !focused) timer = setTimeout(() => { timer = undefined; if (!disposed) setOpen(false); }, 260); } },
     dispose: () => { disposed = true; cancel(); setOpen(false); },
   };
 };

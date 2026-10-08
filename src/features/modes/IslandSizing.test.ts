@@ -92,7 +92,8 @@ it('uses the approved capsule, preview materials and CSS timing instead of proje
   expect(rule('.island')).toContain('0 14px 30px -12px rgba(0,0,0,.7)');
   expect(rule('.island')).toContain('width .42s cubic-bezier(.2,1.15,.3,1)');
   expect(rule('.island--open')).toContain('width: 340px');
-  expect(rule('.island--open')).toContain('height: 124px');
+  expect(rule('.island--open')).toContain('height: auto');
+  expect(rule('.island--open')).toContain('min-height: 144px');
   expect(rule('.island--open')).toContain('border-radius: 24px');
   expect(rule('.island__closed')).toContain('gap: 8px');
   expect(rule('.island__closed')).toContain('padding: 0 12px 0 6px');
@@ -101,11 +102,21 @@ it('uses the approved capsule, preview materials and CSS timing instead of proje
   expect(rule('.island__label')).toContain('font-size: 12.5px');
   expect(rule('.island__label')).toContain('font-weight: 500');
   expect(rule('.island__dot')).toContain('width: 6px');
-  expect(rule('.island__preview')).toContain('left: 14px; right: 14px; top: 40px');
+  expect(rule('.island__preview')).toContain('position: relative');
+  expect(rule('.island__preview')).toContain('margin-top: 54px');
+  expect(rule('.island__preview')).toContain('padding: 0 14px 14px');
   expect(rule('.island__preview')).toContain('transform: translateY(-4px)');
   expect(rule('.island__preview')).toContain('transition: opacity .2s, transform .3s');
   expect(rule('.island--open .island__preview')).toContain('transition-delay: .1s');
   expect(rule('.island__actions button')).toContain('height: 28px');
   expect(rule('.island__actions button')).toContain('border-radius: 14px');
   expect(css).toContain('@media (prefers-reduced-motion: reduce) { .island, .island__preview { transition: none; } }');
+});
+it('bounds in-flow usage details inside the native window without shrinking controls or labels', () => {
+  expect(rule('.island__usage .usage-details-wrap')).toContain('max-height: min(280px, calc(100vh - 220px))');
+  expect(rule('.island__usage .usage-details-wrap')).toContain('overflow-y: auto');
+  expect(rule('.island__usage .usage-rings__button')).toContain('min-height: 28px');
+  expect(rule('.island__usage-summary')).toContain('font-size: 12px');
+  expect(rule('.island__identity')).toContain('font-size: 12.5px');
+  expect(rule('.island__label')).toContain('width: fit-content');
 });

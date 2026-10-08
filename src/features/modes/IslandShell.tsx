@@ -3,6 +3,7 @@ import { useBridge } from '../../platform/BridgeContext';
 import { useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { createIslandHover, followIslandPointer } from './islandHover';
 import { requestCharacterReaction } from '../raio/character';
+import { IslandUsage } from './IslandUsage';
 
 /** Prototype fitIsland formula, capped so the collapsed hit rect stays inside the preview. */
 export const fitIslandWidth = (labelWidth: number): number =>
@@ -53,10 +54,10 @@ export const IslandShell = ({ description, collapsed, children, onPinMini, onExp
       onFocus={() => hover.current?.focus(true)}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hover.current?.focus(false); }}
       onKeyDown={event => {
-        if (event.key !== 'Escape') return;
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.stopPropagation();
-        // The cookie unmounts on collapse; return its keyboard focus before removing it.
-        if ((event.target as HTMLElement | null)?.closest?.('.island__cookie')) {
+        // Preview controls unmount on collapse; return focus before removing the focused control.
+        if ((event.target as HTMLElement | null)?.closest?.('.island__preview')) {
           event.currentTarget.querySelector<HTMLButtonElement>('.island__trigger')?.focus();
         }
         hover.current?.escape();
@@ -72,7 +73,7 @@ export const IslandShell = ({ description, collapsed, children, onPinMini, onExp
       </button>
       <div id={previewId} role="group" aria-label="Island preview" className="island__preview"
         aria-hidden={!shown} inert={!shown}>
-        {children}
+        <div className="island__content">{children}{shown && <IslandUsage onOpenChange={expanded => { if (expanded) hover.current?.renew(); }} />}</div>
         <div className="island__actions">
           <button type="button" title="Open Mini Player" aria-label="Open Mini Player" onClick={onPinMini}>Open Mini Player</button>
           <button type="button" title="Open window" aria-label="Open window" onClick={onExpand}>Open window</button>

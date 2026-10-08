@@ -2,7 +2,7 @@ import { IslandShell } from './IslandShell';
 import { agentFullName, agentShortName } from '../../shared/ui/agentName';
 import { useBridge, useSessionSnapshot } from '../../platform/BridgeContext';
 import { useSurfaceStore } from '../../shared/motion/visibleStore';
-import { islandActivity, islandCaption, islandObservedActivity } from './islandActivity';
+import { islandActivity, islandCaption, islandPreviewActivity } from './islandActivity';
 import { IslandCharacter } from './IslandCharacter';
 import type { FrameState } from '../session/model/evaluateFrame';
 import type { ChoreographyScript } from '../session/model/script';
@@ -29,24 +29,22 @@ export const IslandMode = ({ script, presence, companion, onPinMini, onExpand }:
   const bridge = useBridge();
   const observations = useSurfaceStore(bridge.subscribe, () => bridge.projectPresence?.() ?? null);
   const effective = companion ?? deriveCompanionPresence(observations ?? fallbackPresenceInput(snapshot, null, bridge.kind === 'fixture'), Date.now());
-  const lastActivity = observations
-    ? islandObservedActivity(observations.facts, Date.now())
-    : `Last replay event · ${islandActivity(snapshot?.log ?? null)} · ${snapshot?.provenance === 'fixture' ? 'Demo fixture' : 'Recorded session log'}`;
   const replaying = useSessionUi((s) => s.source === 'replay');
   const agent = agentShortName(script.agent);
   const agentFull = agentFullName(script.agent);
   const collapsedLabel = replaying ? 'Replaying' : islandCaption(effective, presence.activeNodeLabel, agent);
   const description = !replaying && collapsedLabel === `${agent} · ${presence.activeNodeLabel}`
     ? `${collapsedLabel} · ${effective.description}` : effective.description;
-  const warning = effective.state === 'failure' || effective.state === 'attention' || effective.state === 'unknown';
-  const activity = warning ? `${effective.description} · Latest: ${lastActivity}`
-    : effective.state === 'connected' ? `No agent active right now. · ${lastActivity}`
-      : lastActivity;
+  const replayActivity = !observations && snapshot?.log.events.length ? islandActivity(snapshot.log) : undefined;
+  const previewActivity = islandPreviewActivity(effective, observations?.facts ?? [], Date.now(), undefined, replayActivity);
+  const activity = replayActivity && previewActivity.startsWith('Last activity')
+    ? `${previewActivity} · ${snapshot?.provenance === 'fixture' ? 'Demo fixture replay log' : 'Recorded session log'}` : previewActivity;
 
   return (
     <IslandShell description={description} onPinMini={onPinMini} onExpand={onExpand} collapsed={<>
       <IslandCharacter companion={effective} title={`${project || 'Raio'} · ${agentFull}`} />
-      <span className="island__label">{effective.state === 'unknown' ? '? ' : effective.state === 'disconnected' ? '− ' : ''}{collapsedLabel}</span>
+      <span className="island__heading"><span className="island__identity" title={`${project || 'Raio'} · ${agentFull}`}>{project || 'Raio'} · {agentFull}</span>
+        <span className="island__label">{effective.state === 'unknown' ? '? ' : effective.state === 'disconnected' ? '− ' : ''}{collapsedLabel}</span></span>
       <i data-presence={effective.state} className="island__dot" />
     </>}>
       <p className="island__activity" title={activity}>{activity}</p>

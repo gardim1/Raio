@@ -48,3 +48,22 @@ export const islandObservedActivity = (facts: readonly PresenceFact[], now: numb
   const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
   return `${label}${at ? ` · ${at}` : ''} · ${latest.source}`;
 };
+
+/** Recent observations do not prove an operation is still running. Keep their time and source explicit. */
+export const islandPreviewActivity = (companion: CompanionPresence, facts: readonly PresenceFact[], now: number, timeZone?: string, replayActivity?: string): string => {
+  if (companion.state === 'disconnected') return 'Choose a project to connect';
+  if (companion.state === 'unknown') return 'Activity status unavailable';
+  const latest = facts.reduce<PresenceFact | null>((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at >= last.at) ? fact : last, null);
+  if (latest) {
+    const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
+    const observed = islandObservedActivity([latest], now, timeZone);
+    const label = observed.slice(0, observed.length - ` · ${latest.source}`.length).replace(/ · \d{2}:\d{2}$/, '');
+    return `Last activity${at ? ` · ${at}` : ''} · ${label} · ${latest.source}`;
+  }
+  if (replayActivity) {
+    const match = replayActivity.match(/^(.*) · (\d{2}:\d{2})$/);
+    return match ? `Last activity · ${match[2]} · ${match[1]}` : `Last activity · ${replayActivity}`;
+  }
+  return companion.state === 'connected' ? 'No agent active right now.'
+    : companion.state === 'working' ? 'Activity details unavailable' : companion.description;
+};

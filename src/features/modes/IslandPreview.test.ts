@@ -18,6 +18,7 @@ import type { RaioEvent } from '../ingest/raioEvent';
 vi.mock('react', async original => { const actual = await original<typeof import('react')>(); return { ...actual,
   useState: (initial: unknown) => actual.useState(initial === false ? true : initial),
 }; });
+vi.mock('../../shared/motion/visibleStore', () => ({ useSurfaceStore: (_subscribe:unknown, read:()=>unknown) => read() }));
 const render = (bridge: ReturnType<typeof createFixtureBridge>, child: ReturnType<typeof createElement>) => renderToStaticMarkup(createElement(BridgeProvider, { bridge, children: child }));
 const input: PresenceInput = { connected: true, available: true, facts: [] };
 it.each([
@@ -36,7 +37,7 @@ it.each([
   if (!state.connected) expect(html).toContain('Choose a project');
   else if (!state.available) expect(html).toContain('Activity status unavailable');
   else if (companion.state === 'connected') expect(html).toContain('No agent active right now.');
-  else if (companion.state === 'working') { expect(html).toContain('Recent observed activity'); expect(html).toContain('Agent unknown'); expect(html).toContain('Fixture watcher'); }
+  else if (companion.state === 'working') { expect(html).toContain('Last activity'); expect(html).toContain('Agent unknown'); expect(html).toContain('Fixture watcher'); }
   else { expect(html).toContain(companion.label); expect(html).toContain(companion.description); }
 });
 it('session preview shows the real project, agent and latest observed operation', () => {
@@ -69,7 +70,7 @@ it('session preview advances beyond the last replay file read to command and Sto
       const bridge = { ...createFixtureBridge(), currentSession: () => snapshot, projectPresence: () => state };
       const html = render(bridge, child);
       // C-CHAR now preserves Stop as a distinct turn-end fact; a command remains ordinary activity.
-      expect(html).toContain(`${minute === 3 ? 'Turn ended' : 'Activity observed'} · 14:0${minute} · Claude hook`);
+      expect(html).toContain(`Last activity · 14:0${minute} · ${minute === 3 ? 'Turn ended' : 'Activity observed'} · Claude hook`);
       expect(html).not.toContain('Read src/api/a.ts');
       expect(html).not.toContain('Checks passed');
       expect(html).not.toContain('Command unknown (recorded)');
@@ -80,7 +81,7 @@ it('older session adapters explicitly identify their last replay event', () => {
   const bridge = createFixtureBridge(); const snapshot = bridge.currentSession()!;
   const frame = evaluateFrame(canonicalScript, snapshot.graph, 4);
   const html = render(bridge, createElement(IslandMode, { script: canonicalScript, frame, presence: derivePresence(canonicalScript, snapshot.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} }));
-  expect(html).toContain('Last replay event · Turn ended');
+  expect(html).toMatch(/Last activity · \d{2}:\d{2} · Turn ended · Demo fixture replay log/);
 });
 it('idle actions invoke only their explicit callbacks', () => {
   const bridge = createFixtureBridge(null); const open = vi.fn(); const show = vi.fn();
@@ -113,7 +114,7 @@ it('a relevant failure keeps a short failure caption and its full reason despite
     presence: derivePresence(canonicalScript, snapshot.graph, frame, false), onPinMini: () => {}, onExpand: () => {}, onViewChanges: () => {} }));
   expect(html).toContain('<span class="island__label">Tests failed</span>');
   expect(html).toContain(companion.description);
-  expect(html).toContain('Last replay event · Turn ended');
+  expect(html).toMatch(/Last activity · \d{2}:\d{2} · Turn ended · Demo fixture replay log/);
   expect(html).toContain('data-presence="failure"');
   expect(html).toContain('data-character-mode="failure"');
   expect(html).toContain('data-character-size="island"');

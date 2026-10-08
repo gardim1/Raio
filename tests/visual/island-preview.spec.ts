@@ -40,7 +40,8 @@ for (const projectOnly of [false, true]) {
     // The approved ZIP keeps row 1 visible in the preview; both DOM nodes must survive.
     await expect(label).toBeVisible();
     await expect.poll(async () => Math.round((await island.boundingBox())!.width)).toBe(340);
-    await expect.poll(async () => Math.round((await island.boundingBox())!.height)).toBe(124);
+    // D hierarchy adds a project/agent row; disabled usage keeps the base preview compact.
+    await expect.poll(async () => Math.round((await island.boundingBox())!.height)).toBe(144);
     const open = (await island.boundingBox())!;
     expect(open.x).toBeLessThanOrEqual(closed.x + 1);
     expect(open.y).toBeLessThanOrEqual(closed.y + 1);
