@@ -1,6 +1,6 @@
 /**
- * The idle float plays for about 30 s after the orb's state changes, then rests still.
- * Keep in sync with `.mini-orb--bob` in raio.css (bob.test.ts checks the rule).
+ * Legacy timing exports still used by companion recency. Preserve the 30 s activity window.
+ * The character no longer draws a CSS float; its shared SVG engine stops at rest.
  */
 export const BOB_PERIOD_SECONDS = 3;
 export const BOB_ITERATIONS = 10;

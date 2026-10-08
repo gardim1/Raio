@@ -12,6 +12,7 @@ export const factsFromEvents = (events: readonly RaioEvent[], projectId: string)
     const base = { id: event.id, at: event.sourceAt ?? event.observedAt, ...(event.attribution === 'session' && event.sessionId ? { sessionId: event.sessionId } : {}), source };
     if (event.kind === 'session.started') return { ...base, kind: 'start' };
     if (event.kind === 'session.ended') return { ...base, kind: 'end' };
+    if (event.kind === 'turn.ended') return { ...base, kind: 'turn-end' };
     if (event.kind === 'file.changed' || event.kind === 'file.edit.reported') return { ...base, kind: 'change', paths: event.paths, change: event.evidence.change ?? 'unknown' };
     if (event.kind === 'file.edit.failed') return { ...base, kind: 'edit-failed', paths: event.paths };
     if (event.kind === 'command.observed' && event.evidence.toolUseId) tools.set(key(event), checkClass(event.evidence.commandClass));

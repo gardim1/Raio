@@ -24,9 +24,11 @@ describe('shared companion presence on existing chrome', () => {
     expect(mini).toContain('Claude hook');
     expect(mini).toContain('Tests failed');
   });
-  it('resting Island/header orbs retain the requested finite idle float', () => {
+  it('resting Island/header orbs keep quiet presence with the shared character instead of a float', () => {
     const markup = renderToStaticMarkup(createElement(MiniOrb, { bob: true, companion: quiet }));
-    expect(markup).toContain('mini-orb--bob');
+    expect(markup).not.toContain('mini-orb--bob');
+    expect(markup).toContain('data-character-mode="idle"');
+    expect(markup).toContain('raio-char--island');
     expect(markup).toContain('data-presence="connected"');
   });
   it('gives unavailable/disconnected states their own icon plus readable wording', () => {

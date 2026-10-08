@@ -7,7 +7,7 @@ export interface PresenceFact {
   readonly id: string;
   readonly sessionId?: string;
   readonly at: number;
-  readonly kind: 'start' | 'end' | 'activity' | 'change' | 'check' | 'edit-failed';
+  readonly kind: 'start' | 'end' | 'activity' | 'turn-end' | 'change' | 'check' | 'edit-failed';
   readonly paths?: readonly string[];
   readonly change?: 'added' | 'modified' | 'deleted' | 'unknown';
   readonly checkClass?: string;

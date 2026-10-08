@@ -1,5 +1,16 @@
 /* Development harness only. Never imported by the product entry (index.html). */
 
+.character-bench { position: absolute; inset: 0 0 72px; overflow: auto; padding: 32px; }
+.character-bench h1 { font-size: 22px; }
+.character-bench p { max-width: 78ch; color: #b5bdcc; font-size: 13px; line-height: 1.5; }
+.character-bench__controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.character-bench__controls button { padding: 8px 12px; background: #20232c; border: 1px solid #ffffff20; border-radius: 14px; cursor: pointer; }
+.character-bench__controls button[aria-pressed="true"] { border-color: #8ab4ff; }
+.character-bench__sizes { display: flex; gap: 48px; align-items: center; flex-wrap: wrap; }
+.character-bench__sizes figure { margin: 24px 0; display: grid; justify-items: center; gap: 18px; }
+.character-bench__sizes figcaption { color: #b5bdcc; font-size: 12px; }
+.character-bench__stage { width: 300px; height: 300px; overflow: hidden; }
+
 /* ---------- Film ---------- */
 .film { position: absolute; inset: 0 0 72px 0; display: grid; place-items: center; }
 .film__stage { width: 1280px; height: 800px; position: relative; flex: none; transform-origin: center; }
@@ -19,7 +30,6 @@
 }
 .wordmark--show { opacity: 1; transform: none; filter: none; }
 .wordmark__mark { display: flex; align-items: center; gap: 10px; font-size: 36px; font-weight: 650; letter-spacing: -0.035em; }
-.wordmark__mark .mini-orb { box-shadow: var(--raio-shadow-wordmark-orb) !important; }
 .wordmark__tag { margin-top: 6px; font-size: 15px; color: var(--raio-color-text-muted); letter-spacing: -0.005em; }
 
 /* ---------- Desktop backdrop ---------- */
