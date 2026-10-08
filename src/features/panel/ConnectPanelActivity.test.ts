@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
-import type { ConnectPreview, Connector, DesktopBridge } from '../../platform/desktopBridge';
+import type { ConnectPreview, Connector, DesktopBridge, UsageOptIn } from '../../platform/desktopBridge';
 import type { ProjectMapSnapshot } from '../project/projectMap';
 
 // Invoke the real panel callbacks; preserve hook slots when Activity disconnects/reconnects effects.
@@ -24,7 +24,7 @@ import { ConnectPanel, ConnectReview } from './ConnectPanel';
 import { ConnectMapPreview } from './ConnectMapPreview';
 import { createProjectFixtureBridge, createFixtureBridge } from '../../platform/fixtureBridge';
 
-type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
+type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; busy?:boolean; onUsageChange?: (options:UsageOptIn) => void; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
 const find = (node: unknown, match: (node: Node) => boolean): Node | null => {
   if (!node || typeof node !== 'object') return null;
   const element = node as Node;
@@ -152,4 +152,21 @@ it('switches a connected folder only through the explicit Connect callback', asy
   card.props.onConnect!(); await settle();
   expect(connector.connect).toHaveBeenCalledExactlyOnceWith('C:/fixture', preview);
   expect(connector.disconnect).not.toHaveBeenCalled();
+});
+
+it('usage choices require a fresh exact preview before Connect and survive hide/reveal pending review', async () => {
+  const { setup, cleanup } = await choose();
+  previews[0]!.resolve(preview); maps[0]!.resolve(null); await settle();
+  const choice = { enabled:true, replaceExisting:false };
+  review()!.props.onUsageChange!(choice); await settle();
+  expect(connector.preview).toHaveBeenLastCalledWith('C:/fixture', choice);
+  expect(review()!.props.busy).toBe(true); expect(connector.connect).not.toHaveBeenCalled();
+  cleanup(); setup(); await settle();
+  expect(connector.preview).toHaveBeenLastCalledWith('C:/fixture', choice);
+  const fresh = { ...preview, after:'{"statusLine":{"type":"command","command":"synthetic"}}' };
+  previews[2]!.resolve(fresh); maps[1]!.resolve(null); await settle();
+  previews[1]!.resolve(preview); await settle();
+  expect(review()!.props.preview).toEqual(fresh);
+  review()!.props.onConnect!(); await settle();
+  expect(connector.connect).toHaveBeenCalledExactlyOnceWith('C:/fixture', fresh);
 });

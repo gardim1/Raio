@@ -16,6 +16,8 @@ pub mod store;
 mod surfaces;
 mod tray;
 pub mod watch;
+pub mod usage;
+pub mod usage_connect;
 
 use tauri::Manager;
 
@@ -86,6 +88,7 @@ pub fn run() {
             core::list_projects,
             core::project_events,
             core::project_hooks_state,
+            core::claude_usage,
             core::preview_connect,
             core::preview_project_map,
             core::take_project_intent,

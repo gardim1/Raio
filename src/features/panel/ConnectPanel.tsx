@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSurfaceStore } from '../../shared/motion/visibleStore';
 import { useSurfaceVisible } from '../../shared/motion/surfaceVisibility';
 import { useBridge } from '../../platform/BridgeContext';
-import type { ConnectPreview, Connector } from '../../platform/desktopBridge';
+import type { ConnectPreview, Connector, UsageOptIn } from '../../platform/desktopBridge';
 import { Button } from '../../shared/ui/Button';
 import { MiniOrb } from '../raio/MiniOrb';
 import { ConnectMapPreview, readPreviewMap, type PreviewMapState } from './ConnectMapPreview';
@@ -11,12 +11,12 @@ import { ConnectMapPreview, readPreviewMap, type PreviewMapState } from './Conne
  * Shows only what Raio changes: the `hooks` key in full, every other value masked so secrets in
  * `env` or permission rules are not displayed (they are kept unchanged on disk).
  */
-export const maskedSettings = (text: string | null): string => {
+export const maskedSettings = (text: string | null, statusLineInUsageDiff = false): string => {
   if (text === null) return '(file does not exist)';
   try {
     const value: unknown = JSON.parse(text);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return '(not shown)';
-    const shown = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'hooks' ? v : '… kept unchanged']));
+    const shown = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'hooks' ? v : k === 'statusLine' && statusLineInUsageDiff ? '… shown in Claude plan usage diff' : '… kept unchanged']));
     return JSON.stringify(shown, null, 2);
   } catch {
     return '(not valid JSON; Raio will not change it)';
@@ -26,11 +26,12 @@ export const maskedSettings = (text: string | null): string => {
 type Step = { readonly kind: 'idle' } | { readonly kind: 'loading'; readonly root: string; readonly map: PreviewMapState } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview; readonly map: PreviewMapState } | { readonly kind: 'error'; readonly message: string };
 
 /** The same explicit before/after review for initial connection and refreshing an existing connection. */
-export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = false, map, mapBesideReview = false }: {
+export const ConnectReview = ({ preview, busy, onCancel, onConnect, onUsageChange, sidebar = false, map, mapBesideReview = false }: {
   readonly preview: ConnectPreview;
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onConnect: () => void;
+  readonly onUsageChange?: (options: UsageOptIn) => void;
   readonly sidebar?: boolean;
   readonly map?: PreviewMapState;
   readonly mapBesideReview?: boolean;
@@ -63,14 +64,32 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, sidebar = fa
     </p>
     {preview.gitIgnored === false && <p className="connect__warn">Git does not ignore this file. It contains a path on this computer; do not commit it.</p>}
     {map && !mapBesideReview && <ConnectMapPreview state={map} />}
+    {preview.usage && <fieldset disabled={busy}>
+      <legend>Claude plan usage</legend>
+      <label><input type="checkbox" checked={preview.usage.enabled}
+        disabled={!preview.usage.enabled && (preview.usage.effective === 'managed' || preview.usage.effective === 'unavailable')}
+        onChange={event => onUsageChange?.({ enabled:event.target.checked, replaceExisting:false })} /> Show Claude plan usage (5-hour and weekly limits)</label>
+      <p className="connect__body">Claude Code shows Raio's empty status line row instead of some footer hints.</p>
+      <p className="connect__body">{({ none:'No existing status line found.', raio:'Raio manages this project’s status line.', user:'An existing status line comes from user settings.',
+        'shared-project':'An existing status line comes from shared project settings.', 'project-local':'An existing status line comes from project-local settings.',
+        managed:'Managed Claude settings are present.', unavailable:'The effective status line could not be inspected.' })[preview.usage.effective]}</p>
+      {['user','shared-project','project-local'].includes(preview.usage.effective) && <label><input type="checkbox" checked={preview.usage.replaceExisting} disabled={!preview.usage.enabled}
+        onChange={event => onUsageChange?.({ enabled:preview.usage!.enabled, replaceExisting:event.target.checked })} /> Replace it in this project only</label>}
+      {preview.usage.reason && <p className="connect__warn">{preview.usage.reason}</p>}
+      <p className="connect__body">Only this project's settings are changed. Existing status lines are not chained. A Claude Code session started with --settings may override this project setting.</p>
+      <div className="connect__diff">
+        <div><span>statusLine before</span><pre>{JSON.stringify(preview.usage.before, null, 2)}</pre></div>
+        <div><span>statusLine after</span><pre>{JSON.stringify(preview.usage.after, null, 2)}</pre></div>
+      </div>
+    </fieldset>}
     <div className="connect__diff">
-      <div><span>Before</span><pre>{maskedSettings(preview.before)}</pre></div>
-      <div><span>After</span><pre>{maskedSettings(preview.after)}</pre></div>
+      <div><span>Before</span><pre>{maskedSettings(preview.before, Boolean(preview.usage))}</pre></div>
+      <div><span>After</span><pre>{maskedSettings(preview.after, Boolean(preview.usage))}</pre></div>
     </div>
     </div>
     <div className="connect__actions">
       <Button onClick={onCancel} disabled={busy}>Cancel</Button>
-      <Button onClick={onConnect} disabled={busy}>Connect</Button>
+      <Button onClick={onConnect} disabled={busy || Boolean(preview.usage?.enabled && preview.usage.reason)}>Connect</Button>
     </div>
   </div>
   );
@@ -98,13 +117,16 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
-  const pending = useRef<{ root: string; remaining: number } | null>(initialRoot ? { root: initialRoot, remaining: 2 } : null);
+  const pending = useRef<{ root: string; remaining: number; usage?: UsageOptIn } | null>(initialRoot ? { root: initialRoot, remaining: 2 } : null);
+  const pendingUsage = useRef<{ root:string; usage:UsageOptIn } | null>(null);
+  const usageRequest = useRef(0);
   const previousInitialRoot = useRef(initialRoot);
 
-  const begin = (root: string) => {
+  const begin = (root: string, usage?: UsageOptIn) => {
     onPreviewRootChange?.(root);
     const token = ++request.current;
-    pending.current = { root, remaining: 2 };
+    pending.current = { root, remaining: 2, usage };
+    pendingUsage.current = null;
     const settled = () => {
       if (token !== request.current || !pending.current) return;
       if (--pending.current.remaining === 0) pending.current = null;
@@ -117,7 +139,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
       if (token !== request.current) return;
       setStep((current) => current.kind === 'loading' || current.kind === 'review' ? { ...current, map } : current);
     }).finally(settled);
-    void connector.preview(root).then((preview) => {
+    void (usage ? connector.preview(root, usage) : connector.preview(root)).then((preview) => {
       if (token !== request.current) return;
       setStep((current) => ({ kind: 'review', root, preview, map: current.kind === 'loading' ? current.map : { kind: 'loading' } }));
     }).catch((cause: unknown) => { if (token === request.current) setStep({ kind: 'error', message: String(cause) }); }).finally(settled);
@@ -125,13 +147,16 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
   useEffect(() => {
     if (initialRoot !== previousInitialRoot.current) {
       previousInitialRoot.current = initialRoot;
+      pendingUsage.current = null;
+      usageRequest.current++;
       pending.current = initialRoot ? { root: initialRoot, remaining: 2 } : null;
     }
     // Cleanup invalidates callbacks, but Activity retains the unfinished folder request for reveal.
-    if (pending.current) begin(pending.current.root);
+    if (pendingUsage.current) begin(pendingUsage.current.root, pendingUsage.current.usage);
+    else if (pending.current) begin(pending.current.root, pending.current.usage);
     return () => { request.current++; };
   }, [initialRoot, connector, bridge]);
-  const cancel = () => { request.current++; pending.current = null; setBusy(false); setStep({ kind: 'idle' }); setError(null); onPreviewRootChange?.(null); onClose?.(); };
+  const cancel = () => { request.current++; pending.current = null; pendingUsage.current = null; setBusy(false); setStep({ kind: 'idle' }); setError(null); onPreviewRootChange?.(null); onClose?.(); };
 
   const run = async (action: () => Promise<void>) => {
     const token = request.current;
@@ -179,6 +204,22 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
       <div className="connect__flow">
       {error && <p className="connect__warn" role="alert">{error}</p>}
       <ConnectReview preview={preview} map={step.map} sidebar={chooseAnother} mapBesideReview={mapBesideReview} busy={busy} onCancel={cancel}
+        onUsageChange={usage => {
+          const token = request.current; const choice = ++usageRequest.current;
+          pendingUsage.current = { root, usage }; setBusy(true); setError(null);
+          void connector.preview(root, usage).then(next => {
+            if (token === request.current && choice === usageRequest.current) {
+              pendingUsage.current = null;
+              setStep(current => current.kind === 'review' && current.root === root ? { ...current, preview:next } : current);
+            }
+          }).catch((cause:unknown) => {
+            if (token === request.current && choice === usageRequest.current) {
+              pendingUsage.current = null; setError(String(cause));
+              // Retire the old diff after an unsuccessful choice; it must not remain applicable.
+              setStep({ kind:'error', message:'Could not review the usage choice. Choose the folder again.' });
+            }
+          }).finally(() => { if (token === request.current && choice === usageRequest.current) setBusy(false); });
+        }}
         onConnect={() => void run(async () => {
           const token = request.current;
           await connector.connect(root, preview);

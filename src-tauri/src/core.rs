@@ -13,6 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::connect;
+use crate::{usage, usage_connect};
 use crate::event::{project_id, RaioEvent};
 use crate::inbox::{self, Dirs};
 use crate::instance;
@@ -47,6 +48,7 @@ pub struct Core {
     /// Serialises whole connection changes (marker, settings, database, published list), so one change can never
     /// clear the pending marker while another is still in flight.
     connection_changes: Mutex<()>,
+    usage: Mutex<Result<usage::Reader, String>>,
 }
 
 fn now_ms() -> i64 {
@@ -89,6 +91,7 @@ impl Core {
         let inbox = inbox::tidy(&self.dirs, now, &limits.inbox);
         let mut more = inbox.more;
         let now_ms = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        if let Ok(mut usage) = self.usage.lock() && let Ok(reader) = usage.as_mut() { reader.expire(&self.data, now_ms); }
         let mut retention_removed = 0;
         for batch in 1..=limits.retention_batches {
             let removed = match self.store.lock().map(|store| store.apply_retention_batch(now_ms, limits.retention_batch)) {
@@ -111,7 +114,8 @@ impl Core {
         dirs.create().map_err(|e| e.to_string())?;
         inbox::touch_heartbeat(&dirs).map_err(|e| e.to_string())?;
         let store = Store::open(&data.join("raio.db"), now_ms()).map_err(|e| e.to_string())?;
-        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default(), connection_changes: Mutex::default() };
+        let usage = Mutex::new(usage::Reader::open(&data, now_ms()));
+        let core = Core { dirs, data: data.clone(), backups: data.join("backups"), store: Mutex::new(store), watches: Mutex::default(), project_intents: Mutex::default(), connection_changes: Mutex::default(), usage };
         // Before the first ingest pass, so events past the inbox TTL are dropped (and counted), not stored late.
         core.housekeeping(SystemTime::now(), &Limits::default());
         core.refresh_connections();
@@ -209,6 +213,7 @@ impl Core {
         self.withdraw_connections();
         let result = (|| {
             connect::connect(&root, &command, previewed, &self.backups, now_ms())?;
+            if previewed.usage.as_ref().is_some_and(|p| !p.enabled) { self.clear_usage(&id); }
             let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
             let project = Project { id, root: root.to_string_lossy().into_owned(), name, connected_at: now_ms() };
             self.store.lock().map_err(|e| e.to_string())?.upsert_project(&project).map_err(|e| e.to_string())?;
@@ -229,6 +234,7 @@ impl Core {
         })();
         self.refresh_connections();
         result?;
+        self.clear_usage(project_id);
         if let Ok(mut watches) = self.watches.lock() { watches.remove(project_id); }
         Ok(())
     }
@@ -236,6 +242,24 @@ impl Core {
     fn store_events(&self, events: Vec<RaioEvent>) -> usize {
         let Ok(store) = self.store.lock() else { return 0 };
         events.iter().filter(|e| matches!(store.insert(e, now_ms()), Ok(Insert::Inserted(_)))).count()
+    }
+
+    fn clear_usage(&self, project: &str) {
+        if let Ok(mut usage) = self.usage.lock() && let Ok(reader) = usage.as_mut() { reader.clear(&self.data, project); }
+    }
+
+    fn ingest_usage(&self) -> bool {
+        self.usage.lock().ok().and_then(|mut usage| usage.as_mut().ok().map(|r| r.ingest(&self.data, now_ms()))).unwrap_or(false)
+    }
+
+    fn usage_for(&self, project: &str, hook: Option<&Path>, layers: &usage_connect::Layers) -> Result<usage::State, String> {
+        let root = self.connected_root(project)?;
+        let Some(hook) = hook else { return Ok(usage::State::Incompatible { reason: "Raio's status line reader is unavailable.".into() }) };
+        let command = connect::hook_command(hook, project, &root);
+        let configuration = usage_connect::configuration(&root, &command, layers);
+        if configuration != usage::State::Waiting { return Ok(configuration) }
+        let reader = self.usage.lock().map_err(|_| "Usage storage unavailable")?;
+        Ok(match reader.as_ref() { Ok(r) => r.state(&self.data, project, now_ms()), Err(reason) => usage::State::Error { reason: reason.clone() } })
     }
 
     fn start_watch(&self, app: &AppHandle, project: &Project) {
@@ -268,6 +292,7 @@ pub fn start(app: &AppHandle) {
             if core.ingest_once() > 0 {
                 let _ = handle.emit(INGESTED_EVENT, ());
             }
+            if core.ingest_usage() { let _ = handle.emit("claude-usage-changed", ()); }
             // A second `raio.exe` asked this instance to come forward.
             if let Some(request) = instance::take_launch_request(&core.data) {
                 let emit = if let Some(project) = &request.project {
@@ -367,6 +392,11 @@ pub fn project_hooks_state(core: State<'_, Core>, project_id: String) -> Result<
     hooks_state_for(&core, &project_id, hook_binary().as_deref())
 }
 
+#[tauri::command(async)]
+pub fn claude_usage(core: State<'_, Core>, project_id: String) -> Result<usage::State, String> {
+    core.usage_for(&project_id, hook_binary().as_deref(), &usage_connect::Layers::discover())
+}
+
 fn root_and_command(root: &str) -> Result<(PathBuf, String, String), String> {
     let root = paths::project_root(Path::new(root))?;
     let hook = hook_binary().ok_or("raio-hook was not found next to the Raio app")?;
@@ -401,9 +431,9 @@ pub fn take_project_intent(core: State<'_, Core>) -> Option<String> {
 
 /// Async so the `git check-ignore` probe never blocks the UI thread.
 #[tauri::command]
-pub async fn preview_connect(root: String) -> Result<connect::Preview, String> {
+pub async fn preview_connect(root: String, usage: Option<usage_connect::Options>) -> Result<connect::Preview, String> {
     let (root, _, command) = root_and_command(&root)?;
-    connect::preview(&root, &command)
+    connect::preview_usage(&root, &command, usage, &usage_connect::Layers::discover())
 }
 
 #[tauri::command(async)]
@@ -427,6 +457,34 @@ mod tests {
     use super::*;
     use crate::event::{stable_id, Evidence};
     use crate::store::RETENTION_MS;
+
+    #[test]
+    fn usage_is_opt_in_watch_driven_persistent_and_never_a_history_event() {
+        let data = tempfile::tempdir().unwrap(); let project = tempfile::tempdir().unwrap();
+        let root = project.path().to_path_buf(); let hook = Path::new("C:/Raio/raio-hook.exe");
+        let command = connect::hook_command(hook, "p", &root); let layers = usage_connect::Layers::default();
+        let core = Core::open_at(data.path()).unwrap();
+        let p = connect::preview(&root, &command).unwrap(); core.connect_at(root.clone(), "p".into(), command.clone(), &p).unwrap();
+        assert_eq!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Disabled);
+        let p = connect::preview_usage(&root, &command, Some(usage_connect::Options { enabled:true, replace_existing:false }), &layers).unwrap();
+        core.connect_at(root.clone(), "p".into(), command.clone(), &p).unwrap();
+        assert_eq!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Waiting);
+        let snapshot = usage::parse(br#"{"session_id":"synthetic","rate_limits":{"five_hour":{"used_percentage":0}}}"#, "p", now_ms()).unwrap();
+        usage::write(data.path(), &snapshot).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while !core.ingest_usage() && std::time::Instant::now() < until { thread::sleep(Duration::from_millis(10)); }
+        assert!(matches!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Reading { source_count:1, .. }));
+        assert_eq!(core.store.lock().unwrap().count_events().unwrap(), 0);
+        drop(core);
+        let core = Core::open_at(data.path()).unwrap();
+        assert!(matches!(core.usage_for("p", Some(hook), &layers).unwrap(), usage::State::Reading { .. }));
+        let managed = data.path().join("managed.json"); fs::write(&managed, "presence only").unwrap();
+        assert!(matches!(core.usage_for("p", Some(hook), &usage_connect::Layers { user:None, managed:Some(managed), receipts:None }).unwrap(), usage::State::Incompatible { .. }));
+        core.disconnect_id("p").unwrap();
+        assert!(core.usage_for("p", Some(hook), &layers).is_err());
+        assert!(!fs::read_to_string(connect::settings_path(&root)).unwrap().contains("statusLine"));
+        assert_eq!(fs::read_dir(usage::directory(data.path())).unwrap().count(), 0);
+    }
 
     fn event(n: u32) -> RaioEvent {
         RaioEvent {

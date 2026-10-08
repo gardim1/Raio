@@ -9,6 +9,23 @@ import type { ConnectPreview, DesktopBridge, ProjectHooksState, SessionSnapshot 
 import type { ProjectMapBridge } from './projectMapBridge';
 import { projectMap } from '../features/project/projectMap';
 import { isWindowsRoot, sameProjectRoot } from './projectIntent';
+import type { ClaudeUsageState } from '../features/usage/claudeUsage';
+
+/** Dev harness only, explicitly synthetic. Product pages and product builds always return disabled. */
+const fixtureUsage = (): ClaudeUsageState => {
+  if (!import.meta.env.DEV || !globalThis.location?.pathname.endsWith('/harness.html')) return { status: 'disabled' };
+  const mode = new URLSearchParams(globalThis.location.search).get('usage');
+  if (mode === 'waiting') return { status: 'waiting' };
+  if (mode === 'incompatible') return { status: 'incompatible', reason: 'DEMO · Existing status line needs project-only replacement consent.' };
+  if (!mode || !['reading', 'stale', 'missing-weekly', 'expired'].includes(mode)) return { status: 'disabled' };
+  const now = Date.now();
+  return { status: 'reading', sourceCount: 1, latest: {
+    source: { kind: 'claude-statusline', projectId: 'DEMO-project', sessionId: 'DEMO-session', claudeVersion: 'DEMO' },
+    receivedAtMs: now - (mode === 'stale' ? 20 * 60_000 : 60_000),
+    fiveHour: { usedPercentage: 42, resetsAtMs: now + (mode === 'expired' ? -60_000 : 2 * 60 * 60_000) },
+    ...(mode === 'missing-weekly' ? {} : { sevenDay: { usedPercentage: 68, resetsAtMs: now + 3 * 24 * 60 * 60_000 } }),
+  } };
+};
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
 export const demoSnapshot: SessionSnapshot = {
@@ -32,6 +49,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
   const current = snapshot?.core
     ? { ...snapshot, core: { ...snapshot.core, droppedAtLeast: snapshot.core.droppedAtLeast ?? false } }
     : snapshot;
+  const usage = fixtureUsage();
   return {
     kind: 'fixture',
     fixedSurface: null,
@@ -41,6 +59,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     selectProject: () => Promise.resolve(false),
     previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
+    claudeUsage: () => usage,
     subscribe: () => () => {},
     showSurface: showSurfaceInPlace,
     setPinned: () => {},
@@ -149,6 +168,7 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
   };
 
   let count = arrivedBy(options.fixedNowMs ?? 0);
+  const usage = fixtureUsage();
   if (options.fixedNowMs === undefined) {
     const startedAt = performance.now();
     const schedule = (): void => {
@@ -172,7 +192,9 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     selectProject: () => Promise.resolve(false),
     previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.split('/').at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
+    claudeUsage: () => usage,
     subscribe: (listener) => {
+      // Usage demos are static; only the simulated session feed schedules notifications.
       listeners.add(listener);
       return () => listeners.delete(listener);
     },

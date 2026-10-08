@@ -11,6 +11,7 @@ import type { ProjectMapBridge } from './projectMapBridge';
 import { isWindowsRoot, sameProjectRoot } from './projectIntent';
 import { factsFromEvents } from '../features/modes/presenceFacts';
 import type { PresenceInput } from '../features/modes/companionPresence';
+import type { ClaudeUsageState, ClaudeUsageSnapshot } from '../features/usage/claudeUsage';
 import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 /** One app-local UI preference shared by webviews, including lazily created windows. */
@@ -34,6 +35,7 @@ export const surfaceFromUrl = (search: string): Surface | null => {
 export interface NativeIpc {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   onIngested(listener: () => void): void;
+  onUsageChanged?(listener: () => void): void;
   onIslandPointer?(listener: (inside: boolean) => void): Promise<() => void>;
   chooseFolder(): Promise<string | null>;
   onProjectIntent?(listener: (root: string) => void): Promise<() => void>;
@@ -44,6 +46,7 @@ export interface NativeIpc {
 const tauriIpc: NativeIpc = {
   invoke: (command, args) => invoke(command, args),
   onIngested: (listener) => void listen('events-ingested', listener),
+  onUsageChanged: (listener) => { void listen('claude-usage-changed', listener).catch(() => {}); },
   onIslandPointer: (listener) => listenIslandPointer({
     listen: handler => getCurrentWebviewWindow().listen<unknown>('island-pointer', event => handler(event.payload)),
     read: () => invoke<unknown>('island_pointer'),
@@ -93,6 +96,26 @@ const SCAN_INTERVAL_MS = 10_000;
 /** A scan that has not answered by now is given up on, so a hung call never blocks the next one. */
 const SCAN_TIMEOUT_MS = 5_000;
 const HOOKS_REFRESH_INTERVAL_MS = 60_000;
+
+/** Reject malformed IPC rather than drawing fabricated zeroes or another project's reading. */
+const usageState = (value: unknown, projectId: string): ClaudeUsageState => {
+  const error: ClaudeUsageState = { status: 'error', reason: 'Claude plan usage is unavailable.' };
+  if (!value || typeof value !== 'object' || !('status' in value)) return error;
+  if (value.status === 'disabled' || value.status === 'waiting') return { status: value.status };
+  if ((value.status === 'error' || value.status === 'incompatible') && 'reason' in value && typeof value.reason === 'string' && value.reason.length <= 500) return { status: value.status, reason: value.reason };
+  if (value.status !== 'reading' || !('latest' in value) || !('sourceCount' in value) || !Number.isInteger(value.sourceCount) || typeof value.sourceCount !== 'number' || value.sourceCount < 0 || value.sourceCount > 32) return error;
+  const latest = value.latest as ClaudeUsageSnapshot | null;
+  if (!latest || !latest.source || latest.source.kind !== 'claude-statusline' || latest.source.projectId !== projectId
+    || typeof latest.source.sessionId !== 'string' || !/^[a-z0-9_-]{1,128}$/i.test(latest.source.sessionId)
+    || !Number.isFinite(latest.receivedAtMs) || latest.receivedAtMs < 1_577_836_800_000 || latest.receivedAtMs > 4_102_444_800_000
+    || (latest.source.claudeVersion !== undefined && (typeof latest.source.claudeVersion !== 'string' || !/^[a-z0-9._-]{1,64}$/i.test(latest.source.claudeVersion)))) return error;
+  for (const reading of [latest.fiveHour, latest.sevenDay]) {
+    if (reading === undefined) continue;
+    if (!reading || !Number.isFinite(reading.usedPercentage) || reading.usedPercentage < 0 || reading.usedPercentage > 100
+      || (reading.resetsAtMs !== null && (!Number.isFinite(reading.resetsAtMs) || reading.resetsAtMs < 1_577_836_800_000 || reading.resetsAtMs > 4_102_444_800_000))) return error;
+  }
+  return { status: 'reading', latest, sourceCount: value.sourceCount };
+};
 /** After a listing fails or times out it is tried again after each of these, even without file activity, and then left until the next activity. */
 const LISTING_RETRY_DELAYS_MS: readonly number[] = [30_000, 300_000];
 
@@ -166,6 +189,9 @@ export const createNativeBridge = (
   let selectionQuery = 0;
   let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
+  let usage: ClaudeUsageState = { status: 'disabled' };
+  let usageKey: string | null = null;
+  let usageQuery = 0;
   let presenceInput: PresenceInput = { connected: false, available: false, facts: [] };
   let hooksQuery = 0;
   let hooksKey: string | null = null;
@@ -193,6 +219,21 @@ export const createNativeBridge = (
   let listingFailureReported = false;
   let retryStep = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const refreshUsage = (current: ConnectedProject | null, force = false): void => {
+    const key = current ? `${current.id}|${current.root}` : null;
+    if (!force && key === usageKey) return;
+    const projectChanged = key !== usageKey;
+    usageKey = key;
+    const query = ++usageQuery;
+    if (!current) { usage = { status: 'disabled' }; return; }
+    if (projectChanged) usage = { status: 'waiting' };
+    void withinTime(ipc.invoke<unknown>('claude_usage', { projectId: current.id }).catch(() => null), scanTimeoutMs).then(value => {
+      if (query !== usageQuery || project?.id !== current.id || project.root !== current.root) return;
+      usage = usageState(value, current.id);
+      listeners.forEach(l => l());
+    });
+  };
 
   /** Optional read-only IPC: a missing/failed/slow command must never block showing the project. */
   const refreshHooks = (current: ConnectedProject | null, force = false): void => {
@@ -356,6 +397,7 @@ export const createNativeBridge = (
         const forceHooks = hooksRefreshRequested;
         hooksRefreshRequested = false;
         refreshHooks(current, forceHooks);
+        refreshUsage(current, forceHooks);
         presenceInput = { connected: current !== null, available: health !== undefined, facts: current ? factsFromEvents(events, current.id) : [], core: health ?? null, hooks: hooksState };
         snapshot = projected ? { ...projected.snapshot, evidence: projected.insights, ...(health ? { core: health } : {}) } : null;
         if (current) scanIfDue(current, events);
@@ -383,6 +425,7 @@ export const createNativeBridge = (
     return refreshing;
   };
   ipc.onIngested(() => void refresh());
+  ipc.onUsageChanged?.(() => refreshUsage(project, true));
   void refresh();
 
   const selectProject = async (root: string, broadcast = true): Promise<boolean> => {
@@ -407,7 +450,7 @@ export const createNativeBridge = (
   const connector: Connector = {
     project: () => project,
     chooseFolder: () => ipc.chooseFolder(),
-    preview: (root) => ipc.invoke<ConnectPreview>('preview_connect', { root }),
+    preview: (root, usage) => ipc.invoke<ConnectPreview>('preview_connect', { root, ...(usage ? { usage } : {}) }),
     connect: async (root, previewed) => {
       const connected = await ipc.invoke<ConnectedProject>('connect_project', { root, previewed });
       if (!connected || typeof connected.id !== 'string' || typeof connected.name !== 'string' || typeof connected.root !== 'string' || !connected.root) throw new Error('Core did not return the connected project');
@@ -445,6 +488,7 @@ export const createNativeBridge = (
     },
     projectHooksState: () => hooksState,
     projectPresence: () => presenceInput,
+    claudeUsage: () => usage,
     currentProjectMap: () => projectSnapshot,
     subscribe: (listener) => {
       listeners.add(listener);
