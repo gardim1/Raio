@@ -5,6 +5,7 @@ import type { ProjectInsights } from '../features/project/projectInsights';
 import type { SessionLog } from '../features/session/model/events';
 import type { ProjectMapSnapshot } from '../features/project/projectMap';
 import type { PresenceInput } from '../features/modes/companionPresence';
+import type { ClaudeUsageState } from '../features/usage/claudeUsage';
 
 /** Where the data on screen comes from. Fixture data must never be presented as real agent telemetry. */
 export type DataProvenance = 'fixture' | 'live';
@@ -92,6 +93,8 @@ export interface DesktopBridge {
   projectHooksState?(): ProjectHooksState;
   /** Project-wide recorded facts, including failed edits and earlier-session history. */
   projectPresence?(): PresenceInput;
+  /** Latest Claude plan usage reading (see features/usage/claudeUsage.ts); absent on adapters without the reader. */
+  claudeUsage?(): ClaudeUsageState;
   /** Notifies when `currentSession()` may return something new. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /**
