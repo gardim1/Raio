@@ -25,7 +25,8 @@ export const IslandShell = ({ description, collapsed, children }: {
   }, [bridge, native, visible]);
   const shown = visible && open;
   return <div className="island-dock">
-    <motion.div layoutId="raio-surface" layoutDependency={shown}
+    {/* Animate this capsule's own geometry; a shared surface ID can scale it from Expanded past its width cap. */}
+    <motion.div layout layoutDependency={shown}
       transition={shown ? ISLAND_TRANSITION : { ...ISLAND_TRANSITION, stiffness: 520 }}
       className={`island${shown ? ' island--open' : ''}`} style={{ borderRadius: shown ? 26 : 17 }}
       onPointerEnter={native ? undefined : () => hover.current?.pointer(true)}
