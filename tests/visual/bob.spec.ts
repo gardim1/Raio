@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 
 /** C-CHAR supersedes the finite BOB-1 float: rest is quiet immediately. */
 test('idle Island character retains connected presence with no CSS float', async ({ page }) => {
-  await page.goto('/harness.html?view=island&t=11');
+  // Connected project without session observations: no migration notice or recent activity.
+  await page.goto('/harness.html?view=island&t=11&project-only=1');
   await page.evaluate(() => document.fonts.ready);
   const orb = page.locator('.island .mini-orb');
   await expect(orb).toHaveCount(1);
