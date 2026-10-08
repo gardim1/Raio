@@ -7,9 +7,10 @@ html.native .app {
 }
 
 /* The native window already starts 10 logical px below the primary work-area top.
-   Keep the capsule at its top; preview + bounded usage details + shadow fit the 500px window. */
+   Height is capped to the work area on placement; reserve preview shadow within that viewport. */
 html.native.surface-island .island-dock {
   top: 0;
+  --island-top-inset: 0px;
 }
 
 /* Mini Player window: the OS window is the player. Keep a small inset for the shadow. */

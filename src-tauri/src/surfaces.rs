@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use tauri::utils::config::WindowConfig;
 use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::island;
 
@@ -20,7 +20,7 @@ pub const ISLAND: &str = "island";
 pub const MINI: &str = "mini";
 const SURFACES: [&str; 3] = [EXPANDED, ISLAND, MINI];
 
-/// Logical size: room for the 340px preview, bounded in-flow usage details and shadow.
+/// Maximum logical size; placement caps height to the work area below the approved gap.
 pub const ISLAND_SIZE: (f64, f64) = (420.0, 500.0);
 const MINI_SIZE: (f64, f64) = (380.0, 300.0);
 const EDGE_MARGIN: f64 = 24.0;
@@ -209,6 +209,13 @@ fn floating(app: &AppHandle, label: &str, size: (f64, f64), loaded: mpsc::Sender
         .build()
 }
 
+/// Use the same rounded physical gap as placement so fractional DPI cannot spill a pixel below the work area.
+fn island_window_size(work_height: u32, scale: f64) -> (u32, u32) {
+    let gap = (ISLAND_TOP_GAP * scale).round() as u32;
+    let height = ((ISLAND_SIZE.1 * scale).floor() as u32).min(work_height.saturating_sub(gap));
+    ((ISLAND_SIZE.0 * scale).round() as u32, height)
+}
+
 /// Where a floating surface sits in a physical rectangle: the Island in the primary work area,
 /// the Mini Player bottom-right. `None` for surfaces that are not placed by Raio.
 pub fn placement(label: &str, origin: (i32, i32), size: (u32, u32), scale: f64) -> Option<(i32, i32)> {
@@ -244,6 +251,10 @@ fn configure(window: &WebviewWindow, label: &str) -> tauri::Result<()> {
         };
         if let Some((x, y)) = placement(label, (origin.x, origin.y), (extent.width, extent.height), monitor.scale_factor()) {
             window.set_position(PhysicalPosition::new(x, y))?;
+        }
+        if label == ISLAND {
+            let (width, height) = island_window_size(extent.height, monitor.scale_factor());
+            window.set_size(PhysicalSize::new(width, height))?;
         }
     }
     Ok(())
@@ -498,6 +509,21 @@ mod tests {
         // macOS Cmd+Q / Dock Quit may arrive as `None` and must still quit (macOS is not verified).
         assert!(!prevents_exit_on(false, None));
         assert!(!prevents_exit_on(false, Some(0)));
+    }
+
+    #[test]
+    fn short_high_dpi_work_areas_bound_the_island_below_the_gap_and_top_taskbar() {
+        for (origin, expected_y) in [((0, 0), 18), ((0, 72), 90)] {
+            let extent = (1280, 728);
+            let scale = 1.75;
+            let (_, y) = placement(ISLAND, origin, extent, scale).unwrap();
+            assert_eq!(y, expected_y);
+            let (_, height) = island_window_size(extent.1, scale);
+            assert_eq!(height, 710);
+            assert!(y + height as i32 <= origin.1 + extent.1 as i32);
+            assert!(height as f64 / scale <= extent.1 as f64 / scale - ISLAND_TOP_GAP);
+        }
+        assert_eq!(island_window_size(1040, 1.0), (420, 500));
     }
 
     #[test]

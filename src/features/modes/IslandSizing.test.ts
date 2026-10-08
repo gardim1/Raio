@@ -92,8 +92,7 @@ it('uses the approved capsule, preview materials and CSS timing instead of proje
   expect(rule('.island')).toContain('0 14px 30px -12px rgba(0,0,0,.7)');
   expect(rule('.island')).toContain('width .42s cubic-bezier(.2,1.15,.3,1)');
   expect(rule('.island--open')).toContain('width: 340px');
-  expect(rule('.island--open')).toContain('height: auto');
-  expect(rule('.island--open')).toContain('min-height: 144px');
+  expect(rule('.island--open')).toContain('height: var(--island-open-height, 144px)');
   expect(rule('.island--open')).toContain('border-radius: 24px');
   expect(rule('.island__closed')).toContain('gap: 8px');
   expect(rule('.island__closed')).toContain('padding: 0 12px 0 6px');
@@ -102,8 +101,8 @@ it('uses the approved capsule, preview materials and CSS timing instead of proje
   expect(rule('.island__label')).toContain('font-size: 12.5px');
   expect(rule('.island__label')).toContain('font-weight: 500');
   expect(rule('.island__dot')).toContain('width: 6px');
-  expect(rule('.island__preview')).toContain('position: relative');
-  expect(rule('.island__preview')).toContain('margin-top: 54px');
+  expect(rule('.island__preview')).toContain('position: absolute');
+  expect(rule('.island__preview')).toContain('top: 54px');
   expect(rule('.island__preview')).toContain('padding: 0 14px 14px');
   expect(rule('.island__preview')).toContain('transform: translateY(-4px)');
   expect(rule('.island__preview')).toContain('transition: opacity .2s, transform .3s');
@@ -113,10 +112,27 @@ it('uses the approved capsule, preview materials and CSS timing instead of proje
   expect(css).toContain('@media (prefers-reduced-motion: reduce) { .island, .island__preview { transition: none; } }');
 });
 it('bounds in-flow usage details inside the native window without shrinking controls or labels', () => {
-  expect(rule('.island__usage .usage-details-wrap')).toContain('max-height: min(280px, calc(100vh - 220px))');
+  expect(rule('.island__usage .usage-details-wrap')).toContain('max-height: max(0px, min(280px, calc(100dvh - var(--island-top-inset, 10px) - 220px)))');
   expect(rule('.island__usage .usage-details-wrap')).toContain('overflow-y: auto');
   expect(rule('.island__usage .usage-rings__button')).toContain('min-height: 28px');
   expect(rule('.island__usage-summary')).toContain('font-size: 12px');
   expect(rule('.island__identity')).toContain('font-size: 12.5px');
   expect(rule('.island__label')).toContain('width: fit-content');
+});
+it('uses an explicit measured height and keeps preview opacity rendered for opening and closing', () => {
+  expect(rule('.island--open')).toContain('height: var(--island-open-height, 144px)');
+  expect(rule('.island--open')).not.toContain('height: auto');
+  expect(rule('.island')).toContain('height .42s cubic-bezier(.2,1.15,.3,1)');
+  expect(rule('.island__preview')).not.toContain('display: none');
+  expect(rule('.island__preview')).toContain('opacity: 0');
+  expect(rule('.island--open .island__preview')).not.toContain('display: block');
+  expect(rule('.island__preview')).toContain('transition: opacity .2s, transform .3s');
+  expect(rule('.island--open .island__preview')).toContain('transition-delay: .1s');
+});
+it('reserves the actions outside scrollable content when the viewport is the capped work-area height', () => {
+  expect(rule('.island')).toContain('max-height: var(--island-max-height)');
+  expect(rule('.island__preview')).toContain('max-height: calc(var(--island-max-height) - 56px)');
+  expect(rule('.island__content')).toContain('min-height: 0');
+  expect(rule('.island__content')).toContain('overflow-y: auto');
+  expect(rule('.island__actions')).toContain('flex: none');
 });

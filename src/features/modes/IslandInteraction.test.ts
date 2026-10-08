@@ -8,7 +8,7 @@ import type { CharacterEngine } from '../raio/character/engine';
 // Exercise the real shell handlers/effect with native IPC injected, without a webview or DOM.
 const hooks = vi.hoisted(() => ({ open: false, visible: true, setup: null as (() => (() => void) | undefined) | null, ref: { current: null as unknown }, bridge: {} as ReturnType<typeof createFixtureBridge> }));
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
-  useState: (initial: unknown) => initial === 150 ? [150, () => {}] : [hooks.open, (value: boolean) => { hooks.open = value; }],
+  useState: (initial: unknown) => initial === 150 || initial === true ? [initial, () => {}] : [hooks.open, (value: boolean) => { hooks.open = value; }],
   useRef: () => hooks.ref,
   useEffect: (setup: typeof hooks.setup) => { hooks.setup = setup; },
   useLayoutEffect: () => {},
@@ -136,7 +136,7 @@ it('Escape from the cookie returns focus to the persistent disclosure before rem
   stop();
 });
 it('mounts usage only while open and visible, preserving details Escape before Island Escape', () => {
-  const usage = () => capsule().props.children[1].props.children[0].props.children[1];
+  const usage = () => capsule().props.children[1].props.children[0].props.children.props.children[1];
   expect(usage()).toBe(false);
   const el = capsule(); const stop = hooks.setup!()!;
   el.props.onFocus(); expect(usage()).toBeTruthy();

@@ -22,7 +22,7 @@ it('refits after fonts settle and releases observation without a late hidden upd
   });
   const label = { scrollWidth: 40 };
   const shell = IslandShell({ description: 'Fixture', collapsed: 'Label', children: 'Preview', onPinMini: () => {}, onExpand: () => {} }).props.children;
-  shell.props.ref.current = { querySelector: () => label };
+  shell.props.ref.current = { querySelector: (selector:string) => selector === '.island__label' ? label : null };
   const stop = hooks.measure!()!;
   expect(hooks.width).toHaveBeenLastCalledWith(150); expect(observe).toHaveBeenCalledWith(label);
   label.scrollWidth = 120; ready(); await Promise.resolve();
