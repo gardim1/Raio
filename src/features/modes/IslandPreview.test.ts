@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 import { BridgeProvider } from '../../platform/BridgeContext';
 import * as bridgeContext from '../../platform/BridgeContext';
-import { createFixtureBridge, createProjectFixtureBridge } from '../../platform/fixtureBridge';
+import { createFixtureBridge, createProjectFixtureBridge, fixtureIntegrationStatus } from '../../platform/fixtureBridge';
 import { deriveCompanionPresence, type PresenceInput } from './companionPresence';
 import { IdleIsland } from './IdleIsland';
 import { IslandMode } from './IslandMode';
@@ -27,7 +27,9 @@ it.each([
   { ...input, facts: [{ id: 'a', kind: 'activity' as const, at: 60_000, source: 'Fixture watcher' }] },
   { ...input, facts: [{ id: 'f', kind: 'check' as const, at: 0, checkClass: 'tests', result: 'failed' as const, source: 'Fixture hook' }] },
 ])('idle preview distinguishes connected=$connected available=$available hooks=$hooks', state => {
-  const bridge = { ...(state.connected ? createProjectFixtureBridge() : createFixtureBridge(null)), projectPresence: () => state };
+  const base = state.connected ? createProjectFixtureBridge() : createFixtureBridge(null);
+  const bridge = { ...base, projectPresence: () => state,
+    integrationStatus: state.hooks === 'outdated' ? () => fixtureIntegrationStatus('outdated') : base.integrationStatus };
   const companion = deriveCompanionPresence(state, 60_000, 'UTC');
   const child = createElement(IdleIsland, { companion, onOpen: () => {} });
   const html = render(bridge, child);
@@ -36,8 +38,8 @@ it.each([
   if (companion.state !== 'working') expect(html).not.toContain('working');
   if (!state.connected) expect(html).toContain('Choose a project');
   else if (!state.available) expect(html).toContain('Activity status unavailable');
-  else if (companion.state === 'connected') expect(html).toContain('No agent active right now.');
-  else if (companion.state === 'working') { expect(html).toContain('Last activity'); expect(html).toContain('Agent unknown'); expect(html).toContain('Fixture watcher'); }
+  else if (state.hooks === 'outdated') expect(html).toContain('Integration problem: Hooks out of date');
+  else if (companion.state === 'connected' || companion.state === 'working') expect(html).toContain('Integration configured · waiting for the first Claude event');
   else { expect(html).toContain(companion.label); expect(html).toContain(companion.description); }
 });
 it('session preview shows the real project, agent and latest observed operation', () => {
@@ -99,12 +101,19 @@ it('quiet preview uses the approved waiting copy and two text actions', () => {
   const companion = deriveCompanionPresence(input, 0, 'UTC');
   const html = render(bridge, createElement(IdleIsland, { companion, onOpen: () => {} }));
   expect(html).toContain('<span class="island__label">Waiting</span>');
-  expect(html).toContain('No agent active right now.');
+  expect(html).toContain('Integration configured · waiting for the first Claude event');
   expect(html).toContain('data-character-mode="idle"');
   expect(html).toContain('>Open Mini Player</button>');
   expect(html).toContain('>Open window</button>');
   expect(html).toContain('class="island__cookie"');
   expect(html).toContain('aria-label="Give Raio a cookie"');
+});
+it('quiet Island keeps approved activity copy separate from integration status', () => {
+  const bridge = createProjectFixtureBridge();
+  const companion = deriveCompanionPresence(input, 0, 'UTC');
+  const html = render(bridge, createElement(IdleIsland, { companion, onOpen: () => {} }));
+  expect(html).toContain('<p class="island__activity" title="No agent active right now.">No agent active right now.</p>');
+  expect(html).toContain('<p class="island__integration" title="Integration configured · waiting for the first Claude event">Integration configured · waiting for the first Claude event</p>');
 });
 it('a relevant failure keeps a short failure caption and its full reason despite recent activity', () => {
   const bridge = createFixtureBridge(); const snapshot = bridge.currentSession()!;

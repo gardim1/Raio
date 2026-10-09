@@ -52,7 +52,60 @@ describe('factual sidebar states', () => {
     const result = deriveSidebarState({ snapshot: map(['package.json']), timeZone: 'UTC', presence: {
       connected: true, available: true, facts: [{ id: 'a', at: Date.UTC(2026, 9, 8, 14, 2), kind: 'change', source: 'watcher' }],
     } });
-    expect(result.indicator).toBe('Connected · last activity 14:02');
+    expect(result.indicator).toBe('File changed — source unknown · 14:02');
+  });
+  it('labels watcher-only changes as unknown source instead of last activity', () => {
+    const at = Date.UTC(2026, 9, 8, 14, 2);
+    const result = deriveSidebarState({ snapshot: map(['package.json']), timeZone: 'UTC', now:at, integration: {
+      hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null,
+      lastHookSessionId:null, lastWatcherChangeAt:at,
+    }, presence:{ connected:true, available:true, facts:[{ id:'watcher', at, kind:'change', source:'watcher' }] } });
+    expect(result.indicator).toBe('File changed — source unknown · 14:02');
+    expect(result.indicator).not.toContain('Last activity');
+  });
+  it('distinguishes configured integration waiting for its first Claude event', () => {
+    const result = deriveSidebarState({ snapshot: map(['package.json']), integration: {
+      hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null,
+      lastHookSessionId:null, lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toBe('Integration configured · waiting for the first Claude event');
+  });
+  it('shows the last observed hook event and short session identifier', () => {
+    const at = Date.UTC(2026, 9, 8, 14, 2);
+    const result = deriveSidebarState({ snapshot: map(['package.json']), timeZone:'UTC', now:at, integration: {
+      hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:at,
+      lastHookSessionId:'session-123456789', lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toBe('Following session session-1 · last event 14:02');
+  });
+  it('reports an inert heartbeat as an integration problem with one next action', () => {
+    const result = deriveSidebarState({ snapshot: map(['package.json']), integration: {
+      hooks:'current', hookBinary:true, heartbeatAgeMs:8 * 24 * 60 * 60 * 1000, inertMarkerAt:Date.UTC(2026, 9, 8),
+      lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toContain('Integration problem:');
+    expect(result.message).toContain('Raio was not running');
+    expect(result.message).toContain('New events are recorded now');
+  });
+  it.each([
+    [{ hooks:'outdated', hookBinary:true }, 'Integration problem: Hooks out of date'],
+    [{ hooks:'missing', hookBinary:true }, 'Integration problem: Hooks missing'],
+    [{ hooks:'unknown', hookBinary:true }, 'Integration problem: Hook status unknown'],
+    [{ hooks:'unknown', hookBinary:false }, 'Integration problem: Hook status unknown'],
+    [{ hooks:'current', hookBinary:false }, 'Integration problem: raio-hook.exe missing next to raio.exe'],
+  ] as const)('shows a specific integration problem for %j', (partial, expected) => {
+    const result = deriveSidebarState({ snapshot:map(['package.json']), integration:{
+      ...partial, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toBe(expected);
+  });
+  it('labels an old Claude event as no recent activity while preserving its time', () => {
+    const at = Date.UTC(2026, 9, 8, 14, 2);
+    const result = deriveSidebarState({ snapshot:map(['package.json']), timeZone:'UTC', now:at + 10 * 60_000, integration:{
+      hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:at,
+      lastHookSessionId:'session-old', lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toBe('No recent activity · last event 14:02');
   });
   it.each([null, { dropped: 0, watcherOverflow: false, historyResetFrom: null, hookBinary: null }])('does not claim waiting when reception is broken: %j', core => {
     const result = state({ ...map(['package.json']), core });

@@ -130,3 +130,27 @@ it('does not let an older project list replace Core-confirmed B during Connect',
   expect(expanded.currentSession()?.log.id).toBe('session-b');
   expect(feed.broadcasts).toEqual(['C:/work/B']);
 });
+
+it('keeps the latest A/B/A request selected when B events arrive late', async () => {
+  sharedStorage();
+  const feed = source();
+  const invoke = feed.ipc.invoke;
+  let releaseB: (() => void) | undefined;
+  feed.ipc.invoke = <T,>(command: string, args?: Record<string, unknown>) => {
+    if (command === 'project_events' && args?.projectId === 'b') {
+      return new Promise<T>(resolve => { releaseB = () => { void invoke<T>(command, args).then(resolve); }; });
+    }
+    return invoke<T>(command, args);
+  };
+  const bridge = createNativeBridge('expanded', feed.ipc, Date.now, 50, []);
+  await settle();
+  const toB = bridge.selectProject!('C:/work/B');
+  for (let attempt = 0; attempt < 50 && !releaseB; attempt++) await settle();
+  expect(releaseB).toBeTypeOf('function');
+  const toA = bridge.selectProject!('C:/work/A');
+  releaseB!();
+  await Promise.all([toB, toA]);
+  await settle();
+  expect(bridge.connector!.project()?.id).toBe('a');
+  expect(bridge.currentSession()?.log.id).toBe('session-a');
+});

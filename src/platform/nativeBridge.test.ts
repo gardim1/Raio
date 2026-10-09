@@ -27,8 +27,9 @@ const event = (seq: number, kind: RaioEvent['kind'], extra: Partial<RaioEvent> =
   ...extra,
 });
 
-const fakeIpc = (projects: unknown[], events: RaioEvent[], integration?: unknown) => {
+const fakeIpc = (projects: unknown[], events: RaioEvent[], initialIntegration?: unknown) => {
   let ingested: () => void = () => {};
+  let integration: unknown = initialIntegration;
   const calls: [string, unknown][] = [];
   const ipc: NativeIpc = {
     invoke: <T,>(command: string, args?: Record<string, unknown>) => {
@@ -41,12 +42,31 @@ const fakeIpc = (projects: unknown[], events: RaioEvent[], integration?: unknown
     onIngested: (l) => (ingested = l),
     chooseFolder: () => Promise.resolve(null),
   };
-  return { ipc, calls, ingest: () => ingested() };
+  return { ipc, calls, ingest: () => ingested(), setIntegration: (value: unknown) => { integration = value; } };
 };
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe('native bridge', () => {
+  it('caches integration status through refresh and replaces its reference only when the status changes', async () => {
+    const fake = fakeIpc([project], []);
+    const first = { hooks: 'current', hookBinary: true, heartbeatAgeMs: 1_000, inertMarkerAt: null, lastHookEventAt: null, lastHookSessionId: null, lastWatcherChangeAt: null };
+    fake.setIntegration(first);
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    await settle();
+    const initial = bridge.integrationStatus?.();
+    expect(initial).toEqual(first);
+    expect(bridge.integrationStatus?.()).toBe(initial);
+
+    const changed = { ...first, heartbeatAgeMs: 2_000 };
+    fake.setIntegration(changed);
+    fake.ingest();
+    await settle();
+    expect(bridge.integrationStatus?.()).toEqual(changed);
+    expect(bridge.integrationStatus?.()).not.toBe(initial);
+    expect(fake.calls).toContainEqual(['integration_status', { projectId: 'p1' }]);
+  });
+
   it('reads the surface a window was opened for', () => {
     expect(surfaceFromUrl('?surface=island')).toBe('island');
     expect(surfaceFromUrl('?surface=film')).toBeNull();
@@ -77,7 +97,7 @@ describe('native bridge', () => {
     const fake = fakeIpc([project], [], status);
     const bridge = createNativeBridge('expanded', fake.ipc);
     await settle();
-    expect(bridge.integrationStatus()).toEqual(status);
+    expect(bridge.integrationStatus?.()).toEqual(status);
     expect(fake.calls).toContainEqual(['integration_status', { projectId: 'p1' }]);
   });
 

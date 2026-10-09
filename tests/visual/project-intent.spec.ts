@@ -12,6 +12,51 @@ const mount = async (page: Page, options: { connected?: boolean; startupRoot?: s
   return fixture;
 };
 
+test('startup request for B is the first project shown when A is already connected', async ({ page }) => {
+  const fixture = await mount(page, { connected:true, startupRoot:'C:/fixture/new' });
+  await expect(fixture.locator('.titlebar__project')).toHaveText('new');
+  await expect(fixture.locator('.connect__body code')).toHaveText('C:/fixture/new/.claude/settings.local.json');
+  await expect(fixture.getByLabel('Projects shown')).not.toContainText('Fixture A');
+  await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
+});
+
+test('an unresolvable startup folder remains visible with its preview reason', async ({ page }) => {
+  const root = 'C:/fixture/unreadable';
+  const fixture = await mount(page, { startupRoot:root, failPreviewRoot:root });
+  await expect(fixture.locator('.connect__title')).toHaveText(`Could not review ${root}`);
+  await expect(fixture.getByText('Access denied while reviewing this folder.', { exact:true })).toBeVisible();
+  await expect(fixture.locator('.connect--review')).toHaveCount(0);
+  await expect(fixture.getByRole('button', { name:'Cancel', exact:true })).toBeVisible();
+});
+
+test('custom user status line keeps Connect available while usage choices are pending and after Cancel', async ({ page }) => {
+  const fixture = await mount(page, { connected:true, usageConflict:true, holdUsagePreview:true });
+  await fixture.getByRole('button', { name:'Intent for new folder', exact:true }).click();
+  const review = fixture.locator('.connect--review');
+  const connect = review.getByRole('button', { name:'Connect', exact:true });
+  await expect(connect).toBeEnabled();
+  await review.getByRole('button', { name:'Details', exact:true }).click();
+  await expect(review.getByText('You already have a custom Claude status line (from user settings).')).toBeVisible();
+  const usage = review.getByRole('checkbox', { name:'Show Claude plan usage (5-hour and weekly limits)' });
+  await usage.check();
+  await expect(review.getByText('Updating preview…', { exact:true })).toBeVisible();
+  await expect(connect).toBeEnabled();
+  const keep = review.getByRole('radio', { name:'Keep my status line (Raio shows no plan usage)' });
+  const useRaio = review.getByRole('radio', { name:'Use Raio\'s status line in this project only' });
+  await expect(keep).toBeChecked();
+  await useRaio.check();
+  await expect(connect).toBeEnabled();
+  await page.evaluate(async () => { const path='/tests/visual/fixtures/project-intent.tsx'; (await import(path)).resolveUsagePreviews(); });
+  await expect(review.getByText('Raio status line in this project only')).toBeVisible();
+  await review.getByRole('button', { name:'Cancel', exact:true }).click();
+  await fixture.getByRole('button', { name:'Intent for new folder', exact:true }).click();
+  const repeated = fixture.locator('.connect--review');
+  await repeated.getByRole('button', { name:'Details', exact:true }).click();
+  await expect(repeated.getByRole('checkbox', { name:'Show Claude plan usage (5-hour and weekly limits)' })).not.toBeChecked();
+  await expect(repeated.getByRole('radio', { name:'Keep my status line (Raio shows no plan usage)' })).toBeChecked();
+  await expect(repeated.getByRole('button', { name:'Connect', exact:true })).toBeEnabled();
+});
+
 test('startup folder intent previews the map and diff; Cancel and folder choice keep Connect mandatory', async ({ page }) => {
   const fixture = await mount(page, { startupRoot: 'C:/fixture/new' });
   const review = fixture.locator('.connect--review');
@@ -26,9 +71,9 @@ test('startup folder intent previews the map and diff; Cancel and folder choice 
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
   await review.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(fixture.getByLabel('Settings writes')).toHaveText('1');
-  await expect(fixture.locator('.sidebar__task')).toHaveText('Waiting for activity');
+  await expect(fixture.locator('.sidebar__task')).toHaveText('Project overview');
   await expect(fixture.locator('.sidebar__task')).toBeVisible();
-  await expect(fixture.locator('.sidebar__meta')).toHaveText('Connected · no activity yet');
+  await expect(fixture.locator('.sidebar__meta')).toHaveText('Integration configured · waiting for the first Claude event');
   await expect(fixture.locator('.connect--review')).toHaveCount(0);
   await expect(fixture.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
 });
@@ -39,9 +84,9 @@ test('normalized connected intent selects the existing project without reconnect
   await expect(fixture.locator('.titlebar__project')).toHaveText('Fixture A');
   await expect(fixture.locator('.connect--review')).toHaveCount(0);
   await expect(fixture.getByLabel('Settings writes')).toHaveText('0');
-  await expect(fixture.locator('.sidebar__task')).toHaveText('Waiting for activity');
+  await expect(fixture.locator('.sidebar__task')).toHaveText('Project overview');
   await expect(fixture.locator('.sidebar__task')).toBeVisible();
-  await expect(fixture.locator('.sidebar__meta')).toHaveText('Connected · no activity yet');
+  await expect(fixture.locator('.sidebar__meta')).toHaveText('Integration configured · waiting for the first Claude event');
   await expect(fixture.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
 });
 

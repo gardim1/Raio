@@ -145,7 +145,8 @@ describe('connected project before its first session', () => {
     expect(bridge.currentProjectMap()?.provenance).toBe('fixture');
     const markup = renderApp(bridge);
     expect(markup).toContain('Demo fixture · not real agent activity');
-    expect(markup).toContain('Waiting for activity');
+    expect(markup).toContain('Project overview');
+    expect(markup).toContain('Integration configured · waiting for the first Claude event');
     expect(markup).not.toMatch(/View changes|Replay|Session started/);
   });
 

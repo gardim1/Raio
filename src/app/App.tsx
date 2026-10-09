@@ -26,7 +26,7 @@ import { ProjectOnlyView } from '../features/project/ProjectOnlyView';
 import { NativeSurfaceEffects } from '../platform/NativeSurfaceEffects';
 import type { Connector, SessionSnapshot, Surface } from '../platform/desktopBridge';
 import { usePlayback } from '../shared/motion/usePlayback';
-import { followProjectIntents, isWindowsRoot, sameProjectRoot } from '../platform/projectIntent';
+import { followProjectIntents, isWindowsRoot, sameProjectRoot, shouldGateForProjectIntent } from '../platform/projectIntent';
 
 /** The live surfaces use the canonical choreography without the film-only wordmark. */
 const liveScript: ChoreographyScript = (() => {
@@ -49,21 +49,26 @@ export const App = ({ underlay }: AppProps) => {
   const visible = useSurfaceVisible();
   const companion = useCompanionPresence(snapshot, projectSnapshot);
   const mode = bridge.fixedSurface ?? storeMode;
+  const gateForLaunchIntent = shouldGateForProjectIntent(bridge);
   const [intent, setIntent] = useState<{ root: string; revision: number } | null>(null);
+  const [intentReady, setIntentReady] = useState(typeof window === 'undefined' || !gateForLaunchIntent);
   const intentRevision = useRef(0);
   useEffect(() => {
-    if (bridge.fixedSurface !== null && bridge.fixedSurface !== 'expanded') return;
+    if (bridge.fixedSurface !== null && bridge.fixedSurface !== 'expanded') { setIntentReady(true); return; }
+    if (shouldGateForProjectIntent(bridge)) setIntentReady(false);
     const stop = followProjectIntents(bridge, (root) => {
+      setIntentReady(false);
       const revision = ++intentRevision.current;
-      void (async () => {
+      return (async () => {
         const current = bridge.connector?.project();
         const selected = bridge.selectProject ? await bridge.selectProject(root).catch(() => false) : current ? sameProjectRoot(current.root, root, isWindowsRoot(current.root)) : false;
-        if (revision !== intentRevision.current) return;
+        if (revision !== intentRevision.current) return false;
         useSessionUi.getState().exitReplay();
         setIntent(selected ? null : { root, revision });
         if (bridge.fixedSurface === null) bridge.showSurface('expanded');
+        return true;
       })();
-    });
+    }, () => setIntentReady(true));
     return () => { intentRevision.current++; stop(); };
   }, [bridge]);
   return (
@@ -71,7 +76,9 @@ export const App = ({ underlay }: AppProps) => {
       {bridge.kind === 'native' && <NativeSurfaceEffects />}
       <Activity mode={visible ? 'visible' : 'hidden'}>
       {underlay}
-      {intent && bridge.connector ? (
+      {!intentReady ? (
+        <div className="app__empty" role="status" aria-busy="true"><p className="app__empty-note">Opening the requested project…</p></div>
+      ) : intent && bridge.connector ? (
         <ExpandedConnectView key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} />
       ) : snapshot ? (
         <Surfaces snapshot={snapshot} companion={companion} />

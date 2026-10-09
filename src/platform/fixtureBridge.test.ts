@@ -5,9 +5,20 @@ import { groupInventory } from '../features/project/inventoryGroups';
 import { isProjectInventory } from '../features/project/projectInventory';
 import { demoSessionLog } from '../features/session/model/demoSession';
 import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
-import { createFixtureBridge, createSimulatedFeedBridge, demoSnapshot, feedArrivals } from './fixtureBridge';
+import { createFixtureBridge, createProjectFixtureBridge, createSimulatedFeedBridge, demoSnapshot, feedArrivals } from './fixtureBridge';
 
 describe('fixture bridge', () => {
+  it.each([
+    ['static fixture', () => createFixtureBridge()],
+    ['simulated feed', () => createSimulatedFeedBridge({ fixedNowMs: 0 })],
+    ['project fixture', () => createProjectFixtureBridge()],
+    ['outdated project fixture', () => createProjectFixtureBridge({ hooksState: 'outdated' })],
+  ])('%s returns the same integration status until it changes', (_name, makeBridge) => {
+    const bridge = makeBridge();
+    expect(bridge.integrationStatus).toBeTypeOf('function');
+    expect(bridge.integrationStatus?.()).toBe(bridge.integrationStatus?.());
+  });
+
   it('serves the demo session labelled as a fixture', () => {
     const bridge = createFixtureBridge();
     expect(bridge.kind).toBe('fixture');

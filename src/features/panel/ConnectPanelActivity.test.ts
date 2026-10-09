@@ -24,7 +24,7 @@ import { ConnectPanel, ConnectReview } from './ConnectPanel';
 import { ConnectMapPreview } from './ConnectMapPreview';
 import { createProjectFixtureBridge, createFixtureBridge } from '../../platform/fixtureBridge';
 
-type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; busy?:boolean; onUsageChange?: (options:UsageOptIn) => void; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
+type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; busy?:boolean; updatingUsage?:boolean; usageChoice?: UsageOptIn | null; onUsageChange?: (options:UsageOptIn) => void; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
 const find = (node: unknown, match: (node: Node) => boolean): Node | null => {
   if (!node || typeof node !== 'object') return null;
   const element = node as Node;
@@ -36,15 +36,16 @@ const find = (node: unknown, match: (node: Node) => boolean): Node | null => {
 };
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 };
 const settle = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const preview: ConnectPreview = { before: null, after: '{}', settingsPath: 'C:/fixture/.claude/settings.local.json', gitIgnored: true };
 let previews: ReturnType<typeof deferred<ConnectPreview>>[];
 let maps: ReturnType<typeof deferred<ProjectMapSnapshot | null>>[];
 let connector: Connector;
-const render = (onPreviewRootChange?: (root: string | null) => void, chooseAnother = false) => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector, onPreviewRootChange, chooseAnother }); };
+const render = (onPreviewRootChange?: (root: string | null) => void, chooseAnother = false, initialRoot?: string) => { hooks.cursor = 0; hooks.effects = []; return ConnectPanel({ connector, onPreviewRootChange, chooseAnother, initialRoot }); };
 const review = () => find(render(), node => node.type === ConnectReview);
 beforeEach(() => {
   hooks.slots = []; previews = []; maps = [];
@@ -160,13 +161,46 @@ it('usage choices require a fresh exact preview before Connect and survive hide/
   const choice = { enabled:true, replaceExisting:false };
   review()!.props.onUsageChange!(choice); await settle();
   expect(connector.preview).toHaveBeenLastCalledWith('C:/fixture', choice);
-  expect(review()!.props.busy).toBe(true); expect(connector.connect).not.toHaveBeenCalled();
+  expect(review()!.props.busy).toBe(false); expect(review()!.props.updatingUsage).toBe(true); expect(connector.connect).not.toHaveBeenCalled();
+  expect(review()!.props.usageChoice).toEqual(choice);
   cleanup(); setup(); await settle();
   expect(connector.preview).toHaveBeenLastCalledWith('C:/fixture', choice);
   const fresh = { ...preview, after:'{"statusLine":{"type":"command","command":"synthetic"}}' };
   previews[2]!.resolve(fresh); maps[1]!.resolve(null); await settle();
   previews[1]!.resolve(preview); await settle();
   expect(review()!.props.preview).toEqual(fresh);
+  expect(review()!.props.usageChoice).toBeNull();
   review()!.props.onConnect!(); await settle();
   expect(connector.connect).toHaveBeenCalledExactlyOnceWith('C:/fixture', fresh);
+});
+
+it('shows a sanitised preview failure reason and keeps retry available', async () => {
+  render(undefined, false, 'C:/fixture/unreadable');
+  hooks.effects[0]!();
+  await settle();
+  previews[0]!.reject(new Error('Access denied while reviewing C:/Users/private/project.'));
+  await settle();
+  const failed = render();
+  expect(find(failed, node => node.type === 'p' && node.props?.children === 'Access denied while reviewing [folder].')).not.toBeNull();
+  expect(find(failed, node => node.props?.children === 'Retry preview')).not.toBeNull();
+  expect(find(failed, node => node.props?.children === 'C:/Users/private/project')).toBeNull();
+});
+
+it('keeps the newest usage choice visible and ignores an older preview that resolves later', async () => {
+  await choose();
+  previews[0]!.resolve({ ...preview, usage: { enabled:false, replaceExisting:false, effective:'user', fingerprint:'synthetic', before:null, after:null, reason:null } });
+  maps[0]!.resolve(null);
+  await settle();
+  review()!.props.onUsageChange!({ enabled:false, replaceExisting:false });
+  await settle();
+  review()!.props.onUsageChange!({ enabled:true, replaceExisting:true });
+  await settle();
+  expect(review()!.props.usageChoice).toEqual({ enabled:true, replaceExisting:true });
+  const latest = { ...preview, usage: { ...preview.usage!, enabled:true, replaceExisting:true } };
+  previews[2]!.resolve(latest);
+  await settle();
+  previews[1]!.resolve({ ...preview, usage: { ...preview.usage!, enabled:false, replaceExisting:false } });
+  await settle();
+  expect(review()!.props.preview).toEqual(latest);
+  expect(review()!.props.usageChoice).toBeNull();
 });
