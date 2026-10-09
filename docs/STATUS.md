@@ -1,6 +1,50 @@
 # Raio status
 
-Last updated: 2026-10-08 (cookie in Expanded, Claude plan usage, Island preview). Earlier sections keep their own dates.
+Last updated: 2026-10-09 (first-use fixes for the published alpha). Earlier sections keep their own dates.
+
+## First-use fixes after the public alpha (2026-10-08/09) — 0.1.0-alpha.2
+
+The maintainer installed 0.1.0-alpha.1 as an external user would and could not confirm that Raio followed Claude
+Code. Root causes were established from the installed binaries and the data directory's metadata (no project data
+read), reproduced with synthetic folders, and fixed with regression tests. Windows 11, Claude Code 2.1.295.
+
+- **Events silently skipped after 7 days.** `touch_heartbeat` rewrote an empty file; on Windows an empty rewrite of an
+  existing empty file does not change its modification time (verified with a Rust probe), so the heartbeat stayed at
+  its creation time and, after 7 days, the shipped hook discarded every event and every usage reading without a trace
+  (verified with the released `raio-hook.exe`: stale heartbeat -> nothing written; fresh -> event written). Now the
+  mtime is set explicitly; a stale heartbeat with Raio's arguments leaves one bounded `inert-heartbeat` marker that the
+  UI reports, outside the dropped-event accounting and outside the deadline watchdog.
+- **Console window flashing on the Connect preview.** `git check-ignore` was spawned by the GUI process without
+  `CREATE_NO_WINDOW` on every preview change. It now runs hidden, with a 3 s bound, cached per folder for 30 s.
+- **Connect blocked by the plan-usage choice; null/null diff.** Connect is the single primary action; usage and the
+  before/after JSON are under Details; with an existing status line the default keeps it ("Keep my status line"), the
+  choice is reflected immediately while the preview updates, the latest answer wins, a failed preview disables Connect
+  with an inline error and Retry, and the user's status line command is masked, never executed.
+- **Another connected project shown first.** The native Expanded holds its default/restored project until the launch
+  intent resolves (bounded wait); an accepted `--project` intent keeps the gate closed until it resolves; late answers
+  never replace the latest explicit selection; an unresolvable folder stays visible with its (sanitised) reason.
+- **"Connected" is not "following".** New `integration_status` (hooks state, helper present, heartbeat age, inert
+  marker, last hook event and session, last watcher change) drives one line: "Integration configured · waiting for
+  the first Claude event" / "Following session … · last event …" / "Integration problem: … " with one action /
+  "No recent activity"; a newer hook event beats an old marker; watcher-only changes read "File changed — source
+  unknown" (hook-reported edits keep their attribution).
+- **Attempts and failures keep their meaning.** A shell that could not start -> `command.result` with
+  `detail: did-not-start` -> "Could not start … — check did not run" (never a test result, no error text stored);
+  `file.edit.failed`, `file.edit.attempted` and ordinary command failures appear in the timeline and the replay as
+  facts; dedupe by tool-use id; replay emits no live effects.
+- **Partial map reasons.** Inventory counts cloud-only placeholders (by attribute), unreadable entries and too-large
+  manifests separately; the UI lists the reasons; nothing is downloaded.
+- Hooks pickup verified live: on Claude Code 2.1.295, hooks written to a trusted project's `settings.local.json` while
+  an interactive session was open produced Read, Bash exit 0/3, Stop and SessionEnd events in Raio's inbox (`-p` not
+  used). The UI accepts a session whose first event is not SessionStart.
+
+Tests on `67a5da0`: vitest 1174 (91 files), tsc + build + bundle check 0; Rust (worker runs on the merged core
+changes) 260 unit + 16 hook integration + 4 status line, clippy 0 with 1 existing warning — the coordinator's own
+cargo run and the release build are pending (machine memory). Playwright (Edge, serial): 86 passed, 0 behaviour failures; 21 screenshot differences (the new sidebar/Island/character visuals, goldens not re-blessed pending the maintainer's visual approval) and 2 new screenshots without a golden yet. Independent reviews:
+2 P2 (core) and 4 P2 (UI) found and fixed; rechecks closed.
+
+Not exercised: the running GUI on a real desktop (native hover, tray, X/restore, borders), DPI/multi-monitor, the
+"shell could not start" case live (fixture only), OneDrive placeholders live (unit-level reasons only), CPU/memory.
 
 ## Cookie in Expanded, Claude plan usage, Island preview (2026-10-08, later)
 
