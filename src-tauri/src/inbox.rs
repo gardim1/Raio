@@ -223,33 +223,18 @@ pub fn touch_heartbeat(dirs: &Dirs) -> std::io::Result<()> {
     file.set_modified(SystemTime::now())
 }
 
-/// Leave one tiny diagnostic marker per UTC day when Raio's own hook is invoked with a stale heartbeat.
-/// The normal marker retention policy bounds the history; this is not a dropped-event counter.
+/// Keep one tiny diagnostic marker when Raio's own hook is invoked with a stale heartbeat.
+/// Rewriting one fixed path bounds disk use even when Raio stays closed; this is not a dropped-event counter.
 pub fn mark_inert_heartbeat(dirs: &Dirs, now: SystemTime) -> std::io::Result<()> {
-    let day = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() / 86_400;
-    let z = day as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let date = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    year += if month <= 2 { 1 } else { 0 };
     fs::create_dir_all(&dirs.dropped)?;
-    match fs::OpenOptions::new().write(true).create_new(true).open(dirs.dropped.join(format!("inert-heartbeat-{year:04}{month:02}{date:02}"))) {
-        Ok(mut file) => file.write_all(b"1"),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error),
-    }
+    let marker = dirs.dropped.join("inert-heartbeat");
+    let file = fs::File::options().write(true).create(true).truncate(false).open(marker)?;
+    file.set_len(1)?;
+    file.set_modified(now)
 }
 
 pub fn inert_marker_at(dirs: &Dirs) -> Option<SystemTime> {
-    fs::read_dir(&dirs.dropped).ok()?.filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("inert-heartbeat-"))
-        .filter_map(|entry| entry.metadata().ok()?.modified().ok())
-        .max()
+    fs::metadata(dirs.dropped.join("inert-heartbeat")).ok()?.modified().ok()
 }
 
 /// Writes one event atomically. Never panics; the caller always exits 0.
@@ -363,7 +348,7 @@ pub fn drop_accounting(dirs: &Dirs) -> DropAccounting {
             };
             continue;
         }
-        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("inert-heartbeat-")) {
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("inert-heartbeat")) {
             continue;
         }
         if !path.is_file() { continue; }
@@ -577,15 +562,16 @@ mod tests {
     }
 
     #[test]
-    fn inert_heartbeat_marker_is_one_small_file_per_day_and_not_a_drop() {
+    fn inert_heartbeat_marker_stays_bounded_across_many_days_and_is_not_a_drop() {
         let (_d, dirs) = fresh();
         let now = SystemTime::now();
-        mark_inert_heartbeat(&dirs, now).unwrap();
-        mark_inert_heartbeat(&dirs, now + Duration::from_secs(60)).unwrap();
+        for day in 0..8 {
+            mark_inert_heartbeat(&dirs, now + Duration::from_secs(day * 24 * 60 * 60)).unwrap();
+        }
         let files: Vec<_> = fs::read_dir(&dirs.dropped).unwrap().map(Result::unwrap).collect();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].metadata().unwrap().len(), 1);
-        assert_eq!(files[0].file_name().to_string_lossy().len(), "inert-heartbeat-".len() + 8);
+        assert_eq!(files[0].file_name(), "inert-heartbeat");
         assert!(inert_marker_at(&dirs).is_some());
         assert_eq!(dropped_count(&dirs), 0);
     }
