@@ -5,7 +5,7 @@ import type { SessionLog } from '../features/session/model/events';
 import { demoSessionLog } from '../features/session/model/demoSession';
 import { useSessionUi } from '../features/session/store/sessionStore';
 import { demoGroupOf, demoImportFacts, demoInventory } from './demoImports';
-import type { ConnectPreview, DesktopBridge, ProjectHooksState, SessionSnapshot } from './desktopBridge';
+import type { ConnectPreview, DesktopBridge, IntegrationStatus, ProjectHooksState, SessionSnapshot } from './desktopBridge';
 import type { ProjectMapBridge } from './projectMapBridge';
 import { projectMap } from '../features/project/projectMap';
 import { isWindowsRoot, sameProjectRoot } from './projectIntent';
@@ -26,6 +26,13 @@ const fixtureUsage = (): ClaudeUsageState => {
     ...(mode === 'missing-weekly' ? {} : { sevenDay: { usedPercentage: 68, resetsAtMs: now + 3 * 24 * 60 * 60_000 } }),
   } };
 };
+const fixtureIntegrations: Readonly<Record<IntegrationStatus['hooks'], IntegrationStatus>> = {
+  current:{ hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null },
+  outdated:{ hooks:'outdated', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null },
+  missing:{ hooks:'missing', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null },
+  unknown:{ hooks:'unknown', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:null, lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null },
+};
+export const fixtureIntegrationStatus = (hooks: IntegrationStatus['hooks'] = 'current'): IntegrationStatus => fixtureIntegrations[hooks];
 
 /** The demo session behind the approved concept. Always labelled as a fixture. */
 export const demoSnapshot: SessionSnapshot = {
@@ -59,6 +66,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
     selectProject: () => Promise.resolve(false),
     previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
+    integrationStatus: () => fixtureIntegrationStatus(),
     claudeUsage: () => usage,
     subscribe: () => () => {},
     showSurface: showSurfaceInPlace,
@@ -74,7 +82,7 @@ export const createFixtureBridge = (snapshot: SessionSnapshot | null = demoSnaps
 /** Development-only project map before any session; the map is explicitly labelled as fixture data. */
 export const createProjectFixtureBridge = (options: { hooksState?: ProjectHooksState } = {}): ProjectMapBridge => {
   const snapshot = projectMap({ id: 'demo-project', name: demoSessionLog.project }, demoInventory, demoImportFacts, { provenance: 'fixture' });
-  if (options.hooksState === undefined) return { ...createFixtureBridge(null), currentProjectMap: () => snapshot };
+  if (options.hooksState === undefined) return { ...createFixtureBridge(null), currentProjectMap: () => snapshot, integrationStatus: () => fixtureIntegrationStatus() };
   // Opt-in harness connection: entirely in memory, always labelled as a fixture. Never calls native IPC or disk.
   const project = { ...snapshot.project, root: 'demo-project' };
   let connected = true;
@@ -92,6 +100,7 @@ export const createProjectFixtureBridge = (options: { hooksState?: ProjectHooksS
     currentProjectMap: () => connected ? snapshot : null,
     selectProject: (root) => Promise.resolve(connected && sameProjectRoot(project.root, root, isWindowsRoot(project.root))),
     projectHooksState: () => connected ? hooksState : 'unknown',
+    integrationStatus: () => fixtureIntegrationStatus(connected ? hooksState : 'unknown'),
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     connector: {
       project: () => connected ? project : null,
@@ -192,6 +201,7 @@ export const createSimulatedFeedBridge = (options: SimulatedFeedOptions = {}): D
     selectProject: () => Promise.resolve(false),
     previewProjectMap: (root) => Promise.resolve(projectMap({ id: 'preview-fixture', name: root.split('/').at(-1) ?? root }, demoInventory, demoImportFacts, { provenance: 'fixture' })),
     projectHooksState: () => 'current',
+    integrationStatus: () => fixtureIntegrationStatus(),
     claudeUsage: () => usage,
     subscribe: (listener) => {
       // Usage demos are static; only the simulated session feed schedules notifications.

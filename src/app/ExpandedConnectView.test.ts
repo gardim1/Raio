@@ -17,6 +17,14 @@ const render = (bridge: DesktopBridge, children: ReturnType<typeof createElement
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('Expanded connection chrome', () => {
+  it('renders the default immediately when the native bridge has no intent API', () => {
+    const { takeProjectIntent: _take, onProjectIntent: _listen, ...fixture } = createFixtureBridge(null);
+    const bridge: DesktopBridge = { ...fixture, kind: 'native', fixedSurface: 'expanded' };
+    const html = render(bridge, createElement(product.App));
+    expect(html).toContain('No project yet');
+    expect(html).not.toContain('Opening the requested project');
+  });
+
   it('keeps all window controls in the actual native empty Expanded flow', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
     vi.mocked(getCurrentWindow).mockReturnValue(windowApi as unknown as ReturnType<typeof getCurrentWindow>);

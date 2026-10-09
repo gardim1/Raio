@@ -12,7 +12,7 @@ import { isWindowsRoot, sameProjectRoot } from './projectIntent';
 import { factsFromEvents } from '../features/modes/presenceFacts';
 import type { PresenceInput } from '../features/modes/companionPresence';
 import type { ClaudeUsageState, ClaudeUsageSnapshot } from '../features/usage/claudeUsage';
-import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
+import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, IntegrationStatus, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 /** One app-local UI preference shared by webviews, including lazily created windows. */
 const SELECTED_ROOT_KEY = 'raio.selected-project-root';
@@ -96,6 +96,29 @@ const SCAN_INTERVAL_MS = 10_000;
 /** A scan that has not answered by now is given up on, so a hung call never blocks the next one. */
 const SCAN_TIMEOUT_MS = 5_000;
 const HOOKS_REFRESH_INTERVAL_MS = 60_000;
+const integrationStatusFrom = (value: unknown): IntegrationStatus | null => {
+  if (!value || typeof value !== 'object') return null;
+  const status = value as Partial<IntegrationStatus>;
+  if (!['current', 'outdated', 'missing', 'unknown'].includes(status.hooks ?? '')
+    || typeof status.hookBinary !== 'boolean'
+    || (status.heartbeatAgeMs !== null && (typeof status.heartbeatAgeMs !== 'number' || !Number.isFinite(status.heartbeatAgeMs) || status.heartbeatAgeMs < 0))
+    || (status.inertMarkerAt !== null && (typeof status.inertMarkerAt !== 'number' || !Number.isFinite(status.inertMarkerAt)))
+    || (status.lastHookEventAt !== null && (typeof status.lastHookEventAt !== 'number' || !Number.isFinite(status.lastHookEventAt)))
+    || (status.lastHookSessionId !== null && typeof status.lastHookSessionId !== 'string')
+    || (status.lastWatcherChangeAt !== null && (typeof status.lastWatcherChangeAt !== 'number' || !Number.isFinite(status.lastWatcherChangeAt)))) return null;
+  return {
+    hooks: status.hooks as IntegrationStatus['hooks'], hookBinary: status.hookBinary,
+    heartbeatAgeMs: status.heartbeatAgeMs ?? null, inertMarkerAt: status.inertMarkerAt ?? null,
+    lastHookEventAt: status.lastHookEventAt ?? null, lastHookSessionId: status.lastHookSessionId ?? null,
+    lastWatcherChangeAt: status.lastWatcherChangeAt ?? null,
+  };
+};
+
+const sameIntegrationStatus = (a: IntegrationStatus | undefined, b: IntegrationStatus | undefined): boolean =>
+  a === b || (!!a && !!b &&
+  a.hooks === b.hooks && a.hookBinary === b.hookBinary && a.heartbeatAgeMs === b.heartbeatAgeMs
+  && a.inertMarkerAt === b.inertMarkerAt && a.lastHookEventAt === b.lastHookEventAt
+  && a.lastHookSessionId === b.lastHookSessionId && a.lastWatcherChangeAt === b.lastWatcherChangeAt);
 
 /** Reject malformed IPC rather than drawing fabricated zeroes or another project's reading. */
 const usageState = (value: unknown, projectId: string): ClaudeUsageState => {
@@ -189,6 +212,7 @@ export const createNativeBridge = (
   let selectionQuery = 0;
   let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
+  let integration: IntegrationStatus | undefined;
   let usage: ClaudeUsageState = { status: 'disabled' };
   let usageKey: string | null = null;
   let usageQuery = 0;
@@ -380,6 +404,7 @@ export const createNativeBridge = (
         if (key !== scanKey) {
           scanKey = key;
           hooksState = 'unknown';
+          integration = undefined;
           imports = null;
           importsStale = false;
           scanActivity = -1;
@@ -392,6 +417,12 @@ export const createNativeBridge = (
           stopRetrying();
           scanToken++; // an answer still on its way belongs to the previous project
         }
+        const integrationValue = current
+          ? await ipc.invoke<unknown>('integration_status', { projectId: current.id }).catch(() => null)
+          : null;
+        if (selectedRoot !== requestedRoot) { dirty = true; return; }
+        const nextIntegration = integrationStatusFrom(integrationValue) ?? undefined;
+        if (!sameIntegrationStatus(integration, nextIntegration)) integration = nextIntegration;
         const projected = current ? projectSessionDetailed(current, events, undefined, imports, importsStale, inventory, inventoryStale) : null;
         project = current && project?.id === current.id && project.root === current.root ? project : current;
         const forceHooks = hooksRefreshRequested;
@@ -407,6 +438,7 @@ export const createNativeBridge = (
         report('refresh')(error);
         const hooksChanged = hooksState !== 'unknown';
         hooksState = 'unknown';
+        integration = undefined;
         presenceInput = { ...presenceInput, available: false, hooks: 'unknown' };
         if (projectSnapshot) {
           projectSnapshot = { ...projectSnapshot, core: null };
@@ -431,6 +463,13 @@ export const createNativeBridge = (
 
   const selectProject = async (root: string, broadcast = true): Promise<boolean> => {
     const query = ++selectionQuery;
+    // Cached explicit selections take effect before waiting on a possibly slow event/listing refresh.
+    // That makes an older A/B answer fail refresh's requested-root check instead of flashing over the latest choice.
+    const cached = connectedProjects.find((p) => sameProjectRoot(p.root, root, isWindowsRoot(p.root)));
+    if (cached) {
+      selectedRoot = cached.root;
+      saveSelectedRoot(cached.root);
+    }
     await refresh();
     if (query !== selectionQuery) return false;
     const match = connectedProjects.find((p) => sameProjectRoot(p.root, root, isWindowsRoot(p.root)));
@@ -488,6 +527,7 @@ export const createNativeBridge = (
       return projectMap({ id: 'preview', name }, value.inventory, value.imports);
     },
     projectHooksState: () => hooksState,
+    integrationStatus: () => integration,
     projectPresence: () => presenceInput,
     claudeUsage: () => usage,
     currentProjectMap: () => projectSnapshot,

@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => windowApi }))
 
 import { BridgeProvider } from '../../platform/BridgeContext';
 import type { DesktopBridge } from '../../platform/desktopBridge';
-import { createFixtureBridge } from '../../platform/fixtureBridge';
+import { createFixtureBridge, createProjectFixtureBridge } from '../../platform/fixtureBridge';
 import { projectMap } from './projectMap';
 import { ProjectOnlyView } from './ProjectOnlyView';
 import { projectMapFrame } from './projectMapFrame';
@@ -26,6 +26,25 @@ const render = (bridge: DesktopBridge, snapshot = oneSystem) => renderToStaticMa
 afterEach(() => vi.unstubAllGlobals());
 
 describe('pre-session Expanded window', () => {
+  it('exposes a missing hook binary notice as a visible status', () => {
+    const fixture = createProjectFixtureBridge();
+    const bridge = {
+      ...fixture,
+      integrationStatus: () => ({ ...fixture.integrationStatus?.()!, hookBinary: false }),
+    };
+    const markup = render(bridge, fixture.currentProjectMap()!);
+    expect(markup).toMatch(/class="sidebar__meta"[^>]*role="status"[^>]*aria-label="Integration problem: raio-hook\.exe missing next to raio\.exe"/);
+  });
+
+  it('renders a project-only sidebar with the sidebar fixture shape', () => {
+    const fixture = createProjectFixtureBridge();
+    const sidebarBridge = {
+      ...fixture,
+      integrationStatus: () => ({ ...fixture.integrationStatus?.()! }),
+    };
+    expect(() => render(sidebarBridge, fixture.currentProjectMap()!)).not.toThrow();
+  });
+
   it('renders native titlebar controls using the injected Windows window API', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0' });
     const markup = render({ ...createFixtureBridge(null), kind: 'native', fixedSurface: 'expanded' });
@@ -62,14 +81,14 @@ describe('pre-session Expanded window', () => {
   it('keeps the folder name once in the sidebar, hides technical details and avoids repeated waiting copy', () => {
     const name = 'Pasta com acentos ação e espaços ' + 'muito longa '.repeat(8);
     const snapshot = { ...oneSystem, project: { id: 'fixture', name } };
-    const html = render(createFixtureBridge(null), snapshot);
+    const html = render(createProjectFixtureBridge(), snapshot);
     const sidebar = html.match(/<aside class="sidebar">([\s\S]*?)<\/aside>/)![1]!;
     expect(sidebar.match(new RegExp('>' + name + '<', 'g'))).toHaveLength(1);
     expect(sidebar).toContain('title="' + name + '"');
     expect(sidebar).toContain('aria-label="' + name + '"');
-    expect(sidebar).toContain('Connected · no activity yet');
-    expect(sidebar).toContain('Waiting for activity');
-    expect(html.match(/Start a new Claude Code session in this folder/g)).toHaveLength(1);
+    expect(sidebar).toContain('Integration configured · waiting for the first Claude event');
+    expect(sidebar).toContain('Project overview');
+    expect(html).not.toContain('Start a new Claude Code session in this folder');
     expect(html).not.toContain('Waiting for an agent session');
     expect(sidebar).toContain('aria-expanded="false"');
     expect(sidebar).toContain('About this map');

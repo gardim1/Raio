@@ -14,6 +14,31 @@ export type DataProvenance = 'fixture' | 'live';
 export type Surface = 'island' | 'mini' | 'expanded';
 export type SurfaceIntent = 'replay';
 export type ProjectHooksState = 'current' | 'outdated' | 'unknown';
+export interface IntegrationStatus {
+  readonly hooks: 'current' | 'outdated' | 'missing' | 'unknown';
+  readonly hookBinary: boolean;
+  readonly heartbeatAgeMs: number | null;
+  readonly inertMarkerAt: number | null;
+  readonly lastHookEventAt: number | null;
+  readonly lastHookSessionId: string | null;
+  readonly lastWatcherChangeAt: number | null;
+}
+
+const integrationStatusReaders = new WeakMap<DesktopBridge, IntegrationStatus>();
+
+/** Returns a stable React snapshot even when an older or test adapter allocates on every read. */
+export const readIntegrationStatus = (bridge: DesktopBridge): IntegrationStatus | undefined => {
+  const value = bridge.integrationStatus?.();
+  if (!value) return undefined;
+  const previous = integrationStatusReaders.get(bridge);
+  if (previous && previous.hooks === value.hooks && previous.hookBinary === value.hookBinary
+    && previous.heartbeatAgeMs === value.heartbeatAgeMs && previous.inertMarkerAt === value.inertMarkerAt
+    && previous.lastHookEventAt === value.lastHookEventAt && previous.lastHookSessionId === value.lastHookSessionId
+    && previous.lastWatcherChangeAt === value.lastWatcherChangeAt) return previous;
+  const snapshot = Object.freeze({ ...value });
+  integrationStatusReaders.set(bridge, snapshot);
+  return snapshot;
+};
 
 export interface SessionSnapshot {
   readonly provenance: DataProvenance;
@@ -102,6 +127,8 @@ export interface DesktopBridge {
   previewProjectMap?(root: string): Promise<ProjectMapSnapshot | null>;
   /** Cached read-only state of the connected project's Raio handlers; absent on older adapters. */
   projectHooksState?(): ProjectHooksState;
+  /** Exact local Claude hook health; fixture adapters label synthetic values as demo data. */
+  integrationStatus?(): IntegrationStatus | undefined;
   /** Project-wide recorded facts, including failed edits and earlier-session history. */
   projectPresence?(): PresenceInput;
   /** Latest Claude plan usage reading (see features/usage/claudeUsage.ts); absent on adapters without the reader. */

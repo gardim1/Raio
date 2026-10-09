@@ -5,13 +5,26 @@ import { App } from '../../../src/app/App';
 import { projectMap } from '../../../src/features/project/projectMap';
 import { useSessionUi } from '../../../src/features/session/store/sessionStore';
 import { BridgeProvider } from '../../../src/platform/BridgeContext';
-import type { ConnectedProject } from '../../../src/platform/desktopBridge';
+import type { ConnectedProject, IntegrationStatus } from '../../../src/platform/desktopBridge';
 import { createFixtureBridge } from '../../../src/platform/fixtureBridge';
 import type { ProjectMapBridge } from '../../../src/platform/projectMapBridge';
 import { setNativeSurfaceVisible } from '../../../src/shared/motion/surfaceVisibility';
 
 export type SidebarFixtureState = 'pending' | 'empty' | 'unrecognized' | 'partial' | 'skipped' | 'stale' | 'unavailable' | 'denied' | 'mapped' | 'health' | 'outdated' | 'disconnected' | 'session' | 'replay';
 export const longFolderName = 'Pasta com acentos ação e espaços ' + 'muito longa '.repeat(8);
+const sidebarIntegrationStatuses = new Map<SidebarFixtureState, IntegrationStatus>();
+export const sidebarFixtureIntegrationStatus = (state: SidebarFixtureState): IntegrationStatus => {
+  let status = sidebarIntegrationStatuses.get(state);
+  if (!status) {
+    status = {
+      hooks: state === 'outdated' ? 'outdated' : state === 'disconnected' ? 'unknown' : 'current',
+      hookBinary: state !== 'health', heartbeatAgeMs: state === 'health' ? null : 60_000, inertMarkerAt: null,
+      lastHookEventAt: null, lastHookSessionId: null, lastWatcherChangeAt: null,
+    };
+    sidebarIntegrationStatuses.set(state, status);
+  }
+  return status;
+};
 export const mountSidebarFixture = (state: SidebarFixtureState) => {
   setNativeSurfaceVisible(true);
   for (const child of document.body.children) if (child instanceof HTMLElement) child.inert = true;
@@ -33,6 +46,7 @@ export const mountSidebarFixture = (state: SidebarFixtureState) => {
     parallel: false, actors: 1, reportedEdits: [], unassigned: [], validations: [], technologies: ['Frontend · Next.js'],
   } } : null;
   let writes = 0, disconnects = 0;
+  let integration = sidebarFixtureIntegrationStatus(state);
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach(listener => listener());
   const counts = () => { host.querySelector('output')!.textContent = `${writes} writes · ${disconnects} disconnects`; };
@@ -41,14 +55,15 @@ export const mountSidebarFixture = (state: SidebarFixtureState) => {
     currentSession: () => session,
     currentProjectMap: () => project && !session ? snapshot : null,
     projectHooksState: () => state === 'outdated' ? 'outdated' : 'current',
+    integrationStatus: () => integration,
     previewProjectMap: async () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     connector: {
       project: () => project,
       chooseFolder: async () => 'C:/fixture/another',
       preview: async root => ({ settingsPath: `${root}/.claude/settings.local.json`, before: '{}', after: '{"hooks":{}}', gitIgnored: true }),
-      connect: async root => { writes++; project = { id: 'another', name: 'another', root }; snapshot = { ...snapshot, project }; counts(); notify(); },
-      disconnect: async () => { disconnects++; project = null; counts(); notify(); },
+      connect: async root => { writes++; project = { id: 'another', name: 'another', root }; integration = sidebarFixtureIntegrationStatus(state === 'outdated' ? 'outdated' : 'mapped'); snapshot = { ...snapshot, project }; counts(); notify(); },
+      disconnect: async () => { disconnects++; project = null; integration = sidebarFixtureIntegrationStatus('disconnected'); counts(); notify(); },
     },
   };
   useSessionUi.setState({ mode: 'expanded', source: state === 'replay' ? 'replay' : 'live', selectedNodeId: null, liveRun: 0, replayRun: 0 });

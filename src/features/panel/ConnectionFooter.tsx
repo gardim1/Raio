@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSurfaceStore } from '../../shared/motion/visibleStore';
 import { useBridge } from '../../platform/BridgeContext';
-import type { ConnectedProject, ConnectPreview, Connector } from '../../platform/desktopBridge';
+import { readIntegrationStatus, type ConnectedProject, type ConnectPreview, type Connector } from '../../platform/desktopBridge';
 import { ConnectReview } from './ConnectPanel';
 
 /** Compact project controls, without repeating the folder name. */
@@ -16,6 +16,7 @@ const ConnectedFooter = ({ project, connector }: { readonly project: ConnectedPr
   const bridge = useBridge();
   const readHooks = () => bridge.projectHooksState?.() ?? 'unknown';
   const hooks = useSurfaceStore(bridge.subscribe, readHooks);
+  const integration = useSurfaceStore(bridge.subscribe, () => readIntegrationStatus(bridge));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<ConnectPreview | null>(null);
@@ -39,8 +40,8 @@ const ConnectedFooter = ({ project, connector }: { readonly project: ConnectedPr
       </button>
     </div>
     {error && <p className="evidence__warn" role="alert">{error}</p>}
-    {hooks === 'outdated' && <p className="evidence__warn" role="status" aria-label="Hooks out of date">
-      Raio's hooks for this project are out of date — reconnect to capture PowerShell checks.{' '}
+    {(hooks === 'outdated' || integration?.hooks === 'outdated' || integration?.hooks === 'missing') && <p className="evidence__warn" role="status" aria-label="Hooks out of date">
+      {integration?.hooks === 'missing' ? "Raio's hooks for this project are missing — reconnect to install them." : "Raio's hooks for this project are out of date — reconnect to capture PowerShell checks."}{' '}
       <button type="button" className="link-btn" disabled={busy} onClick={() => {
         setBusy(true);
         setError(null);

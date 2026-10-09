@@ -28,11 +28,11 @@ for (const width of [960, 1296, 1920]) {
     })).toBe(true);
     expect(await sidebar.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await expect(sidebar.getByText(longFolderName, { exact: true })).toHaveCount(1);
-    await expect(sidebar.getByText('Connected · no activity yet', { exact: true })).toBeVisible();
+    await expect(sidebar.getByText('Integration configured · waiting for the first Claude event', { exact: true })).toBeVisible();
     await expect(sidebar.getByText(/^\d+ areas? · heuristic map$/)).toBeVisible();
     await expect(fixture.getByText(/^(?:Heuristic map|\d+ areas? · heuristic map)$/)).toHaveCount(1);
     await expect(fixture.locator('.footer')).toHaveText('Project map');
-    await expect(fixture.getByText('Start a new Claude Code session in this folder.', { exact: false })).toHaveCount(1);
+    await expect(fixture.getByText('Start a new Claude Code session in this folder.', { exact: false })).toHaveCount(0);
     const button = sidebar.getByRole('button', { name: 'About this map', exact: true });
     await expect(button).toHaveAttribute('aria-expanded', 'false');
     const details = sidebar.locator('[id]').filter({ hasText: 'Areas are a heuristic guess' });
@@ -55,8 +55,8 @@ const states: readonly [SidebarFixtureState, string, string?][] = [
   ['pending', 'Mapping project…'], ['empty', 'No code to map yet'], ['unrecognized', 'No areas recognized'],
   ['partial', 'Map incomplete', 'The project listing was partial'], ['skipped', 'Map incomplete', '2 files or folders not listed'],
   ['stale', 'Map incomplete', 'The latest relisting failed'], ['unavailable', "Couldn't list this folder"],
-  ['denied', "Couldn't list this folder", 'Access denied by the filesystem'], ['mapped', 'Waiting for activity'],
-  ['health', 'Activity cannot be confirmed', 'raio-hook was not found'], ['outdated', 'Activity cannot be confirmed', 'Hooks out of date'],
+  ['denied', "Couldn't list this folder", 'Access denied by the filesystem'], ['mapped', 'Project overview'],
+  ['health', 'Project overview', 'raio-hook.exe missing next to raio.exe'], ['outdated', 'Project overview', 'Hooks out of date'],
 ];
 for (const [state, heading, warning] of states) {
   test(`truthful ${state} state`, async ({ page }) => {

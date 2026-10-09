@@ -31,7 +31,7 @@ it('orders identity, one activity line, compact usage and the existing three act
   expect(html.indexOf('island__activity')).toBeLessThan(html.indexOf('usage-rings--compact'));
   expect(html.indexOf('usage-rings--compact')).toBeLessThan(html.indexOf('island__actions'));
   expect(html).toContain('5h 24% · week 68% used');
-  expect(html.match(/No agent active right now\./g)).toHaveLength(2); // text + its title, one activity element
+  expect(html.match(/Integration configured · waiting for the first Claude event/g)).toHaveLength(2); // text + its title, one activity element
   expect(html.match(/class="island__activity"/g)).toHaveLength(1);
   for (const action of ['Open Mini Player','Open window','Give Raio a cookie']) expect(html).toContain(`aria-label="${action}"`);
 });

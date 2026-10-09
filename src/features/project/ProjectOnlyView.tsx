@@ -3,7 +3,7 @@ import { useSurfaceStore } from '../../shared/motion/visibleStore';
 import type { CompanionPresence } from '../modes/companionPresence';
 import { PresenceHistory } from '../modes/PresenceHistory';
 import { useBridge } from '../../platform/BridgeContext';
-import type { Surface } from '../../platform/desktopBridge';
+import { readIntegrationStatus, type Surface } from '../../platform/desktopBridge';
 import { IconButton } from '../../shared/ui/Button';
 import { IslandIcon, PictureInPictureIcon } from '../../shared/ui/icons';
 import { ArchitectureCanvas } from '../architecture/components/ArchitectureCanvas';
@@ -30,7 +30,9 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
   const connection = useSurfaceStore(bridge.subscribe, () => bridge.connector?.project() ?? null);
   const hooks = useSurfaceStore(bridge.subscribe, () => bridge.projectHooksState?.() ?? 'unknown');
   const presence = useSurfaceStore(bridge.subscribe, () => bridge.projectPresence?.());
-  const state = deriveSidebarState({ snapshot, connected: bridge.connector ? connection !== null : true, hooks, presence });
+  const integration = useSurfaceStore(bridge.subscribe, () => readIntegrationStatus(bridge));
+  const state = deriveSidebarState({ snapshot, connected: bridge.connector ? connection !== null : true, hooks, presence, integration });
+  const helperMissing = integration?.hooks === 'current' && !integration.hookBinary;
   const nativeWindow = useMemo(() => expandedWindowChrome(bridge, typeof navigator === 'undefined' ? '' : navigator.userAgent), [bridge]);
   const go = (surface: Surface) => bridge.showSurface(surface);
   if (mode === 'island') return <IdleIsland companion={companion} onOpen={() => go('expanded')} />;
@@ -56,7 +58,7 @@ export const ProjectOnlyView = ({ snapshot, mode, companion }: { readonly snapsh
             <div className="sidebar__overview">
               <div className="sidebar__eyebrowless" role="heading" aria-level={2} title={state.projectName} aria-label={state.projectName}>{state.projectName}</div>
               <div className="sidebar__task">{state.heading}</div>
-              <div className="sidebar__meta">{state.indicator}</div>
+              <div className="sidebar__meta" {...(helperMissing ? { role: 'status', 'aria-label': state.indicator } : {})}>{state.indicator}</div>
             </div>
             <p className="evidence__note">{state.areaCount} · heuristic map</p>
             {state.message && <p className="sidebar__hint">{state.message}</p>}

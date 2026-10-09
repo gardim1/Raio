@@ -5,8 +5,10 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 
 import { createNativeBridge, type NativeIpc } from './nativeBridge';
+import type { DesktopBridge } from './desktopBridge';
 import { createFixtureBridge, createProjectFixtureBridge } from './fixtureBridge';
-import { followProjectIntents, sameProjectRoot } from './projectIntent';
+import { followProjectIntents, sameProjectRoot, shouldGateForProjectIntent } from './projectIntent';
+import { syncSettingsWriteCount, syncShownProjects } from './projectIntentTracker';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const projects = [{ id: 'a', name: 'A', root: 'C:/work/A' }, { id: 'b', name: 'B', root: 'C:/work/B' }];
@@ -30,6 +32,87 @@ const fake = (answer: (command: string) => unknown = () => null) => {
 };
 
 describe('project folder intents', () => {
+  it('stops the observer loop after synchronizing its label once', () => {
+    let label: string | null = 'none';
+    let writes = 0;
+    const shown: string[] = [];
+    const callbacks: (() => void)[] = [];
+    const output = {
+      get textContent() { return label; },
+      set textContent(value: string | null) { label = value; writes++; callbacks.push(observe); },
+    };
+    const observe = () => syncShownProjects(shown, 'Fixture A', output);
+    callbacks.push(observe);
+    while (callbacks.length && writes < 10) callbacks.shift()!();
+    expect(label).toBe('Fixture A');
+    expect(writes).toBe(1);
+    expect(callbacks).toHaveLength(0);
+  });
+  it('updates the labelled settings-write output without overwriting Projects shown', () => {
+    const labels = { 'Projects shown': 'Fixture A', 'Settings writes': '0' };
+    const selectors: string[] = [];
+    const host = { querySelector: (selector: string) => {
+      selectors.push(selector);
+      const label = selector.match(/\[aria-label="([^"]+)"\]/)?.[1] as keyof typeof labels | undefined;
+      if (!label) return null;
+      return Object.defineProperty({}, 'textContent', { get: () => labels[label], set: (value: string | null) => { labels[label] = value ?? ''; } }) as HTMLOutputElement;
+    } } as unknown as Pick<HTMLElement, 'querySelector'>;
+    syncSettingsWriteCount(host, 1);
+    expect(labels).toEqual({ 'Projects shown': 'Fixture A', 'Settings writes': '1' });
+    expect(selectors).toEqual(['[aria-label="Settings writes"]']);
+  });
+
+  it('does not gate the default surface when a bridge has no intent APIs', () => {
+    const { takeProjectIntent: _take, onProjectIntent: _listen, ...fixture } = createFixtureBridge(null);
+    const bridge: DesktopBridge = { ...fixture, kind: 'native', fixedSurface: 'expanded' };
+    expect(shouldGateForProjectIntent(bridge)).toBe(false);
+  });
+  it('gates a fixed Expanded fixture that exposes the native launch intent API', () => {
+    const fixture = createProjectFixtureBridge();
+    const bridge: DesktopBridge = { ...fixture, fixedSurface: 'expanded' };
+    expect(shouldGateForProjectIntent(bridge)).toBe(true);
+  });
+  it('keeps the initial surface gated until the launch intent has resolved', async () => {
+    let release: ((root: string | null) => void) | undefined;
+    const bridge = { takeProjectIntent: () => new Promise<string | null>(resolve => { release = resolve; }) } as unknown as DesktopBridge;
+    const order: string[] = [];
+    const stop = followProjectIntents(bridge, root => { order.push(`intent:${root}`); }, () => { order.push('ready'); });
+    await settle();
+    expect(order).toEqual([]);
+    release!('C:/work/B');
+    await settle();
+    expect(order).toEqual(['intent:C:/work/B', 'ready']);
+    stop();
+  });
+  it('opens the gate when a pending startup intent resolves to null', async () => {
+    let release: ((root: string | null) => void) | undefined;
+    const bridge = {
+      onProjectIntent: async () => () => {},
+      takeProjectIntent: () => new Promise<string | null>(resolve => { release = resolve; }),
+    } as unknown as DesktopBridge;
+    let ready = false;
+    const stop = followProjectIntents(bridge, () => {}, () => { ready = true; });
+    await settle();
+    expect(ready).toBe(false);
+    release!(null);
+    await settle();
+    expect(ready).toBe(true);
+    stop();
+  });
+  it('bounds the launch gate when intent APIs never settle', async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = {
+        onProjectIntent: () => new Promise<() => void>(() => {}),
+        takeProjectIntent: () => new Promise<string | null>(() => {}),
+      } as unknown as DesktopBridge;
+      let ready = false;
+      const stop = followProjectIntents(bridge, () => {}, () => { ready = true; });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(ready).toBe(true);
+      stop();
+    } finally { vi.useRealTimers(); }
+  });
   it.each([
     ['C:\\Work\\Raio\\', 'c:/work/raio', true, true],
     ['\\\\server\\share\\App', '//SERVER/share/app/', true, true],
@@ -56,7 +139,7 @@ describe('project folder intents', () => {
     const source = fake((command) => command === 'take_project_intent' ? 'C:/work/new' : null);
     const bridge = createNativeBridge('expanded', source.ipc, Date.now, 50, []);
     const received: string[] = [];
-    const stop = followProjectIntents(bridge, (root) => received.push(root));
+    const stop = followProjectIntents(bridge, (root) => { received.push(root); });
     await settle();
     expect(received).toEqual(['C:/work/new']);
     source.emit('C:/work/second');
@@ -72,9 +155,9 @@ describe('project folder intents', () => {
     const source = fake((command) => command === 'take_project_intent' ? new Promise<string>((done) => { resolve = done; }) : null);
     const bridge = createNativeBridge('expanded', source.ipc, Date.now, 50, []);
     const ignored: string[] = [];
-    followProjectIntents(bridge, (root) => ignored.push(root))();
+    followProjectIntents(bridge, (root) => { ignored.push(root); })();
     const received: string[] = [];
-    const stop = followProjectIntents(bridge, (root) => received.push(root));
+    const stop = followProjectIntents(bridge, (root) => { received.push(root); });
     await settle();
     resolve('C:/work/new');
     await settle();
@@ -89,7 +172,7 @@ describe('project folder intents', () => {
     const source = fake((command) => command === 'take_project_intent' ? new Promise<string>((done) => { resolve = done; }) : null);
     const bridge = createNativeBridge('expanded', source.ipc, Date.now, 50, []);
     const received: string[] = [];
-    const stop = followProjectIntents(bridge, (root) => received.push(root));
+    const stop = followProjectIntents(bridge, (root) => { received.push(root); });
     await settle();
     source.emit('C:/work/newer');
     resolve('C:/work/older');

@@ -27,7 +27,9 @@ test('outdated hooks reuse preview, Cancel and explicit Connect', async ({ page 
   await expect(review).toHaveCount(0);
   await expect(page.getByText(warning, { exact: false })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
-  await expect(page.getByText('Connected · no activity yet', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+  await expect(page.locator('.status__label')).toHaveText('No session yet');
+  await expect(page.getByText('Integration configured · waiting for the first Claude event', { exact: true })).toBeVisible();
 });
 
 for (const state of ['current', 'unknown'] as const) {

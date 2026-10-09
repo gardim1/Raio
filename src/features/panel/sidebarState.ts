@@ -1,4 +1,4 @@
-import type { CoreHealth, ProjectHooksState } from '../../platform/desktopBridge';
+import type { CoreHealth, IntegrationStatus, ProjectHooksState } from '../../platform/desktopBridge';
 import { receptionProblem } from '../../platform/coreHealth';
 import type { PresenceInput } from '../modes/companionPresence';
 import type { ProjectMapSnapshot } from '../project/projectMap';
@@ -34,14 +34,54 @@ export interface SidebarState {
   readonly warnings: readonly string[];
 }
 
+const clockAt = (at: number | null, timeZone?: string): string | null => at == null || !Number.isFinite(at) ? null : new Intl.DateTimeFormat('en-GB', {
+  hour:'2-digit', minute:'2-digit', hourCycle:'h23', ...(timeZone ? { timeZone } : {}),
+}).format(at);
+
+/** One source-labelled integration line shared by the project sidebar and the Island. */
+export const integrationIndicator = (integration: IntegrationStatus | undefined, presence: PresenceInput | undefined, now: number, timeZone?: string): string | null => {
+  if (integration) {
+    if (integration.inertMarkerAt !== null) return 'Integration problem: Raio was not running';
+    if (integration.hooks === 'outdated') return 'Integration problem: Hooks out of date';
+    if (integration.hooks === 'missing') return 'Integration problem: Hooks missing';
+    if (integration.hooks === 'unknown') return 'Integration problem: Hook status unknown';
+    if (!integration.hookBinary) return 'Integration problem: raio-hook.exe missing next to raio.exe';
+    if (integration.heartbeatAgeMs !== null && integration.heartbeatAgeMs > 7 * 24 * 60 * 60_000) return 'Integration problem: Raio heartbeat is stale';
+    if (integration.lastHookEventAt !== null && now - integration.lastHookEventAt <= 5 * 60_000) {
+      const at = clockAt(integration.lastHookEventAt, timeZone);
+      return `Following session ${(integration.lastHookSessionId ?? 'unknown').slice(0, 9)} · last event ${at ?? 'time unavailable'}`;
+    }
+    const watcherAt = Math.max(integration.lastWatcherChangeAt ?? -Infinity,
+      presence?.facts.reduce((last, fact) => Number.isFinite(fact.at) && fact.at <= now && fact.source === 'watcher' ? Math.max(last, fact.at) : last, -Infinity) ?? -Infinity);
+    if (Number.isFinite(watcherAt) && watcherAt > (integration.lastHookEventAt ?? -Infinity)) {
+      const at = clockAt(watcherAt, timeZone);
+      return `File changed — source unknown${at ? ` · ${at}` : ''}`;
+    }
+    if (integration.lastHookEventAt !== null) {
+      const at = clockAt(integration.lastHookEventAt, timeZone);
+      return `No recent activity · last event ${at ?? 'time unavailable'}`;
+    }
+  }
+  const latest = presence?.facts.reduce((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at > last.at) ? fact : last, null as (typeof presence.facts)[number] | null);
+  if (latest?.kind === 'change' || (latest && latest.source === 'watcher')) {
+    const at = clockAt(latest.at, timeZone);
+    return `File changed — source unknown${at ? ` · ${at}` : ''}`;
+  }
+  if (integration?.hooks === 'current' && integration.hookBinary && integration.lastHookEventAt === null
+    && integration.heartbeatAgeMs !== null && integration.heartbeatAgeMs <= 7 * 24 * 60 * 60_000) return 'Integration configured · waiting for the first Claude event';
+  return null;
+};
+
 /** Repository facts and reception health, without inventing a session from an empty map. */
-export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknown', presence, session, timeZone }: {
+export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknown', presence, integration, session, timeZone, now = Date.now() }: {
   readonly snapshot: ProjectMapSnapshot;
   readonly connected?: boolean;
   readonly hooks?: ProjectHooksState;
   readonly presence?: PresenceInput;
+  readonly integration?: IntegrationStatus;
   readonly session?: { readonly summary: string };
   readonly timeZone?: string;
+  readonly now?: number;
 }): SidebarState => {
   const { details, warnings } = splitMapNotes(snapshot.note);
   const listing = snapshot.listingDetails;
@@ -51,13 +91,9 @@ export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknow
   if (listing?.stale) warnings.push('The latest relisting failed, so these areas are as of the last listing.');
   if (listing?.truncated) warnings.push('The project listing was partial, so some areas may be missing.');
   if (listing && listing.skipped > 0) warnings.push(`${listing.skipped} ${listing.skipped === 1 ? 'file or folder' : 'files or folders'} not listed (large, unreadable or online-only).`);
-  const lastActivity = presence?.facts.reduce<number | null>((last, fact) => Number.isFinite(fact.at) ? Math.max(last ?? fact.at, fact.at) : last, null);
-  const clock = lastActivity == null ? null : new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23', ...(timeZone ? { timeZone } : {}),
-  }).format(lastActivity);
-  const indicator = !connected ? 'Not connected' : problem || presence?.available === false ? 'Connection status unavailable'
-    : hooks === 'outdated' ? 'Hooks out of date' : clock ? `Connected · last activity ${clock}`
-    : presence ? 'Connected · no activity yet' : hooks === 'unknown' && snapshot.provenance !== 'fixture' ? 'Connected · activity unknown' : 'Connected · no activity yet';
+  const integrationLine = integrationIndicator(integration, presence, now, timeZone);
+  const indicator = !connected ? 'Not connected' : integrationLine ?? (problem || presence?.available === false ? 'Connection status unavailable'
+    : hooks === 'outdated' ? 'Hooks out of date' : presence?.facts.length ? 'No recent activity' : 'Connected · no activity yet');
   const count = snapshot.graph.nodes.length;
   const base = { projectName: snapshot.project.name, indicator, areaCount: `${count} ${count === 1 ? 'area' : 'areas'}`, details, warnings: [...new Set(warnings)] };
   if (!connected) return { ...base, heading: 'No project yet', message: 'Choose a repository and review the connection.', action: 'connect' };
@@ -70,6 +106,12 @@ export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknow
     details.push('No areas could be inferred from the listed folders and manifests. The project may contain code that this heuristic does not recognize.');
     return { ...base, heading: incomplete ? 'Map incomplete' : 'No areas recognized', message: null, action: null };
   }
-  return { ...base, heading: problem || hooks === 'outdated' || presence?.available === false ? 'Activity cannot be confirmed' : 'Waiting for activity',
-    message: problem || hooks === 'outdated' || presence?.available === false ? null : 'Start a new Claude Code session in this folder. Hooks apply to new sessions.', action: null };
+  return { ...base, heading: integrationLine ? 'Project overview' : problem || hooks === 'outdated' || presence?.available === false ? 'Activity cannot be confirmed' : 'Waiting for activity',
+    message: integration?.inertMarkerAt !== null && integration?.inertMarkerAt !== undefined
+      ? `Raio was not running; events were skipped. New events are recorded now.`
+      : integration?.heartbeatAgeMs !== null && integration?.heartbeatAgeMs !== undefined && integration.heartbeatAgeMs > 7 * 24 * 60 * 60_000 ? 'Start Raio to resume recording Claude events.'
+      : integration?.hooks === 'outdated' ? null
+        : integration?.hooks === 'missing' ? null
+          : integration && !integration.hookBinary ? 'Restore raio-hook.exe next to raio.exe.'
+            : integrationLine ? null : problem || hooks === 'outdated' || presence?.available === false ? null : 'Start a new Claude Code session in this folder. Hooks apply to new sessions.', action: null };
 };
