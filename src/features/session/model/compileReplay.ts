@@ -111,9 +111,9 @@ interface NodeFacts {
 interface SessionFacts {
   readonly facts: Map<NodeId, NodeFacts>;
   readonly order: NodeId[];
-  readonly finalValidations: Map<ValidationKind, { status: ValidationStatus; atMs: number; detail?: string }>;
+  readonly finalValidations: Map<ValidationKind, { status: ValidationStatus; atMs: number; detail?: string; program?: string }>;
   /** Live: every check result in event order, dropping consecutive repeats of the same status and reason. */
-  readonly history: { kind: ValidationKind; status: ValidationStatus; atMs: number; detail?: string }[];
+  readonly history: { kind: ValidationKind; status: ValidationStatus; atMs: number; detail?: string; program?: string }[];
   readonly endMs: number;
   readonly failed: boolean;
   /** The latest ordered lifecycle boundary decides completion; a later start reopens the session. */
@@ -146,10 +146,10 @@ const collectFacts = (events: readonly AgentEvent[], live = false): SessionFacts
     else if (e.kind === 'file.read') reads.add(e.nodeId);
     else if (e.kind === 'risk') ensure(e.nodeId, e.atMs).risks.push({ kind: e.risk, atMs: e.atMs });
     else if (e.kind === 'validation') {
-      const detail = e.status === 'unknown' && e.detail !== undefined ? { detail: e.detail } : {};
+      const detail = e.status === 'unknown' && e.detail !== undefined ? { detail: e.detail, ...(e.program ? { program: e.program } : {}) } : {};
       finalValidations.set(e.validation, { status: e.status, atMs: e.atMs, ...detail });
       const previous = history.filter((h) => h.kind === e.validation).at(-1);
-      const reasonChanged = e.status === 'unknown' && unknownResultText(previous?.detail) !== unknownResultText(e.detail);
+      const reasonChanged = e.status === 'unknown' && unknownResultText(previous?.detail, previous?.program) !== unknownResultText(e.detail, e.program);
       if (!previous || previous.status !== e.status || reasonChanged) history.push({ kind: e.validation, status: e.status, atMs: e.atMs, ...detail });
     }
     else if (e.kind === 'session.start') {
@@ -298,9 +298,9 @@ const VALIDATION_TONE: Record<ValidationStatus, StoryEvent['tone']> = {
   stale: 'neutral',
 };
 
-const validationLabel = (kind: ValidationKind, status: ValidationStatus, detail?: string): string => {
+const validationLabel = (kind: ValidationKind, status: ValidationStatus, detail?: string, program?: string): string => {
   const name = kind === 'build' ? 'Build' : 'Tests';
-  if (status === 'unknown') return `${name}: ${unknownResultText(detail)}`;
+  if (status === 'unknown') return `${name}: ${unknownResultText(detail, program)}`;
   if (status === 'stale') return `${name}: stale (code changed after the run)`;
   return `${name} ${status}`;
 };
@@ -390,6 +390,22 @@ const compose = (
   const story: StoryEvent[] = [];
   const blinks: number[] = [];
   const agent = AGENT_LABEL[log.agent];
+  const appendTimelineFacts = (from: number): void => {
+    let index = 0;
+    for (const event of log.events) {
+      let label: string | undefined;
+      let tone: StoryEvent['tone'] = 'neutral';
+      if (event.kind === 'file.attempt') label = `Edit attempted · ${event.path}`;
+      else if (event.kind === 'file.failed') { label = `Edit failed · ${event.path}`; tone = 'danger'; }
+      else if (event.kind === 'command') {
+        label = event.status === 'did-not-start'
+          ? `Could not start ${event.program || 'the command'} — check did not run`
+          : 'Command failed';
+        tone = event.status === 'failed' ? 'danger' : 'neutral';
+      }
+      if (label) story.push({ t: from + index++ * BEAT.validationStep, label, tone, realTime: formatOffset(event.atMs) });
+    }
+  };
 
   const wakeAt = BEAT.leadIn;
   orb.push({ kind: 'sleep', t0: 0, t1: wakeAt, at: HOME });
@@ -570,8 +586,8 @@ const compose = (
   if (live) {
     for (const h of session.history) {
       const at = visits.reduce((latest, v, i) => (v.firstWriteMs <= h.atMs ? Math.max(latest, marks[i]?.readyAt ?? wakeEnd) : latest), wakeEnd);
-      liveValidations.push({ kind: h.kind, status: h.status, at, ...(h.detail !== undefined ? { detail: h.detail } : {}) });
-      story.push({ t: at, label: validationLabel(h.kind, h.status, h.detail), tone: VALIDATION_TONE[h.status], realTime: formatOffset(h.atMs) });
+      liveValidations.push({ kind: h.kind, status: h.status, at, ...(h.detail !== undefined ? { detail: h.detail } : {}), ...(h.program ? { program: h.program } : {}) });
+      story.push({ t: at, label: validationLabel(h.kind, h.status, h.detail, h.program), tone: VALIDATION_TONE[h.status], realTime: formatOffset(h.atMs) });
     }
   }
   const liveFailedChecks = latestPerKind(liveValidations).filter((v) => v.status === 'failed').length;
@@ -579,6 +595,7 @@ const compose = (
   if (open) {
     /* Open live session: no tail; the orb stays parked at the latest stop. */
     const eventsEndAt = marks.at(-1)?.readyAt ?? wakeEnd;
+    appendTimelineFacts(eventsEndAt + BEAT.validationStep);
     // Parked blinks follow the reference cadence and stop after ~32 s: after the last one nothing is scheduled.
     const idleBlinks = parkedBlinks(eventsEndAt);
     return {
@@ -634,11 +651,12 @@ const compose = (
       const result = session.finalValidations.get(kind);
       if (!result) continue;
       const at = E + BEAT.firstValidation + validations.length * BEAT.validationStep;
-      validations.push({ kind, status: result.status, at, ...(result.detail !== undefined ? { detail: result.detail } : {}) });
+      validations.push({ kind, status: result.status, at, ...(result.detail !== undefined ? { detail: result.detail } : {}), ...(result.program ? { program: result.program } : {}) });
       if (result.status === 'failed') failures++;
-      story.push({ t: at, label: validationLabel(kind, result.status, result.detail), tone: VALIDATION_TONE[result.status], realTime: formatOffset(result.atMs) });
+      story.push({ t: at, label: validationLabel(kind, result.status, result.detail, result.program), tone: VALIDATION_TONE[result.status], realTime: formatOffset(result.atMs) });
     }
   }
+  appendTimelineFacts(Math.max(E + BEAT.firstValidation + validations.length * BEAT.validationStep, ...story.map((event) => event.t)) + BEAT.validationStep);
 
   const revealOrder = [...edges].sort((a, b) => a.revealAt - b.revealAt);
   const step = revealOrder.length > 3 ? Math.min(BEAT.finalPulseStep, 1.1 / revealOrder.length) : BEAT.finalPulseStep;

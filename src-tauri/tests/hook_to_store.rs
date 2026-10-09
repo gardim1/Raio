@@ -114,6 +114,43 @@ fn recorded_session_flows_from_hook_to_store_without_content() {
 }
 
 #[test]
+fn stale_heartbeat_for_raios_own_valid_project_leaves_one_inert_marker() {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60);
+    fs::File::options().write(true).open(&dirs.heartbeat).unwrap().set_modified(old).unwrap();
+    let root = Path::new("C:/fixture/acme-mini");
+    let project = raio_lib::event::project_id(root);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_raio-hook"))
+        .args(["claude", "--project", &project, "--root", root.to_str().unwrap(), "--raio-managed"])
+        .env("RAIO_DATA_DIR", data.path())
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    let markers: Vec<_> = fs::read_dir(&dirs.dropped).unwrap().flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("inert-heartbeat-")).collect();
+    assert_eq!(markers.len(), 1);
+    assert!(markers[0].metadata().unwrap().len() <= 8);
+    assert!(inbox::pending(&dirs, 10).is_empty());
+}
+
+#[test]
+fn stale_heartbeat_with_a_foreign_project_id_stays_silent() {
+    let data = tempfile::tempdir().unwrap();
+    let dirs = Dirs::new(data.path());
+    dirs.create().unwrap();
+    inbox::touch_heartbeat(&dirs).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60);
+    fs::File::options().write(true).open(&dirs.heartbeat).unwrap().set_modified(old).unwrap();
+
+    assert_eq!(run_hook(data.path(), b"{}").0, 0);
+    assert_eq!(fs::read_dir(&dirs.dropped).unwrap().count(), 0);
+    assert!(inbox::pending(&dirs, 10).is_empty());
+}
+
+#[test]
 fn session_lifecycle_resume_keeps_four_occurrences_and_inbox_retries_dedupe() {
     let data = tempfile::tempdir().unwrap();
     let dirs = Dirs::new(data.path());

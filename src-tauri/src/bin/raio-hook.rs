@@ -63,6 +63,10 @@ fn run(dirs: &inbox::Dirs, guard: &Guard) {
     guard.arm();
     stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
     if !inbox::heartbeat_fresh(dirs, SystemTime::now()) {
+        let root = PathBuf::from(root);
+        if raio_lib::event::project_id(&root) == project_id {
+            let _ = inbox::mark_inert_heartbeat(dirs, SystemTime::now());
+        }
         guard.finish(); // Raio has not run recently: stay inert instead of filling the inbox; nothing was lost
         return;
     }

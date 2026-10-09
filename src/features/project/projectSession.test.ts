@@ -141,9 +141,40 @@ describe('projectSession: session log', () => {
     ]);
   });
 
-  it('does not turn attempted or failed edits, or turn endings, into writes or completion', () => {
+  it('shows edit attempts and failures as facts without turning them into writes or completion', () => {
     const events = eventsOf([started(0), ev('file.edit.attempted', 1, ['src/a.ts']), ev('file.edit.failed', 2, ['src/b.ts']), ev('turn.ended', 3)]);
-    expect(events).toEqual([{ kind: 'session.start', atMs: 0 }]);
+    expect(events).toEqual([
+      { kind: 'session.start', atMs: 0 },
+      { kind: 'file.attempt', atMs: 1000, path: 'src/a.ts', nodeId: 'src' },
+      { kind: 'file.failed', atMs: 2000, path: 'src/b.ts', nodeId: 'src' },
+    ]);
+    expect(events.some((event) => event.kind === 'file.write' || event.kind === 'session.end')).toBe(false);
+  });
+
+  it('keeps edit attempts, edit failures, and ordinary failed commands as factual timeline entries', () => {
+    const snapshot = project([
+      started(0),
+      ev('file.edit.attempted', 1, ['src/a.ts'], { toolUseId: 'edit-a', toolName: 'Write' }),
+      ev('file.edit.failed', 2, ['src/a.ts'], { toolUseId: 'edit-a', toolName: 'Write' }),
+      ev('file.edit.failed', 2.1, ['src/a.ts'], { toolUseId: 'edit-a', toolName: 'Write' }),
+      ev('command.result', 3, [], { toolUseId: 'cmd-a', toolName: 'Bash', commandClass: 'other', program: 'python', detail: 'did-not-start' }),
+      ev('command.result', 4, [], { toolUseId: 'cmd-b', toolName: 'Bash', commandClass: 'other', program: 'git', exitCode: 1 }),
+      ev('command.result', 5, [], { toolUseId: 'cmd-c', toolName: 'Bash', commandClass: 'test', program: 'python', detail: 'did-not-start' }),
+    ]);
+    expect(snapshot.log.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'file.attempt', path: 'src/a.ts' }),
+      expect.objectContaining({ kind: 'file.failed', path: 'src/a.ts' }),
+      expect.objectContaining({ kind: 'command', program: 'python', detail: 'did-not-start' }),
+      expect.objectContaining({ kind: 'command', program: 'git', status: 'failed' }),
+    ]));
+    const story = compileReplay(snapshot.log, snapshot.graph).story.map((event) => event.label);
+    expect(story).toContain('Edit failed · src/a.ts');
+    expect(story).toContain('Could not start python — check did not run');
+    expect(story).toContain('Tests: Could not start python — check did not run');
+    expect(story).toContain('Command failed');
+    expect(story).not.toContain('Tests failed');
+    expect(snapshot.log.events.filter((event) => event.kind === 'file.failed')).toHaveLength(1);
+    expect(compileReplay(snapshot.log, snapshot.graph, { live: true }).live?.visits).toHaveLength(0);
   });
 
   it('builds a map of the touched groups with no edges and says relationships are unknown', () => {

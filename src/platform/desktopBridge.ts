@@ -14,6 +14,16 @@ export type DataProvenance = 'fixture' | 'live';
 export type Surface = 'island' | 'mini' | 'expanded';
 export type SurfaceIntent = 'replay';
 export type ProjectHooksState = 'current' | 'outdated' | 'unknown';
+export type IntegrationHooksState = ProjectHooksState | 'missing';
+export interface IntegrationStatus {
+  readonly hooks: IntegrationHooksState;
+  readonly hookBinary: boolean;
+  readonly heartbeatAgeMs: number | null;
+  readonly inertMarkerAt: number | null;
+  readonly lastHookEventAt: number | null;
+  readonly lastHookSessionId: string | null;
+  readonly lastWatcherChangeAt: number | null;
+}
 
 export interface SessionSnapshot {
   readonly provenance: DataProvenance;
@@ -102,6 +112,8 @@ export interface DesktopBridge {
   previewProjectMap?(root: string): Promise<ProjectMapSnapshot | null>;
   /** Cached read-only state of the connected project's Raio handlers; absent on older adapters. */
   projectHooksState?(): ProjectHooksState;
+  /** Cached core status for the selected project's Claude hook integration. */
+  integrationStatus(): IntegrationStatus;
   /** Project-wide recorded facts, including failed edits and earlier-session history. */
   projectPresence?(): PresenceInput;
   /** Latest Claude plan usage reading (see features/usage/claudeUsage.ts); absent on adapters without the reader. */

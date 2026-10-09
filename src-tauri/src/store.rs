@@ -144,6 +144,15 @@ impl Store {
         Ok(out)
     }
 
+    /// Latest event from one source for a project, fetched through the project index.
+    pub fn latest_project_event(&self, project_id: &str, source: &str) -> rusqlite::Result<Option<RaioEvent>> {
+        let row = self.conn.query_row(
+            "SELECT seq, json FROM events WHERE project_id = ?1 AND source = ?2 ORDER BY seq DESC LIMIT 1",
+            params![project_id, source], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        ).optional()?;
+        Ok(row.and_then(|(seq, json)| serde_json::from_str::<RaioEvent>(&json).ok().map(|mut event| { event.seq = seq; event })))
+    }
+
     pub fn count_events(&self) -> rusqlite::Result<i64> {
         self.conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
     }

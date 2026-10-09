@@ -354,6 +354,59 @@ pub struct CoreStatus {
     hook_binary: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IntegrationHooks { Current, Outdated, Missing, Unknown }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationStatus {
+    pub hooks: IntegrationHooks,
+    pub hook_binary: bool,
+    pub heartbeat_age_ms: Option<i64>,
+    pub inert_marker_at: Option<i64>,
+    pub last_hook_event_at: Option<i64>,
+    pub last_hook_session_id: Option<String>,
+    pub last_watcher_change_at: Option<i64>,
+}
+
+fn integration_status_for(core: &Core, id: &str, hook: Option<&Path>, now: SystemTime) -> Result<IntegrationStatus, String> {
+    let root = core.connected_root(id)?;
+    let hooks = if let Some(hook) = hook {
+        let command = connect::hook_command(hook, id, &root);
+        match fs::read_to_string(connect::settings_path(&root)) {
+            Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(settings) if settings.get("hooks").is_some() => match connect::hooks_state(&settings, &command) {
+                    connect::HooksState::Current => IntegrationHooks::Current,
+                    connect::HooksState::Outdated => IntegrationHooks::Outdated,
+                    connect::HooksState::Unknown if connect::has_raio_handlers(&settings) => IntegrationHooks::Unknown,
+                    connect::HooksState::Unknown => IntegrationHooks::Missing,
+                },
+                Ok(_) => IntegrationHooks::Missing,
+                Err(_) => IntegrationHooks::Unknown,
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => IntegrationHooks::Missing,
+            Err(_) => IntegrationHooks::Unknown,
+        }
+    } else { IntegrationHooks::Unknown };
+    let timestamp = |time: Option<SystemTime>| time.and_then(|t| t.duration_since(UNIX_EPOCH).ok().and_then(|d| i64::try_from(d.as_millis()).ok()));
+    let heartbeat_age_ms = fs::metadata(&core.dirs.heartbeat).and_then(|meta| meta.modified()).ok()
+        .and_then(|modified| now.duration_since(modified).ok()).and_then(|age| i64::try_from(age.as_millis()).ok());
+    let inert_marker_at = timestamp(inbox::inert_marker_at(&core.dirs));
+    let store = core.store.lock().map_err(|e| e.to_string())?;
+    let hook_event = store.latest_project_event(id, "claude-hook").map_err(|e| e.to_string())?;
+    let watcher_event = store.latest_project_event(id, "fs-watch").map_err(|e| e.to_string())?;
+    Ok(IntegrationStatus {
+        hooks,
+        hook_binary: hook.is_some_and(Path::is_file),
+        heartbeat_age_ms,
+        inert_marker_at,
+        last_hook_event_at: hook_event.as_ref().map(|event| event.observed_at),
+        last_hook_session_id: hook_event.and_then(|event| event.session_id),
+        last_watcher_change_at: watcher_event.map(|event| event.observed_at),
+    })
+}
+
 fn hook_binary() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let name = if cfg!(windows) { "raio-hook.exe" } else { "raio-hook" };
@@ -398,6 +451,11 @@ fn hooks_state_for(core: &Core, project_id: &str, hook: Option<&Path>) -> Result
 #[tauri::command(async)]
 pub fn project_hooks_state(core: State<'_, Core>, project_id: String) -> Result<connect::HooksState, String> {
     hooks_state_for(&core, &project_id, hook_binary().as_deref())
+}
+
+#[tauri::command(async)]
+pub fn integration_status(core: State<'_, Core>, project_id: String) -> Result<IntegrationStatus, String> {
+    integration_status_for(&core, &project_id, hook_binary().as_deref(), SystemTime::now())
 }
 
 #[tauri::command(async)]
@@ -539,6 +597,41 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open_at(dir.path()).unwrap();
         (dir, core)
+    }
+
+    #[test]
+    fn integration_status_separates_hook_and_watcher_times_and_reports_heartbeat() {
+        let (_data, core) = open();
+        let project_dir = tempfile::tempdir().unwrap();
+        let root = project_dir.path();
+        let project = Project { id: "p".into(), root: root.to_string_lossy().into_owned(), name: "demo".into(), connected_at: 1 };
+        core.store.lock().unwrap().upsert_project(&project).unwrap();
+        let hook = root.join("raio-hook.exe");
+        fs::write(&hook, b"test executable presence").unwrap();
+        let command = connect::hook_command(&hook, "p", root);
+        fs::create_dir_all(root.join(".claude")).unwrap();
+        fs::write(connect::settings_path(root), serde_json::to_vec(&connect::with_raio(serde_json::json!({}), &command).unwrap()).unwrap()).unwrap();
+        let mut hooked = event(1);
+        hooked.observed_at = 10;
+        core.store.lock().unwrap().insert(&hooked, 10).unwrap();
+        let mut watched = event(2);
+        watched.source = "fs-watch".into();
+        watched.provenance = "filesystem-observed".into();
+        watched.attribution = "unassigned".into();
+        watched.session_id = None;
+        watched.agent = "unknown".into();
+        watched.kind = "file.changed".into();
+        watched.observed_at = 20;
+        core.store.lock().unwrap().insert(&watched, 20).unwrap();
+        inbox::mark_inert_heartbeat(&core.dirs, SystemTime::now()).unwrap();
+
+        let status = integration_status_for(&core, "p", Some(&hook), SystemTime::now()).unwrap();
+        assert_eq!(status.hooks, IntegrationHooks::Current);
+        assert!(status.hook_binary);
+        assert!(status.heartbeat_age_ms.is_some());
+        assert!(status.inert_marker_at.is_some());
+        assert_eq!((status.last_hook_event_at, status.last_hook_session_id.as_deref()), (Some(10), Some("s")));
+        assert_eq!(status.last_watcher_change_at, Some(20));
     }
 
     #[test]

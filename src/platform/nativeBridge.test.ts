@@ -27,7 +27,7 @@ const event = (seq: number, kind: RaioEvent['kind'], extra: Partial<RaioEvent> =
   ...extra,
 });
 
-const fakeIpc = (projects: unknown[], events: RaioEvent[]) => {
+const fakeIpc = (projects: unknown[], events: RaioEvent[], integration?: unknown) => {
   let ingested: () => void = () => {};
   const calls: [string, unknown][] = [];
   const ipc: NativeIpc = {
@@ -35,6 +35,7 @@ const fakeIpc = (projects: unknown[], events: RaioEvent[]) => {
       calls.push([command, args]);
       if (command === 'list_projects') return Promise.resolve(projects as T);
       if (command === 'project_events') return Promise.resolve(events as T);
+      if (command === 'integration_status') return Promise.resolve(integration as T);
       return Promise.resolve(undefined as T);
     },
     onIngested: (l) => (ingested = l),
@@ -68,6 +69,16 @@ describe('native bridge', () => {
     expect(snapshot?.project).toBe('acme-mini');
     expect(snapshot?.evidence?.relationships).toBe('unknown');
     expect(fake.calls).toContainEqual(['project_events', { projectId: 'p1' }]);
+  });
+
+  it('loads per-project integration status during refresh and ignores malformed values', async () => {
+    const status = { hooks: 'outdated', hookBinary: true, heartbeatAgeMs: 12, inertMarkerAt: 1_700_000_000_000,
+      lastHookEventAt: 1_700_000_000_001, lastHookSessionId: 'session_1', lastWatcherChangeAt: 1_700_000_000_002 };
+    const fake = fakeIpc([project], [], status);
+    const bridge = createNativeBridge('expanded', fake.ipc);
+    await settle();
+    expect(bridge.integrationStatus()).toEqual(status);
+    expect(fake.calls).toContainEqual(['integration_status', { projectId: 'p1' }]);
   });
 
   it('refreshes when the core reports ingested events and notifies subscribers', async () => {

@@ -122,8 +122,14 @@ export const projectSessionDetailed = (
   const noticed = new Set<string>();
   const kindOfTool = new Map<string, ValidationKind>();
   let lastBoundary: RaioEvent | undefined;
+  const seenToolFacts = new Set<string>();
 
   for (const event of sessionEvents) {
+    if (event.evidence.toolUseId && ['file.edit.attempted', 'file.edit.reported', 'file.edit.failed', 'command.observed', 'command.result'].includes(event.kind)) {
+      const key = `${event.kind}:${event.evidence.toolUseId}`;
+      if (seenToolFacts.has(key)) continue;
+      seenToolFacts.add(key);
+    }
     if (event.kind === 'session.started' || event.kind === 'session.ended') {
       // Ignore an exact repeat delivery, not another occurrence at a later position in the event order.
       if (lastBoundary?.kind === event.kind && compareEvents(lastBoundary, event) === 0) continue;
@@ -156,26 +162,37 @@ export const projectSessionDetailed = (
         validations.push({ kind, status: 'running', recordedStatus: 'running', atMs: at });
         break;
       }
+      case 'file.edit.attempted':
+        for (const path of event.paths) log.push({ kind: 'file.attempt', atMs: at, path, nodeId: nodeOf(path) });
+        break;
+      case 'file.edit.failed':
+        for (const path of event.paths) log.push({ kind: 'file.failed', atMs: at, path, nodeId: nodeOf(path) });
+        break;
       case 'command.result': {
         const kind = (event.evidence.toolUseId ? kindOfTool.get(event.evidence.toolUseId) : undefined) ?? (event.evidence.commandClass ? VALIDATION_BY_CLASS[event.evidence.commandClass] : undefined);
-        if (!kind) break;
+        if (!kind) {
+          if (event.evidence.detail === 'did-not-start') log.push({ kind: 'command', atMs: at, ...(event.evidence.program ? { program: event.evidence.program } : {}), status: 'did-not-start', detail: 'did-not-start' });
+          else if (event.evidence.exitCode !== undefined && event.evidence.exitCode !== 0) log.push({ kind: 'command', atMs: at, ...(event.evidence.program ? { program: event.evidence.program } : {}), status: 'failed' });
+          break;
+        }
         // The result is logged with the status it had when it happened; what the project did afterwards is history.
         const recorded = statusFromExit(event.evidence.exitCode);
-        const detail = recorded === 'unknown' && event.evidence.detail !== undefined ? { detail: event.evidence.detail } : {};
+        const detail = recorded === 'unknown' && event.evidence.detail !== undefined
+          ? { detail: event.evidence.detail, ...(event.evidence.program ? { program: event.evidence.program } : {}) } : {};
         const changedAt = recorded === 'passed' || recorded === 'failed' ? firstChangeAfter(timeOf(event), changes, editMoments) : undefined;
         const changedSinceMs = changedAt === undefined ? undefined : Math.max(0, changedAt - startAt);
         log.push({ kind: 'validation', atMs: at, validation: kind, status: recorded, ...detail });
         if (changedSinceMs === undefined) {
-          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, ...detail });
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, ...detail, ...(event.evidence.program ? { program: event.evidence.program } : {}) });
         } else if (recorded === 'passed') {
           // A pass the project outlived gets a later `stale` entry at the change time (never past the session's last event).
           const staleAt = Math.min(changedSinceMs, lastAtMs);
           log.push({ kind: 'validation', atMs: staleAt, validation: kind, status: 'stale' });
-          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at });
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, ...(event.evidence.program ? { program: event.evidence.program } : {}) });
           validations.push({ kind, status: 'stale', recordedStatus: recorded, atMs: staleAt, staleSinceMs: changedSinceMs });
         } else {
           // A failure is never turned stale, hidden or greened by later edits: it stays failed and says the code changed.
-          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, codeChangedSinceMs: changedSinceMs });
+          validations.push({ kind, status: recorded, recordedStatus: recorded, atMs: at, codeChangedSinceMs: changedSinceMs, ...(event.evidence.program ? { program: event.evidence.program } : {}) });
         }
         break;
       }

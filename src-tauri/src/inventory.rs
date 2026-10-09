@@ -66,6 +66,9 @@ pub struct Inventory {
     pub files: Vec<String>,
     pub truncated: bool,
     pub skipped: usize,
+    pub skipped_cloud_only: usize,
+    pub skipped_unreadable: usize,
+    pub skipped_too_large: usize,
     pub scanned_at_ms: i64,
     pub manifests: Vec<Manifest>,
 }
@@ -681,7 +684,11 @@ struct Walk<'a> {
     files: Vec<String>,
     manifests: Vec<Manifest>,
     skipped: usize,
+    skipped_cloud_only: usize,
+    skipped_unreadable: usize,
+    skipped_too_large: usize,
     truncated: bool,
+    manifest_truncated: bool,
     /// The `.gitignore` rules of the directories above the one being listed, from the root down. Carried down
     /// the walk, so judging an entry costs no filesystem access of its own.
     rules: Vec<Gitignore>,
@@ -689,7 +696,7 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn dir(&mut self, abs: &Path, rel: &str, depth: usize) {
-        let entries = list_entries(abs, &mut self.skipped, |_, _| true);
+        let entries = list_entries(abs, &mut self.skipped, &mut self.skipped_unreadable, |_, _| true);
         let inherited = self.rules.len();
         // The listing says whether this folder has a `.gitignore`: it is read once, here.
         if entries.iter().any(|e| e.name == ".gitignore" && e.kind.is_file())
@@ -711,13 +718,15 @@ impl Walk<'_> {
     }
 
     fn visit(&mut self, abs: &Path, rel: &str, depth: usize, entry: Entry) {
-        let Entry { name, kind, attributes, len } = entry;
+        let Entry { name, kind, attributes, len, metadata_readable } = entry;
         if kind.is_symlink() || !(kind.is_dir() || kind.is_file()) {
             return;
         }
+        if !metadata_readable { self.skipped += 1; return; }
         // An online-only OneDrive placeholder would be downloaded by reading it (or listing the folder).
         if is_cloud_placeholder(attributes) {
             self.skipped += 1;
+            self.skipped_cloud_only += 1;
             return;
         }
         // Same verdict as `Filter::ignored`, whose folder checks already held for every ancestor of this entry.
@@ -747,6 +756,7 @@ impl Walk<'_> {
         let Some(kind) = manifest_kind(name) else { return };
         if self.manifests.len() >= self.limits.max_manifests {
             self.skipped += 1;
+            self.manifest_truncated = true;
             return;
         }
         let facts = self.read_facts(abs, kind, len);
@@ -758,11 +768,20 @@ impl Walk<'_> {
     fn read_facts(&mut self, abs: &Path, kind: Kind, len: u64) -> Facts {
         let cap = self.limits.max_manifest_bytes;
         if len > cap {
+            self.skipped += 1;
+            self.skipped_too_large += 1;
             return Facts::new();
         }
         let mut bytes = Vec::new();
         let read = fs::File::open(abs).and_then(|f| f.take(cap + 1).read_to_end(&mut bytes));
-        if read.is_err() || bytes.len() as u64 > cap {
+        if read.is_err() {
+            self.skipped += 1;
+            self.skipped_unreadable += 1;
+            return Facts::new();
+        }
+        if bytes.len() as u64 > cap {
+            self.skipped += 1;
+            self.skipped_too_large += 1;
             return Facts::new();
         }
         facts_of(kind, &String::from_utf8_lossy(&bytes), self.deadline).unwrap_or_else(|| {
@@ -778,12 +797,12 @@ pub fn scan(root: &Path, limits: &Limits) -> Result<Inventory, String> {
     if !root.is_dir() {
         return Err("project folder not found".into());
     }
-    let mut walk = Walk { limits, filter: Filter::new(root), deadline: Instant::now() + limits.budget, files: Vec::new(), manifests: Vec::new(), skipped: 0, truncated: false, rules: Vec::new() };
+    let mut walk = Walk { limits, filter: Filter::new(root), deadline: Instant::now() + limits.budget, files: Vec::new(), manifests: Vec::new(), skipped: 0, skipped_cloud_only: 0, skipped_unreadable: 0, skipped_too_large: 0, truncated: false, manifest_truncated: false, rules: Vec::new() };
     walk.dir(root, "", 0);
     walk.files.sort();
     walk.manifests.sort_by(|a, b| a.path.cmp(&b.path));
     let scanned_at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
-    Ok(Inventory { files: walk.files, truncated: walk.truncated, skipped: walk.skipped, scanned_at_ms, manifests: walk.manifests })
+    Ok(Inventory { files: walk.files, truncated: walk.truncated || walk.manifest_truncated, skipped: walk.skipped, skipped_cloud_only: walk.skipped_cloud_only, skipped_unreadable: walk.skipped_unreadable, skipped_too_large: walk.skipped_too_large, scanned_at_ms, manifests: walk.manifests })
 }
 
 /// The renderer's entry point. Async with the walk on the blocking pool: it never runs on the UI thread.
@@ -1175,7 +1194,7 @@ anyhow = "1"
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "requirements.txt", &"requests\n".repeat(5_000));
         let limits = Limits::default();
-        let mut walk = Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() - Duration::from_secs(1), files: vec![], manifests: vec![], skipped: 0, truncated: false, rules: vec![] };
+        let mut walk = Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() - Duration::from_secs(1), files: vec![], manifests: vec![], skipped: 0, skipped_cloud_only: 0, skipped_unreadable: 0, skipped_too_large: 0, truncated: false, manifest_truncated: false, rules: vec![] };
         walk.file(&dir.path().join("requirements.txt"), "requirements.txt".into(), "requirements.txt", 45_000);
         assert!(walk.truncated);
         assert_eq!(walk.files, ["requirements.txt"]);
@@ -1337,10 +1356,35 @@ anyhow = "1"
             k.sort();
             k
         };
-        assert_eq!(keys(&json), ["files", "manifests", "scannedAtMs", "skipped", "truncated"]);
+        assert_eq!(keys(&json), ["files", "manifests", "scannedAtMs", "skipped", "skippedCloudOnly", "skippedTooLarge", "skippedUnreadable", "truncated"]);
         assert_eq!(keys(&json["manifests"][0]), ["facts", "kind", "path"]);
         assert!(json["files"][0].is_string());
         assert_eq!(json["manifests"][0]["kind"], "npm");
+    }
+
+    #[test]
+    fn output_includes_additive_partial_listing_reason_counts() {
+        let dir = project();
+        let json = serde_json::to_value(scan(dir.path(), &unhurried()).unwrap()).unwrap();
+        assert_eq!(json["skippedCloudOnly"], 0);
+        assert_eq!(json["skippedUnreadable"], 0);
+        assert_eq!(json["skippedTooLarge"], 0);
+    }
+
+    #[test]
+    fn synthetic_inventory_entries_split_cloud_unreadable_and_too_large_reasons() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("online.ts"), "placeholder").unwrap();
+        let kind = fs::symlink_metadata(dir.path().join("online.ts")).unwrap().file_type();
+        let limits = unhurried();
+        let mut walk = Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: far(), files: vec![], manifests: vec![], skipped: 0,
+            skipped_cloud_only: 0, skipped_unreadable: 0, skipped_too_large: 0, truncated: false, manifest_truncated: false, rules: vec![] };
+        walk.visit(dir.path(), "", 0, Entry { name: "online.ts".into(), kind, attributes: 0x0040_0000, len: 10, metadata_readable: true });
+        walk.dir(&dir.path().join("unreadable"), "unreadable", 1);
+        let cap = limits.max_manifest_bytes;
+        walk.file(&dir.path().join("package.json"), "package.json".into(), "package.json", cap + 1);
+        assert_eq!((walk.skipped, walk.skipped_cloud_only, walk.skipped_unreadable, walk.skipped_too_large), (3, 1, 1, 1));
+        assert!(!walk.files.contains(&"online.ts".to_string()), "cloud placeholder must not be listed or hydrated");
     }
 
     #[test]
@@ -1369,6 +1413,7 @@ anyhow = "1"
         assert_eq!(paths, ["p0/package.json", "p1/package.json", "p2/package.json"]);
         assert_eq!(inv.skipped, 2);
         assert_eq!(inv.files.len(), 5, "the files are still listed");
+        assert!(inv.truncated, "reaching the manifest cap marks the partial listing");
     }
 
     #[test]
@@ -1379,7 +1424,7 @@ anyhow = "1"
         }
         let limits = Limits { max_files: 5, ..unhurried() };
         let mut walk = Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() - Duration::from_secs(1),
-            files: vec![], manifests: vec![], skipped: 0, truncated: false, rules: vec![] };
+            files: vec![], manifests: vec![], skipped: 0, skipped_cloud_only: 0, skipped_unreadable: 0, skipped_too_large: 0, truncated: false, manifest_truncated: false, rules: vec![] };
         walk.dir(dir.path(), "", 0);
         assert!(walk.files.is_empty());
         assert!(walk.truncated);

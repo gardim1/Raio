@@ -1,4 +1,5 @@
 import { RISK_LABEL, type SessionLog } from '../session/model/events';
+import { unknownResultText } from '../session/model/unknownResultText';
 import { formatClockTime } from './sessionMeta';
 import type { CompanionPresence, PresenceFact } from './companionPresence';
 
@@ -15,9 +16,13 @@ export const islandCaption = (companion: CompanionPresence, area?: string | null
 export const islandActivity = (log: SessionLog | null, timeZone?: string): string => {
   const event = log?.events.at(-1);
   if (!event) return 'No activity observed';
-  const label = event.kind === 'file.read' ? `Read ${event.path}`
+const label = event.kind === 'file.read' ? `Read ${event.path}`
     : event.kind === 'file.write' ? `File activity · ${event.path}`
-      : event.kind === 'validation' ? `${event.validation === 'tests' ? 'Tests' : 'Build'} ${event.status}`
+      : event.kind === 'file.attempt' ? `Edit attempted · ${event.path}`
+        : event.kind === 'file.failed' ? `Edit failed · ${event.path}`
+          : event.kind === 'command' ? event.status === 'did-not-start' ? `Could not start ${event.program || 'the command'} — check did not run` : 'Command failed'
+      : event.kind === 'validation' && event.status === 'unknown' && event.detail === 'did-not-start' ? unknownResultText(event.detail, event.program)
+        : event.kind === 'validation' ? `${event.validation === 'tests' ? 'Tests' : 'Build'} ${event.status}`
         : event.kind === 'risk' ? RISK_LABEL[event.risk]
           : event.kind === 'session.end' ? 'Turn ended' : 'Session started';
   const started = Date.parse(log!.startedAt);
@@ -38,14 +43,17 @@ export const islandObservedActivity = (facts: readonly PresenceFact[], now: numb
   const latest = facts.reduce<PresenceFact | null>((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at >= last.at) ? fact : last, null);
   if (!latest) return 'No activity observed';
   // Ordinary commands are activity; the distinct turn boundary never establishes a check result.
+  const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
+  if (latest.source.startsWith('Filesystem observation')) return `File changed — source unknown${at ? ` · ${at}` : ''}`;
   const label = latest.kind === 'activity' ? 'Activity observed'
+    : latest.kind === 'edit-attempted' ? `Edit attempted${latest.paths?.[0] ? ` · ${latest.paths[0]}` : ''}`
+    : latest.kind === 'command-not-started' ? `Could not start ${latest.program || 'the command'} — check did not run`
     : latest.kind === 'turn-end' ? 'Turn ended'
     : latest.kind === 'change' ? 'File change observed'
-      : latest.kind === 'edit-failed' ? 'Edit failed'
-        : latest.kind === 'start' ? 'Session started'
-          : latest.kind === 'end' ? 'Session ended'
-            : `${latest.checkClass === 'tests' ? 'Tests' : latest.checkClass === 'build' ? 'Build' : 'Command'} ${latest.result ?? 'unknown'} (recorded)`;
-  const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
+    : latest.kind === 'edit-failed' ? `Edit failed${latest.paths?.[0] ? ` · ${latest.paths[0]}` : ''}`
+    : latest.kind === 'start' ? 'Session started'
+    : latest.kind === 'end' ? 'Session ended'
+    : `${latest.checkClass === 'tests' ? 'Tests' : latest.checkClass === 'build' ? 'Build' : 'Command'} ${latest.result ?? 'unknown'} (recorded)`;
   return `${label}${at ? ` · ${at}` : ''} · ${latest.source}`;
 };
 
@@ -56,6 +64,7 @@ export const islandPreviewActivity = (companion: CompanionPresence, facts: reado
   const latest = facts.reduce<PresenceFact | null>((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at >= last.at) ? fact : last, null);
   if (latest) {
     const at = formatClockTime(new Date(latest.at).toISOString(), timeZone);
+    if (latest.source.startsWith('Filesystem observation')) return `File changed — source unknown${at ? ` · ${at}` : ''}`;
     const observed = islandObservedActivity([latest], now, timeZone);
     const label = observed.slice(0, observed.length - ` · ${latest.source}`.length).replace(/ · \d{2}:\d{2}$/, '');
     return `Last activity${at ? ` · ${at}` : ''} · ${label} · ${latest.source}`;

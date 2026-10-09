@@ -95,6 +95,7 @@ export interface ValidationCue {
   readonly at: number;
   /** Contract detail explaining an unknown result; only known values are displayed. */
   readonly detail?: string;
+  readonly program?: string;
 }
 
 export interface StatusCue {
