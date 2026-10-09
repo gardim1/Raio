@@ -116,7 +116,7 @@ describe('projectSession: whole-project inventory', () => {
     const { insights } = run(SESSION, { ...INVENTORY, truncated: true, skipped: 3 }, scanOf({ 'src/api/users.ts': ['../auth/login'], 'src/auth/login.ts': [] }));
     expect(insights.note).toContain('Areas are a heuristic guess from folders and manifests, not verified dependencies. Relationships: static imports between areas (heuristic).');
     expect(insights.note).toContain('The project listing was partial, so some areas may be missing.');
-    expect(insights.note).toContain('3 files or folders not listed (large, unreadable or online-only).');
+    expect(insights.note).toContain('3 files or folders not listed; the reason was not recorded by this core.');
   });
 
   it('keeps node positions stable across sessions of the same project', () => {

@@ -26,8 +26,11 @@ const activityKey = (event: AgentEvent): string => {
     case 'session.end': return JSON.stringify([event.kind, event.atMs, event.outcome]);
     case 'file.read': return JSON.stringify([event.kind, event.atMs, event.path]);
     case 'file.write': return JSON.stringify([event.kind, event.atMs, event.path, event.change]);
+    case 'file.attempt':
+    case 'file.failed': return JSON.stringify([event.kind, event.atMs, event.path]);
+    case 'command': return JSON.stringify([event.kind, event.atMs, event.program ?? null, event.status, event.detail ?? null]);
     case 'risk': return JSON.stringify([event.kind, event.atMs, event.risk, event.detail]);
-    case 'validation': return JSON.stringify([event.kind, event.atMs, event.validation, event.status, event.detail ?? null]);
+    case 'validation': return JSON.stringify([event.kind, event.atMs, event.validation, event.status, event.detail ?? null, event.program ?? null]);
   }
 };
 

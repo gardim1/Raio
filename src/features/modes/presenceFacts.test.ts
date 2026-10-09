@@ -42,10 +42,25 @@ describe('presence at the recorded-event boundary', () => {
     expect(facts[1]?.sessionId).toBeUndefined();
     expect(facts[1]?.source).toContain('Filesystem');
   });
+  it('distinguishes a command that did not start from a failed test result', () => {
+    const facts = factsFromEvents([event(1, 'command.result', { evidence: { commandClass: 'test', program: 'python', detail: 'did-not-start' } })], 'p');
+    expect(facts[0]).toMatchObject({ kind: 'command-not-started', checkClass: 'tests', program: 'python' });
+    const presence = deriveCompanionPresence({ connected: true, available: true, facts }, 10_000, 'UTC');
+    expect(presence.label).toContain('Could not start python — check did not run');
+    expect(presence.label).not.toContain('Tests failed');
+  });
   it('uses normalized fixture/older-adapter log facts with absolute recorded time', () => {
     const facts = factsFromLog({ id: 's', agent: 'claude', project: 'p', task: 'Fixture', startedAt: '2026-10-07T14:02:00Z', events: [{ kind: 'session.start', atMs: 0 }, { kind: 'file.write', atMs: 1000, path: 'db/migrations/001.sql', nodeId: 'db', change: 'added' }, { kind: 'validation', atMs: 2000, validation: 'tests', status: 'failed' }] });
     expect(facts.map((fact) => fact.kind)).toEqual(['start', 'change', 'check']);
     expect(facts[2]?.at).toBe(Date.parse('2026-10-07T14:02:02Z'));
     expect(facts[2]?.result).toBe('failed');
+  });
+  it('converts replay facts for failed edits and did-not-start commands without losing their labels', () => {
+    const facts = factsFromLog({ id: 's', agent: 'claude', project: 'p', task: 'Fixture', startedAt: '2026-10-07T14:02:00Z', events: [
+      { kind: 'file.failed', atMs: 1000, path: 'src/a.ts', nodeId: 'src' },
+      { kind: 'command', atMs: 2000, program: 'python', status: 'did-not-start', detail: 'did-not-start' },
+    ] });
+    expect(facts.map((fact) => fact.kind)).toEqual(['edit-failed', 'command-not-started']);
+    expect(facts[1]?.program).toBe('python');
   });
 });

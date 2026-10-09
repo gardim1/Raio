@@ -25,6 +25,10 @@ export interface ProjectInventory {
   readonly truncated: boolean;
   /** Files or folders not listed: unreadable, symlinks, or online-only cloud placeholders. */
   readonly skipped: number;
+  /** Additive detail from newer cores; absent on older cores. */
+  readonly skippedCloudOnly?: number;
+  readonly skippedUnreadable?: number;
+  readonly skippedTooLarge?: number;
   readonly scannedAtMs: number;
   readonly manifests: readonly InventoryManifest[];
 }
@@ -54,6 +58,9 @@ export const isProjectInventory = (value: unknown): value is ProjectInventory =>
   value.files.every(isRelativePath) &&
   typeof value.truncated === 'boolean' &&
   isCount(value.skipped) &&
+  (value.skippedCloudOnly === undefined || isCount(value.skippedCloudOnly)) &&
+  (value.skippedUnreadable === undefined || isCount(value.skippedUnreadable)) &&
+  (value.skippedTooLarge === undefined || isCount(value.skippedTooLarge)) &&
   typeof value.scannedAtMs === 'number' &&
   Array.isArray(value.manifests) &&
   value.manifests.every(isManifest);

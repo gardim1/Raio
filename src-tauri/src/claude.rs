@@ -383,6 +383,7 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
             let background = syntax_background || input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
             let interrupted = payload.get("tool_response").and_then(|r| r.get("interrupted")).and_then(Value::as_bool).unwrap_or(false)
                 || payload.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false);
+            let reported_exit_code = text(payload, "error").and_then(exit_code_from_error);
             // The tool's success/failure only reflects the check itself for a single, foreground, completed command.
             let result_reflects_command = !compound && !background && !interrupted && simple_command_allowed(command, powershell);
             evidence.detail = match (compound, background, interrupted) {
@@ -401,11 +402,14 @@ pub fn normalize(payload: &Value, ctx: &Context) -> Option<RaioEvent> {
                     evidence.exit_code = Some(0);
                     evidence.exit_code_source = Some("tool-success".into());
                 } else if event == "PostToolUseFailure"
-                    && let Some(code) = text(payload, "error").and_then(exit_code_from_error) {
+                    && let Some(code) = reported_exit_code {
                     evidence.exit_code = Some(code);
                     evidence.exit_code_source = Some("failure-message".into());
                 }
-                if evidence.exit_code.is_none() && evidence.detail.is_none() {
+                if event == "PostToolUseFailure" && reported_exit_code.is_none() && !interrupted {
+                    // A failed tool start has no shell exit status; discard Claude's error text entirely.
+                    evidence.detail = Some("did-not-start".into());
+                } else if evidence.exit_code.is_none() && evidence.detail.is_none() {
                     // Unsupported syntax or a failure without a parseable code establishes no numeric result.
                     evidence.detail = Some("result not established".into());
                 }
@@ -534,6 +538,19 @@ mod tests {
         assert_eq!((success.evidence.exit_code, success.evidence.exit_code_source.as_deref()), (Some(0), Some("tool-success")));
         let observed = normalize(&fixture("12-PreToolUse-Bash.json"), &ctx()).unwrap();
         assert_eq!(observed.evidence.exit_code, None);
+    }
+
+    #[test]
+    fn command_failure_without_exit_line_is_sanitised_as_did_not_start() {
+        let mut payload = fixture("13-PostToolUseFailure-Bash.json");
+        payload["error"] = serde_json::json!("ENOENT private path C:/Users/secret/OneDrive/Python.exe");
+        let event = normalize(&payload, &ctx()).unwrap();
+        assert_eq!(event.kind, "command.result");
+        assert_eq!(event.evidence.exit_code, None);
+        assert_eq!(event.evidence.detail.as_deref(), Some("did-not-start"));
+        let stored = serde_json::to_string(&event).unwrap();
+        assert!(!stored.contains("ENOENT"));
+        assert!(!stored.contains("OneDrive"));
     }
 
     #[test]

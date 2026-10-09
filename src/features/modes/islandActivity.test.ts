@@ -14,6 +14,10 @@ it('turn end is separate from check results, and unknown results stay unknown', 
   expect(islandActivity({ ...log, events: [{ kind: 'validation', atMs: 0, validation: 'tests', status: 'unknown' }] }, 'UTC')).toBe('Tests unknown · 12:00');
   expect(islandActivity({ ...log, events: [{ kind: 'validation', atMs: 0, validation: 'tests', status: 'failed' }, { kind: 'session.end', atMs: 60_000, outcome: 'completed' }] }, 'UTC')).toBe('Turn ended · 12:01');
 });
+it('shows edit failures with their path and failed starts without claiming a test failure', () => {
+  expect(islandActivity({ ...log, events: [{ kind: 'file.failed', atMs: 1000, path: 'src/a.ts', nodeId: 'src' }] }, 'UTC')).toBe('Edit failed · src/a.ts · 12:00');
+  expect(islandActivity({ ...log, events: [{ kind: 'validation', atMs: 1000, validation: 'tests', status: 'unknown', detail: 'did-not-start', program: 'python' }] }, 'UTC')).toBe('Could not start python — check did not run · 12:00');
+});
 it('pre-session activity shows the latest recorded source and time, excluding future facts', () => {
   expect(islandPresenceActivity([
     { id: 'b', kind: 'change', at: 65_000, source: 'Fixture watcher' },
@@ -23,13 +27,17 @@ it('pre-session activity shows the latest recorded source and time, excluding fu
   expect(islandPresenceActivity([], 0)).toBe('Activity details unavailable');
 });
 it.each([
-  [{ kind: 'edit-failed', paths: ['src/a.ts'] }, 'Edit failed · 14:04 · Claude hook'],
-  [{ kind: 'change', source: 'Filesystem observation · author unknown' }, 'File change observed · 14:04 · Filesystem observation · author unknown'],
+  [{ kind: 'edit-failed', paths: ['src/a.ts'] }, 'Edit failed · src/a.ts · 14:04 · Claude hook'],
+  [{ kind: 'command-not-started', program: 'python' }, 'Could not start python — check did not run · 14:04 · Claude hook'],
   [{ kind: 'check', checkClass: 'tests', result: 'unknown' }, 'Tests unknown (recorded) · 14:04 · Claude hook'],
   [{ kind: 'check', checkClass: 'other', result: 'passed' }, 'Command passed (recorded) · 14:04 · Claude hook'],
 ] as const)('latest fact preserves its kind/result and evidence source: %j', (detail, expected) => {
   const fact: PresenceFact = { id: 'latest', at: Date.parse('2026-10-08T14:04:00Z'), source: 'Claude hook', ...detail };
   expect(islandObservedActivity([fact, { id: 'earlier', kind: 'activity', at: fact.at - 1000, source: 'Earlier hook' }, { id: 'future', kind: 'check', result: 'passed', at: fact.at + 1000, source: 'Future hook' }], fact.at, 'UTC')).toBe(expected);
+});
+it('reports watcher-only changes as source unknown without the generic Last activity claim', () => {
+  const fact: PresenceFact = { id: 'watcher', kind: 'change', at: Date.parse('2026-10-08T14:04:00Z'), source: 'Filesystem observation · author unknown', paths: ['src/a.ts'] };
+  expect(islandObservedActivity([fact], fact.at, 'UTC')).toBe('File changed — source unknown · 14:04');
 });
 it('no available presence facts never falls back to claiming newer activity or check success', () => {
   expect(islandObservedActivity([], 0, 'UTC')).toBe('No activity observed');

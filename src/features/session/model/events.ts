@@ -16,7 +16,10 @@ export type AgentEvent =
       readonly change: 'added' | 'modified' | 'deleted';
     }
   | { readonly kind: 'risk'; readonly atMs: number; readonly nodeId: NodeId; readonly risk: RiskKind; readonly detail: string }
-  | { readonly kind: 'validation'; readonly atMs: number; readonly validation: ValidationKind; readonly status: ValidationStatus; readonly detail?: string }
+  | { readonly kind: 'validation'; readonly atMs: number; readonly validation: ValidationKind; readonly status: ValidationStatus; readonly detail?: string; readonly program?: string }
+  | { readonly kind: 'file.attempt'; readonly atMs: number; readonly path: string; readonly nodeId: NodeId }
+  | { readonly kind: 'file.failed'; readonly atMs: number; readonly path: string; readonly nodeId: NodeId }
+  | { readonly kind: 'command'; readonly atMs: number; readonly program?: string; readonly status: 'failed' | 'did-not-start'; readonly detail?: string }
   | { readonly kind: 'session.end'; readonly atMs: number; readonly outcome: 'completed' | 'failed' | 'interrupted' };
 
 export interface SessionLog {

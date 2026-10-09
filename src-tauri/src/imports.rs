@@ -430,31 +430,43 @@ pub(crate) struct Entry {
     pub(crate) kind: fs::FileType,
     pub(crate) attributes: u32,
     pub(crate) len: u64,
+    pub(crate) metadata_readable: bool,
 }
 
 /// Entries of `abs`, sorted by name. What cannot be listed or named is counted in `skipped`, never silently
 /// lost; a name that is not valid Unicode cannot be reported and is counted when `counted(is_dir, lossy_name)`.
 /// Shared by the import scan and the project inventory so both walk the same way.
-pub(crate) fn list_entries(abs: &Path, skipped: &mut usize, counted: impl Fn(bool, &str) -> bool) -> Vec<Entry> {
+pub(crate) fn list_entries(abs: &Path, skipped: &mut usize, unreadable: &mut usize, counted: impl Fn(bool, &str) -> bool) -> Vec<Entry> {
     let Ok(read) = fs::read_dir(abs) else {
         *skipped += 1;
+        *unreadable += 1;
         return vec![];
     };
     let mut entries = Vec::new();
     for entry in read {
         let Ok(entry) = entry else {
             *skipped += 1;
+            *unreadable += 1;
             continue;
         };
         let Ok(kind) = entry.file_type() else {
             *skipped += 1;
+            *unreadable += 1;
             continue;
         };
         let meta = entry.metadata().ok();
         let (attributes, len) = meta.as_ref().map_or((0, u64::MAX), |m| (attributes_of(m), m.len()));
         match entry.file_name().into_string() {
-            Ok(name) => entries.push(Entry { name, kind, attributes, len }),
-            Err(raw) => *skipped += usize::from(counted(kind.is_dir(), &raw.to_string_lossy())),
+            Ok(name) => {
+                let metadata_readable = meta.is_some();
+                if !metadata_readable && counted(kind.is_dir(), &name) { *unreadable += 1; }
+                entries.push(Entry { name, kind, attributes, len, metadata_readable });
+            }
+            Err(raw) => {
+                let count = usize::from(counted(kind.is_dir(), &raw.to_string_lossy()));
+                *skipped += count;
+                *unreadable += count;
+            }
         }
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -463,7 +475,8 @@ pub(crate) fn list_entries(abs: &Path, skipped: &mut usize, counted: impl Fn(boo
 
 impl Walk<'_> {
     fn entries(&mut self, abs: &Path) -> Vec<Entry> {
-        list_entries(abs, &mut self.skipped, |is_dir, name| is_dir || is_scannable(name))
+        let mut unreadable = 0;
+        list_entries(abs, &mut self.skipped, &mut unreadable, |is_dir, name| is_dir || is_scannable(name))
     }
 
     fn dir(&mut self, abs: &Path, rel: &str, depth: usize) {
@@ -480,10 +493,11 @@ impl Walk<'_> {
     }
 
     fn visit(&mut self, abs: &Path, rel: &str, depth: usize, entry: Entry) {
-        let Entry { name, kind, attributes, len } = entry;
+        let Entry { name, kind, attributes, len, metadata_readable } = entry;
         if kind.is_symlink() {
             return;
         }
+        if !metadata_readable { self.skipped += 1; return; }
         let is_dir = kind.is_dir();
         if !is_dir && !(kind.is_file() && is_scannable(&name)) {
             return; // cheap check first: most files are not source files
@@ -922,7 +936,7 @@ import b from './b';")), strs(&["./b"]));
         let kind = fs::metadata(dir.path().join("ignored.ts")).unwrap().file_type();
         let limits = Limits::default();
         let walk = || Walk { limits: &limits, filter: Filter::new(dir.path()), deadline: Instant::now() + Duration::from_secs(60), files: vec![], skipped: 0, truncated: false };
-        let entry = |attributes| Entry { name: "ignored.ts".into(), kind, attributes, len: 10 };
+        let entry = |attributes| Entry { name: "ignored.ts".into(), kind, attributes, len: 10, metadata_readable: true };
 
         let mut placeholder = walk();
         placeholder.visit(dir.path(), "", 0, entry(0x0040_0000));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OUTSIDE_PROJECT } from '../ingest/raioEvent';
 import { MAX_GROUPS, OTHER_GROUP } from './classifyPath';
-import { groupInventory } from './inventoryGroups';
+import { groupInventory, inventoryNotes } from './inventoryGroups';
 import type { InventoryManifest, ProjectInventory } from './projectInventory';
 
 const inventory = (files: readonly string[], manifests: readonly InventoryManifest[] = [], extra: Partial<ProjectInventory> = {}): ProjectInventory => ({
@@ -13,6 +13,14 @@ const inventory = (files: readonly string[], manifests: readonly InventoryManife
   ...extra,
 });
 const npm = (path: string, facts: Record<string, string[]>): InventoryManifest => ({ path, kind: 'npm', facts });
+
+describe('inventoryNotes: partial listing reasons', () => {
+  it('labels only evidence-backed skip categories and omits zeros', () => {
+    const notes = inventoryNotes(inventory([], [], { skipped: 37, skippedCloudOnly: 30, skippedUnreadable: 7, skippedTooLarge: 0 }));
+    expect(notes).toEqual(['37 items not listed: 30 online-only (cloud placeholders), 7 unreadable.']);
+    expect(inventoryNotes(inventory([], [], { skipped: 4 }))[0]).toContain('reason was not recorded');
+  });
+});
 
 /** id -> [label, kind, hint] of the groups on the map (Other included), independent of ranking order. */
 const shape = (inv: ProjectInventory, touched: readonly string[] = []) =>

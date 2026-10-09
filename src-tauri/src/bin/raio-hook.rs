@@ -58,14 +58,20 @@ fn run(dirs: &inbox::Dirs, guard: &Guard) {
         return;
     }
     let (Some(project_id), Some(root)) = (arg(&args, "--project"), arg(&args, "--root")) else { return };
-    // From here on, losing the event is a drop that must leave a marker: even a heartbeat check that hangs on a
-    // stuck filesystem is covered. Only argument parsing, above, is not.
-    guard.arm();
-    stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
-    if !inbox::heartbeat_fresh(dirs, SystemTime::now()) {
+    let heartbeat_fresh = inbox::heartbeat_fresh(dirs, SystemTime::now());
+    if !heartbeat_fresh {
+        stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
+        let root = PathBuf::from(root);
+        if raio_lib::event::project_id(&root) == project_id {
+            let _ = inbox::mark_inert_heartbeat(dirs, SystemTime::now());
+        }
         guard.finish(); // Raio has not run recently: stay inert instead of filling the inbox; nothing was lost
         return;
     }
+    // Only a fresh heartbeat means a Claude event is awaited. A stale-check stall remains inert and cannot be
+    // mistaken by the deadline watchdog for an event that Raio lost.
+    guard.arm();
+    stall("RAIO_HOOK_STALL_HEARTBEAT_MS");
 
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {

@@ -35,7 +35,8 @@ describe('factual sidebar states', () => {
   it('retains every partial/stale warning for a mapped folder', () => {
     const result = state(map(['package.json'], { truncated: true, skipped: 2, stale: true }));
     expect(result.heading).toBe('Waiting for activity');
-    expect(result.warnings).toHaveLength(3);
+    expect(result.warnings).toHaveLength(4);
+    expect(result.warnings).toContain('2 files or folders not listed; the reason was not recorded by this core.');
   });
   it.each([undefined, 'Access denied by the filesystem'])('unavailable reports only a supplied reason: %s', reason => {
     const result = state(projectMap({ id: 'qa', name }, null, null, { provenance: 'fixture', unavailableReason: reason }));

@@ -88,6 +88,7 @@ pub fn run() {
             core::list_projects,
             core::project_events,
             core::project_hooks_state,
+            core::integration_status,
             core::claude_usage,
             core::preview_connect,
             core::preview_project_map,

@@ -3,8 +3,12 @@
 //! marks Raio's handlers (`--raio-managed`) and removes only those on disconnect.
 
 use std::fs;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -72,6 +76,10 @@ fn managed_handlers(settings: &Value) -> Vec<(String, Option<Value>, Value)> {
         }
     }
     handlers
+}
+
+pub fn has_raio_handlers(settings: &Value) -> bool {
+    !managed_handlers(settings).is_empty()
 }
 
 pub fn read_hooks_state(root: &Path, command: &str) -> HooksState {
@@ -224,14 +232,70 @@ fn read_settings(path: &Path) -> Result<(Option<String>, Value), String> {
     }
 }
 
-fn git_ignored(root: &Path, file: &Path) -> Option<bool> {
-    let out = Command::new("git").arg("-C").arg(root).arg("check-ignore").arg("-q").arg(file).output().ok()?;
-    match out.status.code() {
-        Some(0) => Some(true),
-        Some(1) => Some(false),
-        _ => None, // not a git repository, or git unavailable
+const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const GIT_PREVIEW_CACHE_TTL: Duration = Duration::from_secs(30);
+type GitIgnoreCacheKey = (PathBuf, PathBuf);
+type GitIgnoreCacheValue = (Instant, Option<bool>);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[derive(Default)]
+struct GitIgnoreCache {
+    values: Mutex<HashMap<GitIgnoreCacheKey, GitIgnoreCacheValue>>,
+}
+
+impl GitIgnoreCache {
+    fn get_or_probe(&self, root: &Path, file: &Path, now: Instant, probe: impl FnOnce() -> Option<bool>) -> Option<bool> {
+        let key = (root.to_path_buf(), file.to_path_buf());
+        if let Ok(mut values) = self.values.lock() {
+            values.retain(|_, (at, _)| now.saturating_duration_since(*at) <= GIT_PREVIEW_CACHE_TTL);
+            if let Some((_, result)) = values.get(&key) { return *result; }
+            let result = probe();
+            if values.len() >= 128 { values.clear(); }
+            values.insert(key, (now, result));
+            result
+        } else {
+            probe()
+        }
     }
 }
+
+static GIT_IGNORE_CACHE: OnceLock<GitIgnoreCache> = OnceLock::new();
+
+fn git_ignore_command(root: &Path, file: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).arg("check-ignore").arg("-q").arg(file)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(git_command_creation_flags());
+    }
+    command
+}
+
+fn wait_git(mut child: Child, deadline: Instant) -> Option<bool> {
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => return match status.code() { Some(0) => Some(true), Some(1) => Some(false), _ => None },
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            None => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+}
+
+fn git_ignored_uncached(root: &Path, file: &Path) -> Option<bool> {
+    let child = git_ignore_command(root, file).spawn().ok()?;
+    wait_git(child, Instant::now() + GIT_PROBE_TIMEOUT)
+}
+
+fn git_ignored(root: &Path, file: &Path) -> Option<bool> {
+    GIT_IGNORE_CACHE.get_or_init(GitIgnoreCache::default)
+        .get_or_probe(root, file, Instant::now(), || git_ignored_uncached(root, file))
+}
+
+#[cfg(windows)]
+fn git_command_creation_flags() -> u32 { CREATE_NO_WINDOW }
 
 pub fn preview(root: &Path, command: &str) -> Result<Preview, String> {
     preview_usage(root, command, None, &crate::usage_connect::Layers::default())
@@ -336,6 +400,24 @@ mod tests {
         assert_eq!(value["usage"]["enabled"], false);
         assert_eq!(value["usage"]["effective"], "none");
         assert!(value["after"].as_str().unwrap().find("statusLine").is_none());
+    }
+
+    #[test]
+    fn usage_only_preview_change_reuses_the_git_verdict_for_the_same_root_and_settings() {
+        let cache = GitIgnoreCache::default();
+        let root = Path::new("C:/project");
+        let settings = root.join(".claude/settings.local.json");
+        let now = Instant::now();
+        let mut calls = 0;
+        assert_eq!(cache.get_or_probe(root, &settings, now, || { calls += 1; Some(true) }), Some(true));
+        assert_eq!(cache.get_or_probe(root, &settings, now + Duration::from_secs(1), || { calls += 1; Some(false) }), Some(true));
+        assert_eq!(calls, 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_ignore_command_uses_create_no_window() {
+        assert_eq!(git_command_creation_flags(), 0x0800_0000);
     }
 
     #[test]

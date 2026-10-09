@@ -7,10 +7,11 @@ export interface PresenceFact {
   readonly id: string;
   readonly sessionId?: string;
   readonly at: number;
-  readonly kind: 'start' | 'end' | 'activity' | 'turn-end' | 'change' | 'check' | 'edit-failed';
+  readonly kind: 'start' | 'end' | 'activity' | 'turn-end' | 'change' | 'check' | 'edit-attempted' | 'edit-failed' | 'command-not-started';
   readonly paths?: readonly string[];
   readonly change?: 'added' | 'modified' | 'deleted' | 'unknown';
   readonly checkClass?: string;
+  readonly program?: string;
   readonly result?: 'passed' | 'failed' | 'unknown';
   readonly source: string;
 }
@@ -57,13 +58,14 @@ export const deriveCompanionPresence = (input: PresenceInput, now: number, timeZ
   const records: PresenceRecord[] = [];
   facts.forEach((fact, index) => {
     const later = facts.slice(index + 1);
-    if ((fact.kind === 'check' && fact.result === 'failed') || fact.kind === 'edit-failed') {
+    if ((fact.kind === 'check' && fact.result === 'failed') || fact.kind === 'edit-failed' || fact.kind === 'command-not-started') {
       const passed = fact.kind === 'check' && later.some((other) => other.kind === 'check' && other.checkClass === fact.checkClass && other.result === 'passed');
       const changed = later.some((other) => other.kind === 'change');
       const older = !relevant(fact);
       const name = fact.kind === 'edit-failed' ? 'Edit' : fact.checkClass === 'tests' ? 'Tests' : fact.checkClass === 'build' ? 'Build' : 'Command';
       const historical = passed || changed || older;
-      const reason = passed ? 'Failed earlier · later pass recorded' : changed ? 'Failed earlier · code changed since' : older ? 'Failed earlier · earlier session' : `${name} failed`;
+      const reason = passed ? 'Failed earlier · later pass recorded' : changed ? 'Failed earlier · code changed since' : older ? 'Failed earlier · earlier session'
+        : fact.kind === 'command-not-started' ? `Could not start ${fact.program || 'the command'} — check did not run` : `${name} failed`;
       records.push({ id: fact.id, kind: 'failure', at: fact.at, historical, label: `${reason} · ${clock(fact.at)}`, source: [fact.source, ...(fact.paths ?? [])].join(' · ') });
     }
     if (fact.kind !== 'change') return;

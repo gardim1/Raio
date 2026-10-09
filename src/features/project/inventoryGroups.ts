@@ -214,8 +214,15 @@ export const inventoryNotes = (inventory: ProjectInventory, options: { readonly 
   if (options.stale) notes.push('The latest relisting failed, so these areas are as of the last listing.');
   if (inventory.truncated) notes.push('The project listing was partial, so some areas may be missing.');
   if (inventory.skipped > 0) {
-    const n = inventory.skipped;
-    notes.push(`${n} ${n === 1 ? 'file or folder' : 'files or folders'} not listed (large, unreadable or online-only).`);
+    const reasons: [number, string][] = [
+      ...(inventory.skippedCloudOnly ? [[inventory.skippedCloudOnly, 'online-only (cloud placeholders)'] as [number, string]] : []),
+      ...(inventory.skippedUnreadable ? [[inventory.skippedUnreadable, 'unreadable'] as [number, string]] : []),
+      ...(inventory.skippedTooLarge ? [[inventory.skippedTooLarge, 'too large'] as [number, string]] : []),
+    ];
+    const total = reasons.reduce((count, [n]) => count + n, 0);
+    notes.push(reasons.length > 0
+      ? `${total} ${total === 1 ? 'item' : 'items'} not listed: ${reasons.map(([n, reason]) => `${n} ${reason}`).join(', ')}.`
+      : `${inventory.skipped} ${inventory.skipped === 1 ? 'file or folder' : 'files or folders'} not listed; the reason was not recorded by this core.`);
   }
   return notes;
 };

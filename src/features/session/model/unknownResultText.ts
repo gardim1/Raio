@@ -1,5 +1,6 @@
 /** Only contract-defined details become user copy; unknown details are never echoed. */
-export const unknownResultText = (detail?: string): string => {
+export const unknownResultText = (detail?: string, program?: string): string => {
+  if (detail === 'did-not-start') return `Could not start ${program || 'the command'} — check did not run`;
   let reason: string;
   switch (detail) {
     case 'interrupted': reason = 'interrupted'; break;

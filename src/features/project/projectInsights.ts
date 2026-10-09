@@ -49,6 +49,7 @@ export interface ValidationInsight {
   readonly codeChangedSinceMs?: number;
   /** Contract detail explaining an unknown result; only known values are displayed. */
   readonly detail?: string;
+  readonly program?: string;
 }
 
 /** Short wording for one validation state; a failure keeps its failed wording even when the code changed. */
@@ -56,7 +57,7 @@ export const describeValidation = (v: ValidationInsight): string => {
   const name = v.kind === 'tests' ? 'Tests' : 'Build';
   if (v.status === 'stale') return `${name}: stale (passed, then code changed)`;
   if (v.status === 'failed') return v.codeChangedSinceMs === undefined ? `${name}: failed` : `${name}: failed · code changed since`;
-  if (v.status === 'unknown') return `${name}: ${unknownResultText(v.detail)}`;
+  if (v.status === 'unknown') return `${name}: ${unknownResultText(v.detail, v.program)}`;
   return `${name}: ${v.status}`;
 };
 

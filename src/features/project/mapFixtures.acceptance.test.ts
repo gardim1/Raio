@@ -234,7 +234,7 @@ describe('map fixture: python-fastapi-next (synthetic)', () => {
     expect(positions(binaries.groups)).toEqual(positions(initial.groups));
     expect(inventoryNotes({ ...inventory, truncated: true, skipped: 2 })).toEqual([
       'The project listing was partial, so some areas may be missing.',
-      '2 files or folders not listed (large, unreadable or online-only).',
+      '2 files or folders not listed; the reason was not recorded by this core.',
     ]);
   });
 });

@@ -14,9 +14,14 @@ export const factsFromEvents = (events: readonly RaioEvent[], projectId: string)
     if (event.kind === 'session.ended') return { ...base, kind: 'end' };
     if (event.kind === 'turn.ended') return { ...base, kind: 'turn-end' };
     if (event.kind === 'file.changed' || event.kind === 'file.edit.reported') return { ...base, kind: 'change', paths: event.paths, change: event.evidence.change ?? 'unknown' };
+    if (event.kind === 'file.edit.attempted') return { ...base, kind: 'edit-attempted', paths: event.paths };
     if (event.kind === 'file.edit.failed') return { ...base, kind: 'edit-failed', paths: event.paths };
     if (event.kind === 'command.observed' && event.evidence.toolUseId) tools.set(key(event), checkClass(event.evidence.commandClass));
-    if (event.kind === 'command.result') return { ...base, kind: 'check', checkClass: event.evidence.commandClass ? checkClass(event.evidence.commandClass) : tools.get(key(event)) ?? 'other', result: event.evidence.exitCode === undefined ? 'unknown' : event.evidence.exitCode === 0 ? 'passed' : 'failed', source: `${source}${event.evidence.exitCodeSource === 'failure-message' ? ' · exit captured from failure message' : event.evidence.exitCodeSource === 'tool-success' ? ' · tool result' : ''}` };
+    if (event.kind === 'command.result') {
+      const cls = event.evidence.commandClass ? event.evidence.commandClass : tools.get(key(event)) ?? 'other';
+      if (event.evidence.detail === 'did-not-start') return { ...base, kind: 'command-not-started', checkClass: checkClass(cls), ...(event.evidence.program ? { program: event.evidence.program } : {}) };
+      return { ...base, kind: 'check', checkClass: checkClass(cls), result: event.evidence.exitCode === undefined ? 'unknown' : event.evidence.exitCode === 0 ? 'passed' : 'failed', source: `${source}${event.evidence.exitCodeSource === 'failure-message' ? ' · exit captured from failure message' : event.evidence.exitCodeSource === 'tool-success' ? ' · tool result' : ''}` };
+    }
     return { ...base, kind: 'activity' };
   });
 };
@@ -30,6 +35,11 @@ export const factsFromLog = (log: SessionLog): readonly PresenceFact[] => {
     if (event.kind === 'session.start') return { ...base, kind: 'start' };
     if (event.kind === 'session.end') return { ...base, kind: 'end' };
     if (event.kind === 'file.write') return { ...base, kind: 'change', paths: [event.path], change: event.change };
+    if (event.kind === 'file.attempt') return { ...base, kind: 'edit-attempted', paths: [event.path] };
+    if (event.kind === 'file.failed') return { ...base, kind: 'edit-failed', paths: [event.path] };
+    if (event.kind === 'command') return event.status === 'did-not-start'
+      ? { ...base, kind: 'command-not-started', ...(event.program ? { program: event.program } : {}) }
+      : { ...base, kind: 'check', checkClass: 'other', result: 'failed' };
     if (event.kind === 'validation' && event.status !== 'running') return { ...base, kind: 'check', checkClass: event.validation, result: event.status === 'passed' ? 'passed' : event.status === 'failed' ? 'failed' : 'unknown' };
     return { ...base, kind: 'activity' };
   });

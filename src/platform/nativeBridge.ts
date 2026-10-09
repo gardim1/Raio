@@ -12,7 +12,7 @@ import { isWindowsRoot, sameProjectRoot } from './projectIntent';
 import { factsFromEvents } from '../features/modes/presenceFacts';
 import type { PresenceInput } from '../features/modes/companionPresence';
 import type { ClaudeUsageState, ClaudeUsageSnapshot } from '../features/usage/claudeUsage';
-import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
+import type { ConnectedProject, ConnectPreview, Connector, CoreHealth, IntegrationStatus, ProjectHooksState, SessionSnapshot, Surface } from './desktopBridge';
 
 /** One app-local UI preference shared by webviews, including lazily created windows. */
 const SELECTED_ROOT_KEY = 'raio.selected-project-root';
@@ -116,6 +116,29 @@ const usageState = (value: unknown, projectId: string): ClaudeUsageState => {
   }
   return { status: 'reading', latest, sourceCount: value.sourceCount };
 };
+
+const emptyIntegrationStatus: IntegrationStatus = {
+  hooks: 'unknown', hookBinary: false, heartbeatAgeMs: null, inertMarkerAt: null,
+  lastHookEventAt: null, lastHookSessionId: null, lastWatcherChangeAt: null,
+};
+
+const integrationStatusValue = (value: unknown): IntegrationStatus => {
+  if (!value || typeof value !== 'object') return emptyIntegrationStatus;
+  const status = value as Record<string, unknown>;
+  const timestamp = (key: string): number | null => status[key] === null ? null
+    : typeof status[key] === 'number' && Number.isFinite(status[key]) && status[key] >= 0 ? status[key] as number : null;
+  const hooks = ['current', 'outdated', 'missing', 'unknown'].includes(String(status.hooks)) ? status.hooks as IntegrationStatus['hooks'] : 'unknown';
+  const session = typeof status.lastHookSessionId === 'string' && /^[a-z0-9_-]{1,128}$/i.test(status.lastHookSessionId) ? status.lastHookSessionId : null;
+  return {
+    hooks,
+    hookBinary: status.hookBinary === true,
+    heartbeatAgeMs: timestamp('heartbeatAgeMs'),
+    inertMarkerAt: timestamp('inertMarkerAt'),
+    lastHookEventAt: timestamp('lastHookEventAt'),
+    lastHookSessionId: session,
+    lastWatcherChangeAt: timestamp('lastWatcherChangeAt'),
+  };
+};
 /** After a listing fails or times out it is tried again after each of these, even without file activity, and then left until the next activity. */
 const LISTING_RETRY_DELAYS_MS: readonly number[] = [30_000, 300_000];
 
@@ -189,6 +212,7 @@ export const createNativeBridge = (
   let selectionQuery = 0;
   let startupIntent: Promise<string | null> | undefined;
   let hooksState: ProjectHooksState = 'unknown';
+  let integration = emptyIntegrationStatus;
   let usage: ClaudeUsageState = { status: 'disabled' };
   let usageKey: string | null = null;
   let usageQuery = 0;
@@ -375,6 +399,10 @@ export const createNativeBridge = (
         const current = (selectedRoot ? projects.find((p) => sameProjectRoot(p.root, selectedRoot!, isWindowsRoot(p.root))) : undefined) ?? projects[0] ?? null;
         const events = current ? await ipc.invoke<RaioEvent[]>('project_events', { projectId: current.id }) : [];
         if (selectedRoot !== requestedRoot) { dirty = true; return; }
+        integration = current
+          ? integrationStatusValue(await ipc.invoke<unknown>('integration_status', { projectId: current.id }).catch(() => null))
+          : emptyIntegrationStatus;
+        if (selectedRoot !== requestedRoot) { dirty = true; return; }
         selectedRoot = current?.root ?? null;
         const key = current ? `${current.id}|${current.root}` : null;
         if (key !== scanKey) {
@@ -407,6 +435,7 @@ export const createNativeBridge = (
         report('refresh')(error);
         const hooksChanged = hooksState !== 'unknown';
         hooksState = 'unknown';
+        integration = emptyIntegrationStatus;
         presenceInput = { ...presenceInput, available: false, hooks: 'unknown' };
         if (projectSnapshot) {
           projectSnapshot = { ...projectSnapshot, core: null };
@@ -488,6 +517,7 @@ export const createNativeBridge = (
       return projectMap({ id: 'preview', name }, value.inventory, value.imports);
     },
     projectHooksState: () => hooksState,
+    integrationStatus: () => integration,
     projectPresence: () => presenceInput,
     claudeUsage: () => usage,
     currentProjectMap: () => projectSnapshot,
