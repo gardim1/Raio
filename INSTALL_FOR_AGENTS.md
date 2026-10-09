@@ -64,8 +64,11 @@ entirely on the user's computer. No account, no cloud service, no telemetry, no 
      (`SessionStart`, `SessionEnd`, `Stop`, and `PreToolUse` / `PostToolUse` / `PostToolUseFailure` for file-edit,
      Bash, PowerShell and read/search tools) that run `raio-hook.exe` and are marked as Raio's. Existing settings and
      hooks are kept, and the original file is backed up.
-   Tell the user that **nothing is written until they click Connect** in Raio, and that the hooks apply to **new**
-   Claude Code sessions started in that folder after connecting.
+   Tell the user that **nothing is written until they click Connect** in Raio. After Connect, Raio shows
+   "Integration configured · waiting for the first Claude event" until Claude Code runs a hook: a session already open
+   in that folder picks the new hooks up by itself (verified on Claude Code 2.1.295 with the folder trusted) and a new
+   session works too; the first tool call or turn end then appears in Raio. Installed is not yet followed: if the
+   user sees no event, read the integration line in Raio's sidebar (it names the cause) before changing anything.
    The preview also offers an optional **Show Claude plan usage** (off by default). It adds a project-local
    `statusLine` entry; if the user already has a status line, Raio keeps it unless the user explicitly chooses to
    replace it in that project only. Leave this choice to the user; do not tick it for them, and never edit

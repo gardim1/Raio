@@ -15,6 +15,8 @@ This is evidence from one version and one session, not a general guarantee. Re-c
 | Is "added" vs "modified" observable? | `Write`'s `tool_response.type` was `create` for new files. | fixtures 06, 08, 10 |
 | Does `timeout` apply to async hooks? | Not tested. The hook binary enforces its own deadline either way. | - |
 | `SessionEnd` reason for `-p` | `other`. | fixture 19 |
+| Are hooks added to `settings.local.json` picked up by a session that is already open? | Yes on 2.1.295 (2026-10-08, interactive `claude --model haiku`, folder trusted): the next tool call after the write produced `PostToolUse`, then `Stop`; `SessionEnd` on `/exit`. No `SessionStart` exists for such a session. Matches the reference ("direct edits to hooks in settings files are normally picked up automatically by the file watcher"). | local evidence `.local/alpha/E-LIVE.md` (not committed) |
+| What silences the hook? | A `heartbeat` file older than 7 days in Raio's data dir: the hook exits 0 without writing. Until 0.1.0-alpha.1 the app never refreshed that file on Windows (an empty rewrite does not change the mtime), so after 7 days every event was skipped. Fixed in the next version. | E-CONTRACT F2 (local) |
 
 ## Consequences for Raio
 

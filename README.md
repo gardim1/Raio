@@ -88,8 +88,12 @@ worth a look (a migration file added, a dependency manifest changed), red for an
    asynchronous hooks (`SessionStart`, `SessionEnd`, `Stop`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`) that run
    `raio-hook.exe`. Existing settings and hooks are kept and the original file is backed up. **Nothing is written until
    you click Connect.** Raio warns you if git does not ignore that settings file.
-3. Start a **new** Claude Code session in that folder (hooks apply to sessions started after connecting). Raio follows
-   it live and keeps a local history; **View changes** plays the replay. Closing Raio's windows keeps it in the tray
+3. Installing and connecting is not yet following: Raio says **"Integration configured · waiting for the first Claude
+   event"** until Claude Code actually runs one of the hooks. Use Claude Code in that folder: a session that is
+   already open there picks the hooks up by itself (verified on Claude Code 2.1.295 once the folder is trusted), and
+   a new session works too; the first tool call, edit or turn end shows up in Raio within a second or two. If nothing
+   arrives, Raio names the problem (hooks out of date, helper missing, Raio not running for 7 days) and the next step.
+   Raio follows the session live and keeps a local history; **View changes** plays the replay. Closing Raio's windows keeps it in the tray
    (the taskbar entry goes away; **Quit Raio** in the tray menu exits); it keeps recording while hidden and shows the
    current state when you open it again.
 
