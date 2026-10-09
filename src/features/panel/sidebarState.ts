@@ -94,7 +94,7 @@ export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknow
   if (problem) warnings.push(problem);
   if (listing?.stale) warnings.push('The latest relisting failed, so these areas are as of the last listing.');
   if (listing?.truncated) warnings.push('The project listing was partial, so some areas may be missing.');
-  const noteHasSkippedReason = warnings.some(note => /^(?:\d+ (?:file or folder|files or folders|items) not listed)\b/i.test(note));
+  const noteHasSkippedReason = warnings.some(note => /^(?:\d+ (?:file or folder|files or folders|items?) not listed)\b/i.test(note));
   if (listing && listing.skipped > 0 && !noteHasSkippedReason) warnings.push(`${listing.skipped} ${listing.skipped === 1 ? 'file or folder' : 'files or folders'} not listed (large, unreadable or online-only).`);
   const integrationLine = integrationIndicator(integration, presence, now, timeZone);
   const indicator = !connected ? 'Not connected' : integrationLine ?? (problem || presence?.available === false ? 'Connection status unavailable'

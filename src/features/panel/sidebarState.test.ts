@@ -99,6 +99,14 @@ describe('factual sidebar states', () => {
     const skipped = result.warnings.filter(warning => warning.includes('not listed'));
     expect(skipped).toEqual(['2 files or folders not listed; the reason was not recorded by this core.']);
   });
+  it('keeps a singular inventory skipped-reason status without adding the generic warning', () => {
+    const snapshot = projectMap({ id: 'qa', name }, {
+      files: ['package.json'], manifests: [], truncated: false, skipped: 1, skippedUnreadable: 1, scannedAtMs: 1,
+    }, null, { provenance: 'fixture' });
+    const result = state(snapshot);
+    const skipped = result.warnings.filter(warning => warning.includes('not listed'));
+    expect(skipped).toEqual(['1 item not listed: 1 unreadable.']);
+  });
   it('reports an inert heartbeat as an integration problem with one next action', () => {
     const result = deriveSidebarState({ snapshot: map(['package.json']), integration: {
       hooks:'current', hookBinary:true, heartbeatAgeMs:8 * 24 * 60 * 60 * 1000, inertMarkerAt:Date.UTC(2026, 9, 8),
