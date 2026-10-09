@@ -1,7 +1,7 @@
 {
   "name": "raio",
   "private": true,
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "type": "module",
   "description": "Local-first desktop companion that shows where an AI coding agent works in a project.",
   "license": "MIT",
