@@ -24,7 +24,7 @@ import { ConnectPanel, ConnectReview } from './ConnectPanel';
 import { ConnectMapPreview } from './ConnectMapPreview';
 import { createProjectFixtureBridge, createFixtureBridge } from '../../platform/fixtureBridge';
 
-type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; busy?:boolean; updatingUsage?:boolean; usageChoice?: UsageOptIn | null; onUsageChange?: (options:UsageOptIn) => void; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
+type Node = ReactElement<{ children?: unknown; onClick?: () => void; preview?: ConnectPreview; busy?:boolean; updatingUsage?:boolean; usageChoice?: UsageOptIn | null; usagePreviewFailed?: boolean; onRetryUsage?: () => void; onUsageChange?: (options:UsageOptIn) => void; map?: { kind: string }; state?: { kind: string }; onCancel?: () => void; onConnect?: () => void }>;
 const find = (node: unknown, match: (node: Node) => boolean): Node | null => {
   if (!node || typeof node !== 'object') return null;
   const element = node as Node;
@@ -203,4 +203,20 @@ it('keeps the newest usage choice visible and ignores an older preview that reso
   await settle();
   expect(review()!.props.preview).toEqual(latest);
   expect(review()!.props.usageChoice).toBeNull();
+});
+
+it('does not connect with the previous diff when the selected usage preview fails', async () => {
+  await choose();
+  previews[0]!.resolve(preview);
+  maps[0]!.resolve(null);
+  await settle();
+  review()!.props.onUsageChange!({ enabled:true, replaceExisting:true });
+  await settle();
+  previews[1]!.reject(new Error('Preview unavailable'));
+  await settle();
+  expect(review()!.props.usagePreviewFailed).toBe(true);
+  expect(review()!.props.onRetryUsage).toBeTypeOf('function');
+  review()!.props.onConnect!();
+  await settle();
+  expect(connector.connect).not.toHaveBeenCalled();
 });

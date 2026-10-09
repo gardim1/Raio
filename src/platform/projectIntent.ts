@@ -19,22 +19,43 @@ export const sameProjectRoot = (a: string, b: string, windows: boolean): boolean
 export const isWindowsRoot = (root: string): boolean => /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
 
 /** Listen before taking the startup value; a newer event wins, and all callbacks stop on unmount. */
-export const followProjectIntents = (bridge: DesktopBridge, receive: (root: string) => void | boolean | Promise<void | boolean>, ready?: () => void): (() => void) => {
+export const followProjectIntents = (bridge: DesktopBridge, receive: (root: string) => void | boolean | Promise<void | boolean>, ready?: () => void, intentTimedOut?: () => void): (() => void) => {
   let active = true;
   let eventArrived = false;
   let stop: (() => void) | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
+  let intentTimer: ReturnType<typeof setTimeout> | undefined;
   const markReady = () => {
     if (!active) return;
     if (readyTimer !== undefined) clearTimeout(readyTimer);
+    if (intentTimer !== undefined) clearTimeout(intentTimer);
     readyTimer = undefined;
+    intentTimer = undefined;
     ready?.();
+  };
+  const startIntentDeadline = () => {
+    if (readyTimer !== undefined) clearTimeout(readyTimer);
+    readyTimer = undefined;
+    if (intentTimer !== undefined) clearTimeout(intentTimer);
+    intentTimer = setTimeout(() => {
+      intentTimer = undefined;
+      if (active) intentTimedOut?.();
+    }, PROJECT_INTENT_WAIT_MS);
   };
   readyTimer = setTimeout(markReady, PROJECT_INTENT_WAIT_MS);
   const deliver = async (root: string) => {
     if (!active || !root) return;
-    const accepted = await receive(root);
-    if (accepted !== false) markReady();
+    startIntentDeadline();
+    try {
+      const accepted = await receive(root);
+      if (accepted !== false) markReady();
+    } catch {
+      if (active) {
+        if (intentTimer !== undefined) clearTimeout(intentTimer);
+        intentTimer = undefined;
+        intentTimedOut?.();
+      }
+    }
   };
   const take = () => {
     if (!bridge.takeProjectIntent) { markReady(); return; }
@@ -55,5 +76,5 @@ export const followProjectIntents = (bridge: DesktopBridge, receive: (root: stri
     take();
   }).catch(() => { if (active) take(); });
   else take();
-  return () => { active = false; if (readyTimer !== undefined) clearTimeout(readyTimer); stop?.(); };
+  return () => { active = false; if (readyTimer !== undefined) clearTimeout(readyTimer); if (intentTimer !== undefined) clearTimeout(intentTimer); stop?.(); };
 };

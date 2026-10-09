@@ -35,7 +35,7 @@ describe('factual sidebar states', () => {
   it('retains every partial/stale warning for a mapped folder', () => {
     const result = state(map(['package.json'], { truncated: true, skipped: 2, stale: true }));
     expect(result.heading).toBe('Waiting for activity');
-    expect(result.warnings).toHaveLength(4);
+    expect(result.warnings).toHaveLength(3);
     expect(result.warnings).toContain('2 files or folders not listed; the reason was not recorded by this core.');
   });
   it.each([undefined, 'Access denied by the filesystem'])('unavailable reports only a supplied reason: %s', reason => {
@@ -78,14 +78,34 @@ describe('factual sidebar states', () => {
     } });
     expect(result.indicator).toBe('Following session session-1 · last event 14:02');
   });
+  it('lets a successful hook event after the inert marker describe current integration state', () => {
+    const marker = Date.UTC(2026, 9, 8, 13, 0), event = Date.UTC(2026, 9, 8, 14, 2);
+    const result = deriveSidebarState({ snapshot:map(['package.json']), timeZone:'UTC', now:event, integration:{
+      hooks:'current', hookBinary:true, heartbeatAgeMs:60_000, inertMarkerAt:marker, lastHookEventAt:event,
+      lastHookSessionId:'session-current', lastWatcherChangeAt:null,
+    } });
+    expect(result.indicator).toBe('Following session session-c · last event 14:02');
+    expect(result.message).toBeNull();
+  });
+  it('does not label a known Claude hook edit source unknown when integration status is absent', () => {
+    const at = Date.UTC(2026, 9, 8, 14, 2);
+    const result = deriveSidebarState({ snapshot:map(['package.json']), timeZone:'UTC', now:at, presence:{
+      connected:true, available:true, facts:[{ id:'hook-edit', at, kind:'change', source:'Claude hook' }],
+    } });
+    expect(result.indicator).not.toMatch(/File changed|source unknown/);
+  });
+  it('keeps the inventory skipped-reason status once without adding the sidebar duplicate', () => {
+    const result = state(map(['package.json'], { skipped:2, truncated:true }));
+    const skipped = result.warnings.filter(warning => warning.includes('not listed'));
+    expect(skipped).toEqual(['2 files or folders not listed; the reason was not recorded by this core.']);
+  });
   it('reports an inert heartbeat as an integration problem with one next action', () => {
     const result = deriveSidebarState({ snapshot: map(['package.json']), integration: {
       hooks:'current', hookBinary:true, heartbeatAgeMs:8 * 24 * 60 * 60 * 1000, inertMarkerAt:Date.UTC(2026, 9, 8),
       lastHookEventAt:null, lastHookSessionId:null, lastWatcherChangeAt:null,
     } });
     expect(result.indicator).toContain('Integration problem:');
-    expect(result.message).toContain('Raio was not running');
-    expect(result.message).toContain('New events are recorded now');
+    expect(result.message).toBe('Events were skipped before Raio restarted.');
   });
   it.each([
     [{ hooks:'outdated', hookBinary:true }, 'Integration problem: Hooks out of date'],

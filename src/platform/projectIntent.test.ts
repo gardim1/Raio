@@ -113,6 +113,31 @@ describe('project folder intents', () => {
       stop();
     } finally { vi.useRealTimers(); }
   });
+  it('keeps the gate closed when selection is accepted near the initial deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveTake!: (root: string) => void;
+      let resolveSelection!: (accepted: boolean) => void;
+      let ready = false, timedOut = false;
+      const bridge = { takeProjectIntent: () => new Promise<string>(resolve => { resolveTake = resolve; }) } as unknown as DesktopBridge;
+      const follow = followProjectIntents as unknown as (
+        bridge: DesktopBridge, receive: (root: string) => Promise<boolean>, ready: () => void, timedOut: () => void,
+      ) => () => void;
+      const stop = follow(bridge, () => new Promise<boolean>(resolve => { resolveSelection = resolve; }), () => { ready = true; }, () => { timedOut = true; });
+      await vi.advanceTimersByTimeAsync(4_900);
+      resolveTake('C:/requested/project');
+      await Promise.resolve(); await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ready).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(ready).toBe(false);
+      expect(timedOut).toBe(true);
+      resolveSelection(true);
+      await Promise.resolve(); await Promise.resolve();
+      expect(ready).toBe(true);
+      stop();
+    } finally { vi.useRealTimers(); }
+  });
   it.each([
     ['C:\\Work\\Raio\\', 'c:/work/raio', true, true],
     ['\\\\server\\share\\App', '//SERVER/share/app/', true, true],

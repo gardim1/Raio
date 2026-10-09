@@ -52,12 +52,14 @@ export const App = ({ underlay }: AppProps) => {
   const gateForLaunchIntent = shouldGateForProjectIntent(bridge);
   const [intent, setIntent] = useState<{ root: string; revision: number } | null>(null);
   const [intentReady, setIntentReady] = useState(typeof window === 'undefined' || !gateForLaunchIntent);
+  const [intentTimedOut, setIntentTimedOut] = useState(false);
   const intentRevision = useRef(0);
   useEffect(() => {
-    if (bridge.fixedSurface !== null && bridge.fixedSurface !== 'expanded') { setIntentReady(true); return; }
-    if (shouldGateForProjectIntent(bridge)) setIntentReady(false);
+    if (bridge.fixedSurface !== null && bridge.fixedSurface !== 'expanded') { setIntentTimedOut(false); setIntentReady(true); return; }
+    if (shouldGateForProjectIntent(bridge)) { setIntentTimedOut(false); setIntentReady(false); }
     const stop = followProjectIntents(bridge, (root) => {
       setIntentReady(false);
+      setIntentTimedOut(false);
       const revision = ++intentRevision.current;
       return (async () => {
         const current = bridge.connector?.project();
@@ -68,7 +70,7 @@ export const App = ({ underlay }: AppProps) => {
         if (bridge.fixedSurface === null) bridge.showSurface('expanded');
         return true;
       })();
-    }, () => setIntentReady(true));
+    }, () => { setIntentTimedOut(false); setIntentReady(true); }, () => setIntentTimedOut(true));
     return () => { intentRevision.current++; stop(); };
   }, [bridge]);
   return (
@@ -76,7 +78,9 @@ export const App = ({ underlay }: AppProps) => {
       {bridge.kind === 'native' && <NativeSurfaceEffects />}
       <Activity mode={visible ? 'visible' : 'hidden'}>
       {underlay}
-      {!intentReady ? (
+      {!intentReady ? intentTimedOut ? (
+        <div className="app__empty" role="alert"><p className="app__empty-note">The requested project is taking too long to open. Reopen this window to try again.</p></div>
+      ) : (
         <div className="app__empty" role="status" aria-busy="true"><p className="app__empty-note">Opening the requested project…</p></div>
       ) : intent && bridge.connector ? (
         <ExpandedConnectView key={intent.revision} connector={bridge.connector} initialRoot={intent.root} onClose={() => setIntent(null)} />

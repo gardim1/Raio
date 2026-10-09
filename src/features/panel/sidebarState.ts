@@ -38,10 +38,14 @@ const clockAt = (at: number | null, timeZone?: string): string | null => at == n
   hour:'2-digit', minute:'2-digit', hourCycle:'h23', ...(timeZone ? { timeZone } : {}),
 }).format(at);
 
+const inertMarkerIsCurrent = (integration: IntegrationStatus | undefined): boolean => integration?.inertMarkerAt != null
+  && (integration.lastHookEventAt === null || integration.lastHookEventAt <= integration.inertMarkerAt);
+const isWatcherSource = (source: string): boolean => source === 'watcher' || source.startsWith('Filesystem observation');
+
 /** One source-labelled integration line shared by the project sidebar and the Island. */
 export const integrationIndicator = (integration: IntegrationStatus | undefined, presence: PresenceInput | undefined, now: number, timeZone?: string): string | null => {
   if (integration) {
-    if (integration.inertMarkerAt !== null) return 'Integration problem: Raio was not running';
+    if (inertMarkerIsCurrent(integration)) return 'Integration problem: Raio was not running';
     if (integration.hooks === 'outdated') return 'Integration problem: Hooks out of date';
     if (integration.hooks === 'missing') return 'Integration problem: Hooks missing';
     if (integration.hooks === 'unknown') return 'Integration problem: Hook status unknown';
@@ -52,7 +56,7 @@ export const integrationIndicator = (integration: IntegrationStatus | undefined,
       return `Following session ${(integration.lastHookSessionId ?? 'unknown').slice(0, 9)} · last event ${at ?? 'time unavailable'}`;
     }
     const watcherAt = Math.max(integration.lastWatcherChangeAt ?? -Infinity,
-      presence?.facts.reduce((last, fact) => Number.isFinite(fact.at) && fact.at <= now && fact.source === 'watcher' ? Math.max(last, fact.at) : last, -Infinity) ?? -Infinity);
+      presence?.facts.reduce((last, fact) => Number.isFinite(fact.at) && fact.at <= now && fact.kind === 'change' && isWatcherSource(fact.source) ? Math.max(last, fact.at) : last, -Infinity) ?? -Infinity);
     if (Number.isFinite(watcherAt) && watcherAt > (integration.lastHookEventAt ?? -Infinity)) {
       const at = clockAt(watcherAt, timeZone);
       return `File changed — source unknown${at ? ` · ${at}` : ''}`;
@@ -63,7 +67,7 @@ export const integrationIndicator = (integration: IntegrationStatus | undefined,
     }
   }
   const latest = presence?.facts.reduce((last, fact) => Number.isFinite(fact.at) && fact.at <= now && (!last || fact.at > last.at) ? fact : last, null as (typeof presence.facts)[number] | null);
-  if (latest?.kind === 'change' || (latest && latest.source === 'watcher')) {
+  if (latest?.kind === 'change' && isWatcherSource(latest.source)) {
     const at = clockAt(latest.at, timeZone);
     return `File changed — source unknown${at ? ` · ${at}` : ''}`;
   }
@@ -90,7 +94,8 @@ export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknow
   if (problem) warnings.push(problem);
   if (listing?.stale) warnings.push('The latest relisting failed, so these areas are as of the last listing.');
   if (listing?.truncated) warnings.push('The project listing was partial, so some areas may be missing.');
-  if (listing && listing.skipped > 0) warnings.push(`${listing.skipped} ${listing.skipped === 1 ? 'file or folder' : 'files or folders'} not listed (large, unreadable or online-only).`);
+  const noteHasSkippedReason = warnings.some(note => /^(?:\d+ (?:file or folder|files or folders|items) not listed)\b/i.test(note));
+  if (listing && listing.skipped > 0 && !noteHasSkippedReason) warnings.push(`${listing.skipped} ${listing.skipped === 1 ? 'file or folder' : 'files or folders'} not listed (large, unreadable or online-only).`);
   const integrationLine = integrationIndicator(integration, presence, now, timeZone);
   const indicator = !connected ? 'Not connected' : integrationLine ?? (problem || presence?.available === false ? 'Connection status unavailable'
     : hooks === 'outdated' ? 'Hooks out of date' : presence?.facts.length ? 'No recent activity' : 'Connected · no activity yet');
@@ -107,8 +112,8 @@ export const deriveSidebarState = ({ snapshot, connected = true, hooks = 'unknow
     return { ...base, heading: incomplete ? 'Map incomplete' : 'No areas recognized', message: null, action: null };
   }
   return { ...base, heading: integrationLine ? 'Project overview' : problem || hooks === 'outdated' || presence?.available === false ? 'Activity cannot be confirmed' : 'Waiting for activity',
-    message: integration?.inertMarkerAt !== null && integration?.inertMarkerAt !== undefined
-      ? `Raio was not running; events were skipped. New events are recorded now.`
+    message: inertMarkerIsCurrent(integration)
+      ? 'Events were skipped before Raio restarted.'
       : integration?.heartbeatAgeMs !== null && integration?.heartbeatAgeMs !== undefined && integration.heartbeatAgeMs > 7 * 24 * 60 * 60_000 ? 'Start Raio to resume recording Claude events.'
       : integration?.hooks === 'outdated' ? null
         : integration?.hooks === 'missing' ? null

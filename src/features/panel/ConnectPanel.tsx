@@ -27,13 +27,14 @@ export const maskedSettings = (text: string | null): string => {
 type Step = { readonly kind: 'idle' } | { readonly kind: 'loading'; readonly root: string; readonly map: PreviewMapState } | { readonly kind: 'review'; readonly root: string; readonly preview: ConnectPreview; readonly map: PreviewMapState } | { readonly kind: 'error'; readonly root?: string; readonly message: string };
 
 /** The same explicit before/after review for initial connection and refreshing an existing connection. */
-export const ConnectReview = ({ preview, busy, onCancel, onConnect, onUsageChange, usageChoice, updatingUsage = false, onRetryUsage, sidebar = false, map, mapBesideReview = false }: {
+export const ConnectReview = ({ preview, busy, onCancel, onConnect, onUsageChange, usageChoice, usagePreviewFailed = false, updatingUsage = false, onRetryUsage, sidebar = false, map, mapBesideReview = false }: {
   readonly preview: ConnectPreview;
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onConnect: () => void;
   readonly onUsageChange?: (options: UsageOptIn) => void;
   readonly usageChoice?: UsageOptIn | null;
+  readonly usagePreviewFailed?: boolean;
   readonly updatingUsage?: boolean;
   readonly onRetryUsage?: () => void;
   readonly sidebar?: boolean;
@@ -105,7 +106,7 @@ export const ConnectReview = ({ preview, busy, onCancel, onConnect, onUsageChang
     </div>
     <div className="connect__actions">
       <Button onClick={onCancel} disabled={busy}>Cancel</Button>
-      <Button onClick={onConnect} disabled={busy}>Connect</Button>
+      <Button onClick={onConnect} disabled={busy || usagePreviewFailed}>Connect</Button>
     </div>
   </div>
   );
@@ -204,7 +205,7 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
       }
     }).catch((cause:unknown) => {
       if (token === request.current && choice === usageRequest.current) {
-        pendingUsage.current = null; setRetryUsage(usage); setError(String(cause));
+        pendingUsage.current = null; setRetryUsage(usage); setError(failureReason(cause) ?? 'The status-line preview is unavailable.');
       }
     }).finally(() => { if (token === request.current && choice === usageRequest.current) setUpdatingUsage(false); });
   };
@@ -241,9 +242,12 @@ export const ConnectPanel = ({ connector, initialRoot, onClose, onPreviewRootCha
     return (
       <div className="connect__flow">
       {error && <p className="connect__warn" role="alert">{error}</p>}
-      <ConnectReview preview={preview} map={step.map} sidebar={chooseAnother} mapBesideReview={mapBesideReview} busy={busy} usageChoice={usageChoice} updatingUsage={updatingUsage} onRetryUsage={retryUsage ? () => changeUsage(root, retryUsage) : undefined} onCancel={cancel}
+      <ConnectReview preview={preview} map={step.map} sidebar={chooseAnother} mapBesideReview={mapBesideReview} busy={busy} usageChoice={usageChoice} usagePreviewFailed={retryUsage !== null} updatingUsage={updatingUsage} onRetryUsage={retryUsage ? () => changeUsage(root, retryUsage) : undefined} onCancel={cancel}
         onUsageChange={usage => changeUsage(root, usage)}
         onConnect={() => void run(async () => {
+          if (retryUsage !== null || (usageChoice !== null && pendingUsage.current?.root !== root)) {
+            throw new Error('Review the current status-line choice before connecting.');
+          }
           const token = request.current;
           const choice = usageRequest.current;
           const currentPreview = pendingUsage.current?.root === root ? await connector.preview(root, pendingUsage.current.usage) : preview;

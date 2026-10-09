@@ -36,6 +36,10 @@ it('keeps the primary Connect action available while usage details are pending',
   expect(html).toContain('button type="button"');
   expect(html).not.toContain('disabled=""');
 });
+it('disables Connect when the selected usage preview failed', () => {
+  const html = renderToStaticMarkup(createElement(ConnectReview, { preview, busy:false, usageChoice:{ enabled:true, replaceExisting:true }, usagePreviewFailed:true, onCancel:() => {}, onConnect:() => {} }));
+  expect(html.match(/<button[^>]*>Connect<\/button>/)?.[0]).toContain('disabled=""');
+});
 
 it('renders the latest local usage choice while its preview is pending', () => {
   const html = render(preview, { enabled:true, replaceExisting:true });
