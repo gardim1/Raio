@@ -38,9 +38,9 @@ read), reproduced with synthetic folders, and fixed with regression tests. Windo
   an interactive session was open produced Read, Bash exit 0/3, Stop and SessionEnd events in Raio's inbox (`-p` not
   used). The UI accepts a session whose first event is not SessionStart.
 
-Tests on `67a5da0`: vitest 1174 (91 files), tsc + build + bundle check 0; Rust (worker runs on the merged core
-changes) 260 unit + 16 hook integration + 4 status line, clippy 0 with 1 existing warning — the coordinator's own
-cargo run and the release build are pending (machine memory). Playwright (Edge, serial): 86 passed, 0 behaviour failures; 21 screenshot differences (the new sidebar/Island/character visuals, goldens not re-blessed pending the maintainer's visual approval) and 2 new screenshots without a golden yet. Independent reviews:
+Tests on `a73a0dd` (release built from `b9a3263`, docs only on top): vitest 1175 (91 files), tsc + build + bundle check 0;
+Rust 260 unit + 16 hook integration + 4 status line (3 ignored), clippy 0 with 1 existing warning; release build and
+portable package OK (candidate kept locally until the maintainer's walkthrough). Playwright (Edge, serial): 86 passed, 0 behaviour failures; 21 screenshot differences (the new sidebar/Island/character visuals, goldens not re-blessed pending the maintainer's visual approval) and 2 new screenshots without a golden yet. Independent reviews:
 2 P2 (core) and 4 P2 (UI) found and fixed; rechecks closed.
 
 Not exercised: the running GUI on a real desktop (native hover, tray, X/restore, borders), DPI/multi-monitor, the
