@@ -29,16 +29,16 @@ entirely on the user's computer. No account, no cloud service, no telemetry, no 
    Do not look through their disk, shell history, windows or other repositories to guess a project.
 2. Find the release to install. Open `https://github.com/gardim1/Raio/releases` (or `gh release list -R gardim1/Raio`)
    and use an explicit version tag; do not rely on "latest" (alphas are pre-releases). The current release is the
-   experimental pre-release **v0.1.0-alpha.1** (https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.1), built
-   from commit 6190276; its assets are `raio-v0.1.0-alpha.1-windows-x64.zip`, `install-raio.ps1` and
-   `SHA256SUMS-v0.1.0-alpha.1.txt`.
+   experimental pre-release **v0.1.0-alpha.2** (https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.2), built
+   from commit b9a3263; its assets are `raio-v0.1.0-alpha.2-windows-x64.zip`, `install-raio.ps1` and
+   `SHA256SUMS-v0.1.0-alpha.2.txt`.
    **If no release is listed yet**, stop and tell the user; offer to build from source instead (needs Node 20.19+,
    Rust stable with MSVC and Git): `git clone https://github.com/gardim1/Raio.git`, `npm ci`, `npm run app:build`, then
    `src-tauri\target\release\raio.exe --project "<folder>"`.
 3. Download the installer script of that release and show it to the user before running it:
 
    ```powershell
-   $v = '0.1.0-alpha.1'   # the release tag without the leading v
+   $v = '0.1.0-alpha.2'   # the release tag without the leading v
    $dir = Join-Path $env:TEMP "raio-install-$v"
    New-Item -ItemType Directory -Force $dir | Out-Null
    Invoke-WebRequest "https://github.com/gardim1/Raio/releases/download/v$v/install-raio.ps1" -OutFile "$dir\install-raio.ps1"

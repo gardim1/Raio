@@ -7,9 +7,9 @@ your project and shows it as a calm, animated map: which areas the agent read an
 could actually observe about the checks it ran, and a short replay when it finishes. Everything stays on your
 computer: no account, no cloud service, no telemetry, no model API of its own.
 
-**Download:** [Raio 0.1.0-alpha.1 pre-release](https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.1) ·
-[installer `install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/install-raio.ps1) ·
-[portable zip](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/raio-v0.1.0-alpha.1-windows-x64.zip)
+**Download:** [Raio 0.1.0-alpha.2 pre-release](https://github.com/gardim1/Raio/releases/tag/v0.1.0-alpha.2) ·
+[installer `install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.2/install-raio.ps1) ·
+[portable zip](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.2/raio-v0.1.0-alpha.2-windows-x64.zip)
 (unsigned; Windows may warn)
 
 ![Raio's expanded view after a Claude Code session in a synthetic demo project: the areas the agent touched, a
@@ -28,15 +28,15 @@ window controls where this preview draws three dots).*
 Requirements: Windows 10/11 x64 and the Microsoft WebView2 runtime (present on current Windows); Claude Code for
 monitoring. Per user, no administrator rights:
 
-1. Download [`install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.1/install-raio.ps1)
+1. Download [`install-raio.ps1`](https://github.com/gardim1/Raio/releases/download/v0.1.0-alpha.2/install-raio.ps1)
    and read it.
 2. In PowerShell, from the folder where you saved it:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-raio.ps1 -Version 0.1.0-alpha.1 -Project "C:\path\to\project"
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-raio.ps1 -Version 0.1.0-alpha.2 -Project "C:\path\to\project"
    ```
 
-   It downloads the zip and `SHA256SUMS-v0.1.0-alpha.1.txt` from the release, checks the zip's SHA256 before
+   It downloads the zip and `SHA256SUMS-v0.1.0-alpha.2.txt` from the release, checks the zip's SHA256 before
    extracting (integrity against that manifest, not a signature), installs to `%LOCALAPPDATA%\Programs\Raio` and opens
    Raio's Connect preview for that folder. Without `-Project` it only installs.
 
